@@ -145,15 +145,18 @@ dd { margin: 0; font-weight: 750; font-variant-numeric: tabular-nums; }
   background: #fffaf3;
 }
 .book-card-media { display: flex; width: 112px; flex-direction: column; }
+.book-cover-placeholder, .book-cover-image {
+  width: 112px;
+  aspect-ratio: 3 / 4;
+  flex: none;
+}
+.book-cover-image { display: block; object-fit: contain; }
 .book-cover-placeholder {
   display: flex;
   align-items: center;
   justify-content: center;
   flex-direction: column;
   gap: .35rem;
-  width: 112px;
-  min-height: 150px;
-  flex: 1;
   color: #756858;
   background: linear-gradient(145deg, #e7dccd, #f5ede2);
   text-align: center;
@@ -163,7 +166,16 @@ dd { margin: 0; font-weight: 750; font-variant-numeric: tabular-nums; }
 .book-card-body { display: flex; min-width: 0; padding: .9rem 1rem; flex-direction: column; }
 .book-card-author, .book-card-genre, .book-card-annotation { margin: 0; color: #746b60; }
 .book-card-author { font-size: .8rem; font-weight: 650; }
-.book-card-title { margin: .15rem 0 .35rem; font-size: 1rem; overflow-wrap: anywhere; }
+.book-card-title {
+  display: -webkit-box;
+  margin: .15rem 0 .35rem;
+  overflow: hidden;
+  font-size: 1rem;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+}
 .book-card-genre { font-size: .75rem; }
 .book-card-annotation-block { margin-top: .55rem; }
 .book-card-annotation {
@@ -186,6 +198,7 @@ dd { margin: 0; font-weight: 750; font-variant-numeric: tabular-nums; }
 }
 .book-download-button {
   width: 112px;
+  flex: 1;
   border-radius: 0;
   padding: .55rem .3rem;
   font-size: .8rem;
@@ -211,7 +224,8 @@ dd { margin: 0; font-weight: 750; font-variant-numeric: tabular-nums; }
 }
 .modal-header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
 .modal-header h2 { margin: 0; font-size: 1.25rem; }
-.annotation-modal > p { margin: 1rem 0 0; line-height: 1.55; white-space: pre-wrap; }
+.annotation-modal-label { margin: .45rem 0 0; color: #756b60; font-size: .85rem; }
+.annotation-modal > #annotation-modal-text { margin: 1rem 0 0; line-height: 1.55; white-space: pre-wrap; }
 
 [hidden] { display: none !important; }
 

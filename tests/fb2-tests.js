@@ -515,25 +515,32 @@ await test('one full-width card per row, with download directly below equal-widt
   const download = card.querySelector('.book-download-button').getBoundingClientRect();
   assert(cover.width === download.width, 'cover and download widths match');
   assert(download.top === cover.bottom, 'download touches cover');
+  assert(getComputedStyle(card.querySelector('.book-cover-placeholder')).aspectRatio === '3 / 4', 'cover uses 3:4 ratio');
+  const image = document.createElement('img');
+  image.className = 'book-cover-image';
+  card.querySelector('.book-cover-placeholder').replaceWith(image);
+  assert(getComputedStyle(image).aspectRatio === '3 / 4', 'real cover uses 3:4 ratio');
+  assert(getComputedStyle(image).objectFit === 'contain', 'real cover is not distorted');
   grid.remove();
 });
 
-await test('More is shown only for truncated annotation', async () => {
-  let openedAnnotation = '';
+await test('Read more is shown only for visually truncated annotation', async () => {
+  let openedBook = null;
   const shortCard = createBookCard(
     { metadataStatus: 'ready', fileName: 'short.fb2', annotation: 'Short' }, async () => {}, document,
     { isAnnotationOverflowing: () => false },
   );
   const longCard = createBookCard(
-    { metadataStatus: 'ready', fileName: 'long.fb2', annotation: 'Long '.repeat(100) }, async () => {}, document,
-    { isAnnotationOverflowing: () => true, onAnnotation: (text) => { openedAnnotation = text; } },
+    { metadataStatus: 'ready', fileName: 'long.fb2', title: 'Noah', authors: ['Julia'], annotation: 'Long '.repeat(100) }, async () => {}, document,
+    { isAnnotationOverflowing: () => true, onAnnotation: (book) => { openedBook = book; } },
   );
   document.body.append(shortCard, longCard);
   await new Promise(requestAnimationFrame);
-  assert(shortCard.querySelector('.book-annotation-more').hidden, 'short annotation has no More');
-  assert(!longCard.querySelector('.book-annotation-more').hidden, 'truncated annotation has More');
+  assert(shortCard.querySelector('.book-annotation-more').hidden, 'fitting annotation has no link');
+  assert(!longCard.querySelector('.book-annotation-more').hidden, 'overflowing annotation has link');
+  assert(longCard.querySelector('.book-annotation-more').textContent === 'Читать далее', 'link has updated label');
   longCard.querySelector('.book-annotation-more').click();
-  assert(openedAnnotation === 'Long '.repeat(100).trim(), 'More opens full annotation callback');
+  equal(openedBook, { annotation: 'Long '.repeat(100).trim(), title: 'Noah', author: 'Julia' }, 'link opens complete book annotation data');
   shortCard.remove();
   longCard.remove();
 });
@@ -551,19 +558,24 @@ await test('full annotation modal closes by button, backdrop and Escape', () => 
   overlay.hidden = true;
   const dialog = document.createElement('section');
   const closeButton = document.createElement('button');
+  const title = document.createElement('h2');
+  const label = document.createElement('p');
   const text = document.createElement('p');
-  dialog.append(closeButton, text);
+  dialog.append(closeButton, title, label, text);
   overlay.append(dialog);
   document.body.append(overlay);
-  const modal = createAnnotationModalController(overlay, text, closeButton);
-  modal.open('Full annotation');
+  const modal = createAnnotationModalController(overlay, text, closeButton, title, label);
+  const book = { title: 'Ноев ковчег', author: 'Юлия Васильевна Артюхович', annotation: 'Full annotation' };
+  modal.open(book);
   assert(!overlay.hidden && text.textContent === 'Full annotation', 'modal opens');
+  assert(title.textContent === '«Ноев ковчег» — Юлия Васильевна Артюхович', 'modal heading contains quoted title and author');
+  assert(label.textContent === 'Аннотация', 'modal has a separate annotation label');
   closeButton.click();
   assert(overlay.hidden, 'close button');
-  modal.open('Full annotation');
+  modal.open(book);
   overlay.click();
   assert(overlay.hidden, 'backdrop click');
-  modal.open('Full annotation');
+  modal.open(book);
   document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   assert(overlay.hidden, 'Escape');
   overlay.remove();
@@ -578,7 +590,7 @@ await test('lazy folder tree renders books as cards only after folder expansion'
     <p id="status-text"></p><dl id="stats"><div><dd id="folder-count"></dd></div><div><dd id="book-count"></dd></div></dl>
     <div id="error-panel"><p id="error-text"></p></div><button id="retry-button"></button>
     <section id="library-panel"><div id="library-tree"></div></section>
-    <div id="annotation-modal" hidden><section><button id="annotation-modal-close"></button><p id="annotation-modal-text"></p></section></div>`;
+    <div id="annotation-modal" hidden><section><button id="annotation-modal-close"></button><h2 id="annotation-modal-title"></h2><p id="annotation-modal-label"></p><p id="annotation-modal-text"></p></section></div>`;
   document.body.append(fixture);
   const uiModule = await import(`../js/ui.js?tree-test=${Date.now()}`);
   uiModule.renderLibrary({

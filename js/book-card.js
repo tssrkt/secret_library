@@ -47,9 +47,13 @@ export function createBookCard(book, onDownload, documentRef = document, options
   const more = documentRef.createElement('button');
   more.type = 'button';
   more.className = 'book-annotation-more';
-  more.textContent = 'Еще';
+  more.textContent = 'Читать далее';
   more.hidden = true;
-  more.addEventListener('click', () => options.onAnnotation?.(content.annotation, more));
+  more.addEventListener('click', () => options.onAnnotation?.({
+    annotation: content.annotation,
+    title: content.title,
+    author: content.author,
+  }, more));
   annotationBlock.append(annotation, more);
   const download = documentRef.createElement('button');
   download.type = 'button';

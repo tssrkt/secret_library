@@ -30,6 +30,8 @@ const elements = {
   annotationModal: document.querySelector('#annotation-modal'),
   annotationModalText: document.querySelector('#annotation-modal-text'),
   annotationModalClose: document.querySelector('#annotation-modal-close'),
+  annotationModalTitle: document.querySelector('#annotation-modal-title'),
+  annotationModalLabel: document.querySelector('#annotation-modal-label'),
 };
 
 const dropdown = setupDropdown(elements.avatar, elements.avatarMenu);
@@ -38,6 +40,8 @@ const annotationModal = createAnnotationModalController(
   elements.annotationModal,
   elements.annotationModalText,
   elements.annotationModalClose,
+  elements.annotationModalTitle,
+  elements.annotationModalLabel,
 );
 
 export function setUserAvatar(user = {}) {
@@ -164,7 +168,7 @@ export function renderLibrary(index, onDownload = async () => {}) {
       grid.className = 'book-grid';
       for (const book of books) {
         grid.append(createBookCard(book, onDownload, document, {
-          onAnnotation: (annotation, trigger) => annotationModal.open(annotation, trigger),
+          onAnnotation: (book, trigger) => annotationModal.open(book, trigger),
         }));
       }
       item.append(grid);

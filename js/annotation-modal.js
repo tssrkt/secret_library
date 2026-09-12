@@ -1,4 +1,4 @@
-export function createAnnotationModalController(overlay, text, closeButton, documentRef = document) {
+export function createAnnotationModalController(overlay, text, closeButton, title, label, documentRef = document) {
   let returnFocus = null;
 
   const close = () => {
@@ -9,9 +9,11 @@ export function createAnnotationModalController(overlay, text, closeButton, docu
     target?.focus();
   };
 
-  const open = (annotation, trigger = null) => {
+  const open = (book, trigger = null) => {
     returnFocus = trigger;
-    text.textContent = annotation;
+    title.textContent = `«${book.title}» — ${book.author}`;
+    label.textContent = 'Аннотация';
+    text.textContent = book.annotation;
     overlay.hidden = false;
     closeButton.focus();
   };
