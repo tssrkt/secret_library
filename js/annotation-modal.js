@@ -52,6 +52,21 @@ export function createAnnotationModalController(
     returnFocus = null;
     target?.focus();
   };
+  const appendMetadataButtons = (container, entries, className, onSelect) => {
+    container.replaceChildren();
+    entries.forEach(({ value, label }, index) => {
+      if (index) container.append(documentRef.createTextNode(', '));
+      const button = documentRef.createElement('button');
+      button.type = 'button';
+      button.className = `book-metadata-link ${className}`;
+      button.textContent = label;
+      button.addEventListener('click', () => {
+        close();
+        onSelect(value, label);
+      });
+      container.append(button);
+    });
+  };
   const open = (book, trigger = null) => {
     const openVersion = ++version;
     returnFocus = trigger;
@@ -60,7 +75,19 @@ export function createAnnotationModalController(
     bookTitle.textContent = `«${book.title}»`;
     const bookAuthors = documentRef.createElement('span');
     bookAuthors.className = 'annotation-modal-authors';
-    bookAuthors.textContent = formatModalAuthors(book);
+    const allAuthors = Array.isArray(book.authors)
+      ? book.authors.filter((author) => typeof author === 'string' && author.trim()).map((author) => author.trim())
+      : [];
+    const visibleAuthors = allAuthors.slice(0, 2);
+    if (visibleAuthors.length && options.onAuthorFilter) {
+      appendMetadataButtons(
+        bookAuthors,
+        visibleAuthors.map((author) => ({ value: author, label: author })),
+        'book-author-link',
+        options.onAuthorFilter,
+      );
+      if (allAuthors.length >= 3) bookAuthors.append(documentRef.createTextNode(' и другие'));
+    } else bookAuthors.textContent = formatModalAuthors(book);
     title.replaceChildren(bookTitle, documentRef.createTextNode(' '), bookAuthors);
     genres.textContent = book.genres?.length ? book.genres.join(', ') : 'Жанр не указан';
     text.textContent = book.annotation;
@@ -69,7 +96,17 @@ export function createAnnotationModalController(
     closeButton.focus();
 
     void Promise.resolve((options.genreLabels || genreLabels)(book.genres)).then((labels) => {
-      if (openVersion === version) genres.textContent = labels;
+      if (openVersion !== version) return;
+      const codes = Array.isArray(book.genres) ? book.genres : [];
+      if (codes.length && options.onGenreFilter) {
+        const translated = codes.map((code) => options.genresRu?.[code] || code);
+        appendMetadataButtons(
+          genres,
+          codes.map((code, index) => ({ value: code, label: translated[index] })),
+          'book-genre-link',
+          options.onGenreFilter,
+        );
+      } else genres.textContent = labels;
     });
     if (book.coverFileId && coverImage && coverPlaceholder && options.loadCover) {
       void Promise.resolve(options.loadCover(book)).then((url) => {

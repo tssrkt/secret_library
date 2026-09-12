@@ -7,12 +7,16 @@ import { loadCover } from './cover-cache.js';
 import { loadGenreDictionary } from './genre-labels.js';
 import { createPaginator, paginateItems } from './pagination.js';
 import { METADATA_VERSION } from './config.js';
+import { filterBooksByDirectValue, russianBookCount } from './direct-filter.js';
 
 const genresRu = await loadGenreDictionary().catch(() => ({}));
 
 const coverUrls = new Set();
 const pageByFolderId = new Map();
 let resetLibraryHome = () => {};
+let selectDirectFilter = () => {};
+const onAuthorFilter = (value) => selectDirectFilter({ type: 'author', value: value.trim() });
+const onGenreFilter = (value) => selectDirectFilter({ type: 'genre', value });
 
 function clearCoverUrls() {
   for (const url of coverUrls) URL.revokeObjectURL(url);
@@ -69,6 +73,9 @@ const annotationModal = createAnnotationModalController(
   elements.annotationModalCoverImage,
   elements.annotationModalCoverPlaceholder,
   {
+    genresRu,
+    onAuthorFilter,
+    onGenreFilter,
     loadCover: async ({ coverFileId }) => {
       const url = URL.createObjectURL(await loadCover(coverFileId));
       coverUrls.add(url);
@@ -176,10 +183,13 @@ export function renderLibrary(index, onDownload = async () => {}) {
   elements.libraryPanel.hidden = false;
   const root = index.folders.find((folder) => folder.id === index.rootFolderId);
   const lookups = buildLibraryLookups(index);
+  const resultsState = { filter: null, page: 1 };
 
   const createCard = (book) => createBookCard(book, onDownload, document, {
     onAnnotation: (details, trigger) => annotationModal.open(details, trigger),
     genresRu,
+    onAuthorFilter,
+    onGenreFilter,
     loadCover: async ({ coverFileId }) => {
       const url = URL.createObjectURL(await loadCover(coverFileId));
       coverUrls.add(url);
@@ -255,7 +265,7 @@ export function renderLibrary(index, onDownload = async () => {}) {
   }
 
   const rootId = root?.id || index.rootFolderId;
-  const branch = createBranch(rootId);
+  let branch = createBranch(rootId);
   if (!branch.childElementCount) {
     const empty = document.createElement('p');
     empty.className = 'empty-library';
@@ -265,8 +275,18 @@ export function renderLibrary(index, onDownload = async () => {}) {
     elements.tree.append(branch);
   }
   resetLibraryHome = () => {
+    annotationModal.close();
+    const wasResults = Boolean(resultsState.filter);
+    if (resultsState.filter) {
+      resultsState.filter = null;
+      resultsState.page = 1;
+      disposeBookCards(elements.tree);
+      pageByFolderId.set(rootId, 1);
+      branch = createBranch(rootId);
+      elements.tree.replaceChildren(branch);
+    }
     pageByFolderId.set(rootId, 1);
-    renderRootBookPage?.();
+    if (!wasResults) renderRootBookPage?.();
     for (const item of branch.children) {
       const toggle = item.querySelector(':scope > .tree-row > .folder-toggle');
       const child = item.querySelector(':scope > .tree-list');
@@ -275,6 +295,43 @@ export function renderLibrary(index, onDownload = async () => {}) {
       toggle?.setAttribute('aria-expanded', 'false');
     }
     elements.libraryPanel.scrollTop = 0;
+  };
+  const renderResults = () => {
+    const page = paginateItems(filterBooksByDirectValue(index.books, resultsState.filter), resultsState.page);
+    resultsState.page = page.currentPage;
+    const heading = document.createElement('h2');
+    heading.className = 'direct-results-title';
+    heading.tabIndex = -1;
+    const { type, value } = resultsState.filter;
+    heading.textContent = type === 'genre' ? `Жанр: ${genresRu[value] || value}` : `Автор: ${value}`;
+    const count = document.createElement('p');
+    count.textContent = `Найдено: ${russianBookCount(page.totalItems)}`;
+    const grid = document.createElement('div');
+    grid.className = 'book-grid';
+    for (const book of page.items) grid.append(createCard(book));
+    if (!page.totalItems) {
+      const empty = document.createElement('p');
+      empty.textContent = 'Ничего не найдено.';
+      grid.append(empty);
+    }
+    const paginator = createPaginator({
+      totalPages: page.totalPages,
+      currentPage: page.currentPage,
+      onPageChange: (nextPage) => {
+        resultsState.page = nextPage;
+        renderResults();
+      },
+    });
+    disposeBookCards(elements.tree);
+    elements.tree.replaceChildren(heading, count, grid, ...(paginator ? [paginator] : []));
+    elements.libraryPanel.scrollTop = 0;
+    heading.focus({ preventScroll: true });
+  };
+  selectDirectFilter = (filter) => {
+    annotationModal.close();
+    resultsState.filter = filter;
+    resultsState.page = 1;
+    renderResults();
   };
   showStats(Math.max(0, index.folders.length - (root ? 1 : 0)), index.books.length);
   updateMetadataActions(index);
@@ -287,6 +344,8 @@ export function resetUi() {
   disposeBookCards(elements.tree);
   elements.tree.replaceChildren();
   resetLibraryHome = () => {};
+  selectDirectFilter = () => {};
+  annotationModal.close();
   clearError();
 }
 

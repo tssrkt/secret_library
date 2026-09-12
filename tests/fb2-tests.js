@@ -19,6 +19,7 @@ import { bookCardView, createBookCard } from '../js/book-card.js';
 import { createAnnotationModalController, formatModalAuthors, modalCoverWidth } from '../js/annotation-modal.js';
 import { genreLabels, loadGenreDictionary } from '../js/genre-labels.js';
 import { BOOKS_PER_PAGE, createPaginator, paginateItems, paginationTokens } from '../js/pagination.js';
+import { filterBooksByDirectValue, russianBookCount } from '../js/direct-filter.js';
 import {
   AUTH_SESSION_KEY, PREVIOUS_SIGN_IN_KEY, clearAccessToken, clearPersistedAuth,
   createAuthAttemptGuard, getAccessToken, persistAuthSession, recoverAuthSession, restoreAuthSession,
@@ -1306,6 +1307,106 @@ await test('Drive refresh preserves unchanged metadata and resets changed books'
   preserveBookMetadata(current, previous);
   equal([current.createdAt, current.books[0].title, current.books[0].preview, current.books[0].metadataStatus], ['old', 'Kept', 'Kept preview', 'ready'], 'preserved');
   equal([current.books[1].title, current.books[1].metadataStatus], [undefined, 'pending'], 'changed');
+});
+
+await test('direct filters compare original genre codes and exact individual authors without mutation', () => {
+  const books = [
+    { genres: ['sci_psychology', 'other'], authors: [' Илья Ильф ', 'Евгений Петров'] },
+    { genres: ['same_label'], authors: ['Илья Ильфов'] },
+  ];
+  const before = JSON.stringify(books);
+  for (const value of ['sci_psychology', 'other']) {
+    equal(filterBooksByDirectValue(books, { type: 'genre', value }), [books[0]], 'each original code matches');
+  }
+  equal(filterBooksByDirectValue(books, { type: 'genre', value: 'Психология' }), [], 'display label is not a key');
+  for (const value of ['Илья Ильф', 'Евгений Петров']) {
+    equal(filterBooksByDirectValue(books, { type: 'author', value }), [books[0]], 'individual exact author');
+  }
+  equal(filterBooksByDirectValue(books, { type: 'author', value: 'Ильф' }), [], 'no substring match');
+  equal(JSON.stringify(books), before, 'index remains unchanged');
+  equal([0, 1, 24, 137, 11, 21].map(russianBookCount), ['0 книг', '1 книга', '24 книги', '137 книг', '11 книг', '21 книга'], 'Russian counts');
+});
+
+await test('metadata links retain card layout and separate same-label genre codes', () => {
+  const fixture = document.createElement('div');
+  const book = { metadataStatus: 'ready', fileName: 'book.fb2', authors: ['Илья Ильф', 'Евгений Петров'], genres: ['a', 'b'] };
+  const selected = [];
+  let opened = 0;
+  const options = { genresRu: { a: 'Психология', b: 'Психология' }, onAnnotation: () => opened++ };
+  const plain = createBookCard(book, async () => {}, document, options);
+  const linked = createBookCard(book, async () => {}, document, {
+    ...options, onGenreFilter: (code) => selected.push(code), onAuthorFilter: (author) => selected.push(author),
+  });
+  fixture.append(plain, linked);
+  document.body.append(fixture);
+  const buttons = [...linked.querySelectorAll('.book-metadata-link')];
+  buttons.forEach((button) => button.click());
+  equal(selected, ['Илья Ильф', 'Евгений Петров', 'a', 'b'], 'each metadata item has its own value');
+  assert(opened === 0, 'metadata clicks do not open annotation');
+  assert(buttons.every((button) => button.type === 'button' && button.tabIndex === 0), 'native keyboard buttons');
+  const styles = getComputedStyle(buttons[0]);
+  assert(styles.backgroundColor === 'rgba(0, 0, 0, 0)' && styles.borderWidth === '0px' && styles.padding === '0px', 'text-only appearance');
+  equal([linked.offsetWidth, linked.offsetHeight], [plain.offsetWidth, plain.offsetHeight], 'unchanged card dimensions');
+  buttons[0].focus();
+  assert(buttons[0].matches(':focus-visible') && getComputedStyle(buttons[0]).outlineStyle === 'solid', 'visible keyboard focus');
+  equal([linked.offsetWidth, linked.offsetHeight], [plain.offsetWidth, plain.offsetHeight], 'focus preserves dimensions');
+  const hover = [...document.styleSheets].flatMap((sheet) => [...sheet.cssRules]).find((rule) => rule.selectorText === '.book-metadata-link:hover');
+  assert(hover.style.color === 'black' && hover.style.background === 'transparent', 'hover stays black and transparent');
+  fixture.querySelectorAll('.book-card').forEach((card) => card.dispatchEvent(new Event('book-card-dispose')));
+  fixture.remove();
+});
+
+await test('direct result navigation uses all folders, current-page DOM, home and modal actions', async () => {
+  const markup = new DOMParser().parseFromString(await (await fetch('../index.html')).text(), 'text/html');
+  markup.querySelectorAll('script').forEach((script) => script.remove());
+  const fixture = document.createElement('div');
+  fixture.append(...markup.body.children);
+  document.body.append(fixture);
+  const ui = await import(`../js/ui.js?direct-test=${Date.now()}`);
+  const books = Array.from({ length: 51 }, (_, i) => ({
+    id: String(i), parentId: i ? 'nested' : 'root', fileName: `${i}.fb2`, metadataStatus: 'ready',
+    title: `Book ${i}`, authors: ['Лем', 'Соавтор'], genres: i < 50 ? ['sf', 'sci_psychology'] : ['sf'],
+  }));
+  const index = { rootFolderId: 'root', folders: [{ id: 'root', parentId: null }, { id: 'nested', parentId: 'root', name: 'Nested' }], books };
+  ui.renderLibrary(index);
+  const noop = () => {};
+  ui.bindActions({ home: ui.showLibraryHome, signIn: noop, refresh: noop, indexMetadata: noop, retryMetadata: noop, stopMetadata: noop, signOut: noop, rebuild: noop });
+  const tree = fixture.querySelector('#library-tree');
+  const count = () => tree.querySelectorAll('.book-card').length;
+  const click = (selector) => tree.querySelector(selector).click();
+  const pageTwo = () => click('[aria-label="Страница 2"]');
+  click('.book-genre-link');
+  assert(!tree.querySelector('.tree-list') && count() === 50, 'flat results render only 50 of all 51 books');
+  assert(tree.textContent.includes('Найдено: 51 книга'), 'total count across folders');
+  pageTwo();
+  assert(count() === 1 && tree.querySelector('.book-card-title').textContent === 'Book 50', 'only last-page card exists');
+  click('.book-author-link');
+  assert(count() === 50 && tree.querySelector('[aria-current="page"]').textContent === '1', 'author click replaces genre and resets page');
+  pageTwo();
+  click('.book-genre-link');
+  assert(count() === 50 && tree.querySelector('[aria-current="page"]').textContent === '1', 'genre click resets page');
+  tree.querySelectorAll('.book-genre-link')[1].click();
+  assert(count() === 50 && !tree.querySelector('.book-pagination'), 'exactly 50 results have no paginator');
+  click('.book-card-title');
+  const modal = fixture.querySelector('#annotation-modal');
+  modal.querySelectorAll('.book-author-link')[1].click();
+  assert(modal.hidden && tree.querySelector('h2').textContent === 'Автор: Соавтор', 'modal author closes dialog and opens results');
+  click('.book-card-title');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  modal.querySelector('.book-genre-link').click();
+  assert(modal.hidden && tree.querySelector('h2').textContent.startsWith('Жанр:'), 'modal genre opens results');
+  pageTwo();
+  fixture.querySelector('#library-home-link').click();
+  assert(tree.querySelector('.tree-list') && !tree.querySelector('.direct-results-title') && count() === 1, 'home restores collapsed own tree');
+  click('.book-author-link');
+  assert(count() === 50 && tree.querySelector('[aria-current="page"]').textContent === '1', 'new results after home start on page one');
+  // Retain a rendered metadata button while its source disappears to exercise the safe empty state.
+  const staleButton = tree.querySelector('.book-author-link');
+  index.books = [];
+  staleButton.click();
+  assert(count() === 0 && tree.textContent.includes('Ничего не найдено.') && !tree.querySelector('.book-pagination'), 'zero results have no cards or paginator');
+  ui.resetUi();
+  fixture.remove();
 });
 
 output.textContent = failures.length

@@ -255,6 +255,26 @@ dd { margin: 0; font-weight: 750; font-variant-numeric: tabular-nums; }
   line-clamp: 2;
 }
 .book-card-genre { font-size: 15px; }
+.book-metadata-link {
+  appearance: none;
+  display: inline;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: inherit;
+  vertical-align: baseline;
+  cursor: pointer;
+}
+.book-metadata-link:hover { color: black; background: transparent; }
+.book-metadata-link:focus-visible {
+  color: black;
+  outline: 2px solid black;
+  outline-offset: -2px;
+}
 .book-card-annotation-block { display: flex; height: 0; min-height: 0; margin-top: .55rem; flex: 1; overflow: hidden; flex-direction: column; }
 .book-card-annotation {
   display: block;

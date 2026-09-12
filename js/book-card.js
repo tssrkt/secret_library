@@ -62,13 +62,39 @@ export function createBookCard(book, onDownload, documentRef = document, options
   body.className = 'book-card-body';
   const author = documentRef.createElement('p');
   author.className = 'book-card-author';
-  author.textContent = content.author;
+  const authors = Array.isArray(book.authors)
+    ? book.authors.filter((value) => typeof value === 'string' && value.trim())
+    : [];
+  if (authors.length && options.onAuthorFilter) {
+    authors.forEach((value, index) => {
+      if (index) author.append(documentRef.createTextNode(', '));
+      const button = documentRef.createElement('button');
+      button.type = 'button';
+      button.className = 'book-metadata-link book-author-link';
+      button.textContent = value.trim();
+      button.addEventListener('click', () => options.onAuthorFilter(value.trim()));
+      author.append(button);
+    });
+  } else author.textContent = content.author;
   const title = documentRef.createElement('h3');
   title.className = 'book-card-title';
   title.textContent = content.title;
   const genre = documentRef.createElement('p');
   genre.className = 'book-card-genre';
-  genre.textContent = content.genreLine;
+  const genreCodes = Array.isArray(book.genres)
+    ? book.genres.filter((value) => typeof value === 'string' && value.trim())
+    : [];
+  if (genreCodes.length && options.onGenreFilter) {
+    genreCodes.forEach((code, index) => {
+      if (index) genre.append(documentRef.createTextNode(', '));
+      const button = documentRef.createElement('button');
+      button.type = 'button';
+      button.className = 'book-metadata-link book-genre-link';
+      button.textContent = options.genresRu?.[code] || code;
+      button.addEventListener('click', () => options.onGenreFilter(code, button.textContent));
+      genre.append(button);
+    });
+  } else genre.textContent = content.genreLine;
   const annotationBlock = documentRef.createElement('div');
   annotationBlock.className = 'book-card-annotation-block';
   const annotation = documentRef.createElement('p');
