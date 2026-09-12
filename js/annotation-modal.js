@@ -1,5 +1,14 @@
 import { genreLabels } from './genre-labels.js';
 
+const MOBILE_BREAKPOINT = 650;
+
+export function modalCoverWidth(modalHeight, naturalWidth, naturalHeight, viewportWidth) {
+  if (!modalHeight || !naturalWidth || !naturalHeight) return 0;
+  const scaledWidth = modalHeight * naturalWidth / naturalHeight;
+  if (viewportWidth > MOBILE_BREAKPOINT) return scaledWidth;
+  return Math.min(scaledWidth, viewportWidth * 0.38);
+}
+
 export function createAnnotationModalController(
   overlay, text, closeButton, title, genres, coverImage = null, coverPlaceholder = null,
   options = {}, documentRef = document,
@@ -7,12 +16,15 @@ export function createAnnotationModalController(
   let returnFocus = null;
   let version = 0;
   let activeCoverUrl = null;
+  let coverResizeObserver = null;
 
   const releaseCover = () => {
     if (activeCoverUrl) options.releaseCoverUrl?.(activeCoverUrl);
     activeCoverUrl = null;
   };
   const resetCover = () => {
+    coverResizeObserver?.disconnect();
+    coverResizeObserver = null;
     releaseCover();
     if (!coverImage || !coverPlaceholder) return;
     coverImage.onload = null;
@@ -54,14 +66,26 @@ export function createAnnotationModalController(
         activeCoverUrl = url;
         coverImage.onload = () => {
           if (openVersion !== version) return;
-          const modalHeight = coverImage.closest('.annotation-modal')?.clientHeight || 0;
-          if (modalHeight && coverImage.naturalHeight) {
-            const naturalWidth = modalHeight * coverImage.naturalWidth / coverImage.naturalHeight;
-            const maximumWidth = Math.min(300, documentRef.defaultView.innerWidth * 0.38);
-            coverImage.parentElement.style.width = `${Math.min(naturalWidth, maximumWidth)}px`;
-          }
+          const modal = coverImage.closest('.annotation-modal');
+          const syncCoverWidth = () => {
+            const width = modalCoverWidth(
+              modal?.clientHeight || 0,
+              coverImage.naturalWidth,
+              coverImage.naturalHeight,
+              documentRef.defaultView.innerWidth,
+            );
+            if (width && Math.abs(coverImage.parentElement.clientWidth - width) > 0.5) {
+              coverImage.parentElement.style.width = `${width}px`;
+            }
+          };
+          syncCoverWidth();
           coverPlaceholder.hidden = true;
           coverImage.hidden = false;
+          const ResizeObserverClass = documentRef.defaultView.ResizeObserver;
+          if (modal && ResizeObserverClass) {
+            coverResizeObserver = new ResizeObserverClass(syncCoverWidth);
+            coverResizeObserver.observe(modal);
+          }
           releaseCover();
         };
         coverImage.onerror = resetCover;

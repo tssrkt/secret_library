@@ -11,7 +11,7 @@ import { setupDropdown } from '../js/dropdown.js';
 import { accountIdentity, applyDriveAvatar, createAvatarController } from '../js/avatar.js';
 import { downloadDriveFile, getCurrentDriveUser } from '../js/drive.js';
 import { bookCardView, createBookCard } from '../js/book-card.js';
-import { createAnnotationModalController } from '../js/annotation-modal.js';
+import { createAnnotationModalController, modalCoverWidth } from '../js/annotation-modal.js';
 import { genreLabels } from '../js/genre-labels.js';
 import {
   AUTH_SESSION_KEY, PREVIOUS_SIGN_IN_KEY, clearAccessToken, clearPersistedAuth,
@@ -802,6 +802,24 @@ await test('full annotation modal renders genres and closes normally', async () 
   document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   assert(overlay.hidden, 'Escape');
   overlay.remove();
+});
+
+await test('annotation modal cover uses full height and intrinsic proportions', () => {
+  equal(modalCoverWidth(600, 300, 900, 1200), 200, 'narrow cover width follows aspect ratio');
+  equal(modalCoverWidth(600, 450, 600, 1200), 450, 'regular cover width follows aspect ratio');
+  equal(modalCoverWidth(600, 700, 600, 1200), 700, 'wide cover is not capped on desktop');
+  equal(modalCoverWidth(600, 1000, 600, 600), 228, 'wide cover is constrained only on mobile');
+  const fixture = document.createElement('div');
+  fixture.innerHTML = '<section class="annotation-modal" style="height:400px;width:800px"><div class="annotation-modal-cover"><img></div><div class="annotation-modal-content">Text</div></section>';
+  document.body.append(fixture);
+  const cover = fixture.querySelector('.annotation-modal-cover');
+  const image = fixture.querySelector('img');
+  const coverStyles = getComputedStyle(cover);
+  const imageStyles = getComputedStyle(image);
+  assert(coverStyles.width !== '150px' && coverStyles.maxWidth === 'none', 'desktop cover column has no fixed width cap');
+  assert(image.getBoundingClientRect().height === cover.getBoundingClientRect().height, 'cover image fills the column height');
+  assert(imageStyles.maxWidth === 'none' && imageStyles.objectFit === 'fill', 'cover is not contained in a fixed box');
+  fixture.remove();
 });
 
 await test('lazy folder tree renders books as cards only after folder expansion', async () => {
