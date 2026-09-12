@@ -2,6 +2,7 @@ import { setupDropdown } from './dropdown.js';
 import { buildLibraryLookups, folderHasLibraryChildren } from './library-view-model.js';
 import { createAvatarController, greetingText } from './avatar.js';
 import { createBookCard } from './book-card.js';
+import { createAnnotationModalController } from './annotation-modal.js';
 
 const elements = {
   signIn: document.querySelector('#sign-in-button'),
@@ -25,10 +26,18 @@ const elements = {
   retry: document.querySelector('#retry-button'),
   libraryPanel: document.querySelector('#library-panel'),
   tree: document.querySelector('#library-tree'),
+  annotationModal: document.querySelector('#annotation-modal'),
+  annotationModalText: document.querySelector('#annotation-modal-text'),
+  annotationModalClose: document.querySelector('#annotation-modal-close'),
 };
 
 const dropdown = setupDropdown(elements.avatar, elements.avatarMenu);
 const avatar = createAvatarController(elements.avatar, elements.avatarImage, elements.avatarPlaceholder);
+const annotationModal = createAnnotationModalController(
+  elements.annotationModal,
+  elements.annotationModalText,
+  elements.annotationModalClose,
+);
 
 export function setUserAvatar(user = {}) {
   elements.greeting.textContent = greetingText(user.displayName);
@@ -146,7 +155,11 @@ export function renderLibrary(index, onDownload = async () => {}) {
       item.className = 'book-grid-item';
       const grid = document.createElement('div');
       grid.className = 'book-grid';
-      for (const book of books) grid.append(createBookCard(book, onDownload));
+      for (const book of books) {
+        grid.append(createBookCard(book, onDownload, document, {
+          onAnnotation: (annotation, trigger) => annotationModal.open(annotation, trigger),
+        }));
+      }
       item.append(grid);
       list.append(item);
     }

@@ -10,6 +10,7 @@ import { setupDropdown } from '../js/dropdown.js';
 import { applyDriveAvatar, createAvatarController, greetingText } from '../js/avatar.js';
 import { downloadDriveFile, getCurrentDriveUser } from '../js/drive.js';
 import { bookCardView, createBookCard } from '../js/book-card.js';
+import { createAnnotationModalController } from '../js/annotation-modal.js';
 
 const output = document.querySelector('#results');
 let passed = 0;
@@ -461,11 +462,11 @@ await test('book card uses ready metadata and placeholder fields', () => {
     authors: ['First Author', 'Second Author'], annotation: 'Book annotation',
   });
   equal(ready, {
-    author: 'First Author, Second Author', title: 'Book title', genres: 'Жанр не указан', annotation: 'Book annotation',
+    author: 'First Author, Second Author', title: 'Book title', genreLine: 'Жанр не указан', annotation: 'Book annotation',
   }, 'ready card');
   const pending = bookCardView({ metadataStatus: 'pending', fileName: 'pending.zip' });
   equal(pending, {
-    author: 'Автор не указан', title: 'pending.zip', genres: 'Жанр не указан', annotation: 'Аннотация пока не загружена',
+    author: 'Автор не указан', title: 'pending.zip', genreLine: 'Жанр не указан', annotation: 'Аннотация пока не загружена',
   }, 'pending card');
 });
 
@@ -495,17 +496,73 @@ await test('Drive download requests the original file ID', async () => {
   assert(path.startsWith('/files/drive%20zip%2Fid?') && path.includes('alt=media'), 'Drive media path');
 });
 
-await test('annotation is visually clamped and cards form a grid', () => {
-  const card = createBookCard({ metadataStatus: 'ready', fileName: 'book.fb2', annotation: 'Long '.repeat(100) }, async () => {});
+await test('one full-width card per row, with download directly below equal-width cover', () => {
+  const card = createBookCard({ metadataStatus: 'ready', fileName: 'book.fb2', annotation: 'Text' }, async () => {});
+  const second = createBookCard({ metadataStatus: 'pending', fileName: 'second.fb2' }, async () => {});
   const grid = document.createElement('div');
   grid.className = 'book-grid';
-  grid.append(card);
+  grid.style.width = '600px';
+  grid.append(card, second);
   document.body.append(grid);
-  const annotation = getComputedStyle(card.querySelector('.book-card-annotation'));
-  assert(annotation.overflow === 'hidden', 'annotation overflow');
-  assert(annotation.getPropertyValue('-webkit-line-clamp') === '5', 'annotation line clamp');
-  assert(getComputedStyle(grid).display === 'grid', 'book grid');
+  assert(getComputedStyle(grid).flexDirection === 'column', 'one-column layout');
+  assert(card.getBoundingClientRect().width === grid.getBoundingClientRect().width, 'card fills row');
+  assert(second.getBoundingClientRect().top > card.getBoundingClientRect().bottom, 'second card starts on next row');
+  const cover = card.querySelector('.book-cover-placeholder').getBoundingClientRect();
+  const download = card.querySelector('.book-download-button').getBoundingClientRect();
+  assert(cover.width === download.width, 'cover and download widths match');
+  assert(download.top === cover.bottom, 'download touches cover');
   grid.remove();
+});
+
+await test('More is shown only for truncated annotation', async () => {
+  let openedAnnotation = '';
+  const shortCard = createBookCard(
+    { metadataStatus: 'ready', fileName: 'short.fb2', annotation: 'Short' }, async () => {}, document,
+    { isAnnotationOverflowing: () => false },
+  );
+  const longCard = createBookCard(
+    { metadataStatus: 'ready', fileName: 'long.fb2', annotation: 'Long '.repeat(100) }, async () => {}, document,
+    { isAnnotationOverflowing: () => true, onAnnotation: (text) => { openedAnnotation = text; } },
+  );
+  document.body.append(shortCard, longCard);
+  await new Promise(requestAnimationFrame);
+  assert(shortCard.querySelector('.book-annotation-more').hidden, 'short annotation has no More');
+  assert(!longCard.querySelector('.book-annotation-more').hidden, 'truncated annotation has More');
+  longCard.querySelector('.book-annotation-more').click();
+  assert(openedAnnotation === 'Long '.repeat(100).trim(), 'More opens full annotation callback');
+  shortCard.remove();
+  longCard.remove();
+});
+
+await test('genre renders as exactly one current line', () => {
+  const known = createBookCard({ metadataStatus: 'ready', fileName: 'book.fb2', genres: ['Историческая проза'] }, async () => {});
+  const missing = createBookCard({ metadataStatus: 'ready', fileName: 'book.fb2' }, async () => {});
+  equal(known.querySelectorAll('.book-card-genre').length, 1, 'known genre node count');
+  equal(known.querySelector('.book-card-genre').textContent, 'Жанр: Историческая проза', 'known genre');
+  equal(missing.querySelector('.book-card-genre').textContent, 'Жанр не указан', 'genre fallback');
+});
+
+await test('full annotation modal closes by button, backdrop and Escape', () => {
+  const overlay = document.createElement('div');
+  overlay.hidden = true;
+  const dialog = document.createElement('section');
+  const closeButton = document.createElement('button');
+  const text = document.createElement('p');
+  dialog.append(closeButton, text);
+  overlay.append(dialog);
+  document.body.append(overlay);
+  const modal = createAnnotationModalController(overlay, text, closeButton);
+  modal.open('Full annotation');
+  assert(!overlay.hidden && text.textContent === 'Full annotation', 'modal opens');
+  closeButton.click();
+  assert(overlay.hidden, 'close button');
+  modal.open('Full annotation');
+  overlay.click();
+  assert(overlay.hidden, 'backdrop click');
+  modal.open('Full annotation');
+  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  assert(overlay.hidden, 'Escape');
+  overlay.remove();
 });
 
 await test('lazy folder tree renders books as cards only after folder expansion', async () => {
@@ -516,7 +573,8 @@ await test('lazy folder tree renders books as cards only after folder expansion'
     <div id="user-controls"><span id="user-greeting" class="user-greeting">Привет!</span><button id="avatar-button"><span id="avatar-placeholder"></span><img id="avatar-image"></button><div id="avatar-menu"><button id="sign-out-button" role="menuitem">Выйти</button></div></div>
     <p id="status-text"></p><dl id="stats"><div><dd id="folder-count"></dd></div><div><dd id="book-count"></dd></div></dl>
     <div id="error-panel"><p id="error-text"></p></div><button id="retry-button"></button>
-    <section id="library-panel"><div id="library-tree"></div></section>`;
+    <section id="library-panel"><div id="library-tree"></div></section>
+    <div id="annotation-modal" hidden><section><button id="annotation-modal-close"></button><p id="annotation-modal-text"></p></section></div>`;
   document.body.append(fixture);
   const uiModule = await import(`../js/ui.js?tree-test=${Date.now()}`);
   uiModule.renderLibrary({

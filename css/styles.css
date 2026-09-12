@@ -128,43 +128,43 @@ dd { margin: 0; font-weight: 750; font-variant-numeric: tabular-nums; }
 
 .book-grid-item { margin: .45rem 0 .9rem; }
 .book-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr));
+  display: flex;
+  flex-direction: column;
   gap: .85rem;
 }
 .book-card {
   display: grid;
-  grid-template-columns: 88px minmax(0, 1fr);
-  gap: .9rem;
+  grid-template-columns: 112px minmax(0, 1fr);
   min-width: 0;
   border: 1px solid #e0d6c8;
   border-radius: .6rem;
-  padding: .8rem;
+  overflow: hidden;
   background: #fffaf3;
 }
+.book-card-media { display: flex; width: 112px; flex-direction: column; }
 .book-cover-placeholder {
   display: flex;
   align-items: center;
   justify-content: center;
   flex-direction: column;
   gap: .35rem;
-  width: 88px;
-  min-height: 126px;
-  border-radius: .35rem;
+  width: 112px;
+  min-height: 150px;
+  flex: 1;
   color: #756858;
   background: linear-gradient(145deg, #e7dccd, #f5ede2);
   text-align: center;
 }
 .book-cover-placeholder span { font-size: 2rem; }
 .book-cover-placeholder small { font-size: .7rem; }
-.book-card-body { display: flex; min-width: 0; flex-direction: column; }
-.book-card-author, .book-card-genres, .book-card-annotation { margin: 0; color: #746b60; }
+.book-card-body { display: flex; min-width: 0; padding: .9rem 1rem; flex-direction: column; }
+.book-card-author, .book-card-genre, .book-card-annotation { margin: 0; color: #746b60; }
 .book-card-author { font-size: .8rem; font-weight: 650; }
 .book-card-title { margin: .15rem 0 .35rem; font-size: 1rem; overflow-wrap: anywhere; }
-.book-card-genres { font-size: .75rem; }
+.book-card-genre { font-size: .75rem; }
+.book-card-annotation-block { margin-top: .55rem; }
 .book-card-annotation {
   display: -webkit-box;
-  margin-top: .55rem;
   overflow: hidden;
   font-size: .83rem;
   line-height: 1.4;
@@ -173,7 +173,42 @@ dd { margin: 0; font-weight: 750; font-variant-numeric: tabular-nums; }
   -webkit-line-clamp: 5;
   line-clamp: 5;
 }
-.book-download-button { align-self: flex-start; margin-top: auto; padding: .45rem .75rem; font-size: .8rem; }
+.book-annotation-more {
+  margin-top: .15rem;
+  padding: 0;
+  color: #684629;
+  background: transparent;
+  font-size: .8rem;
+  text-decoration: underline;
+}
+.book-download-button {
+  width: 112px;
+  border-radius: 0;
+  padding: .55rem .3rem;
+  font-size: .8rem;
+}
+
+.modal-backdrop {
+  position: fixed;
+  z-index: 50;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  background: rgb(35 27 20 / 55%);
+}
+.annotation-modal {
+  width: min(680px, 100%);
+  max-height: min(80vh, 720px);
+  overflow: auto;
+  border-radius: .7rem;
+  padding: 1.1rem 1.2rem;
+  background: #fffdf9;
+  box-shadow: 0 12px 45px rgb(20 14 9 / 30%);
+}
+.modal-header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+.modal-header h2 { margin: 0; font-size: 1.25rem; }
+.annotation-modal > p { margin: 1rem 0 0; line-height: 1.55; white-space: pre-wrap; }
 
 [hidden] { display: none !important; }
 
