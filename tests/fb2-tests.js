@@ -850,6 +850,9 @@ await test('production controls keep stop in status panel and menu actions out o
   assert(page.querySelector('#avatar-menu > #retry-metadata-button'), 'retry action belongs to avatar menu');
   assert(page.querySelector('#avatar-menu .account-identity #account-display-name'), 'account identity belongs to menu');
   assert(page.querySelector('#avatar-menu > #sign-out-button'), 'logout belongs to menu bottom');
+  const settingsItem = [...page.querySelectorAll('#avatar-menu > button')]
+    .find((item) => item.textContent.includes('Настройки'));
+  assert(settingsItem?.previousElementSibling?.tagName !== 'HR', 'no separator directly above settings');
   assert(page.querySelector('.annotation-modal > .annotation-modal-cover'), 'modal has a left cover column');
   assert(page.querySelector('.annotation-modal-content > #annotation-modal-genres'), 'genres are in the right text column');
   assert(!page.querySelector('#annotation-modal-label'), 'annotation heading is removed');
@@ -858,9 +861,18 @@ await test('production controls keep stop in status panel and menu actions out o
   assert(!page.querySelector('.app-header #stop-button'), 'stop is absent from header');
   assert(page.querySelector('h1').textContent === 'Тайная Библиотека', 'header title');
   const fixture = document.createElement('div');
-  fixture.innerHTML = '<div class="user-controls"><button class="avatar-button"></button><div class="avatar-menu"><button>Item</button></div></div><button hidden>Hidden</button>';
+  fixture.innerHTML = '<div class="user-controls" style="width:43px"><button class="avatar-button"></button><div class="avatar-menu"><button>Item</button></div></div><button hidden>Hidden</button>';
   document.body.append(fixture);
-  assert(getComputedStyle(fixture.querySelector('.avatar-menu')).position === 'absolute', 'dropdown is outside layout flow');
+  const menuStyles = getComputedStyle(fixture.querySelector('.avatar-menu'));
+  assert(menuStyles.position === 'absolute', 'dropdown is outside layout flow');
+  assert(menuStyles.right === '0px' && parseFloat(menuStyles.left) < 0, 'dropdown keeps its right edge and expands left');
+  assert(menuStyles.width !== 'auto' && parseFloat(menuStyles.minWidth) >= 360, 'desktop dropdown accommodates long actions');
+  assert(getComputedStyle(fixture.querySelector('.avatar-menu button')).whiteSpace === 'nowrap', 'desktop menu actions stay on one line');
+  const rootStyles = getComputedStyle(document.documentElement);
+  assert(rootStyles.getPropertyValue('--bg').trim() === '#f0ecf4', 'lilac page palette is centralized');
+  assert(rootStyles.getPropertyValue('--surface').trim() === '#f8f5fa', 'lilac surface palette is centralized');
+  assert(rootStyles.getPropertyValue('--accent').trim() === '#80669b', 'muted purple accent is centralized');
+  assert(rootStyles.getPropertyValue('--danger').trim() === '#9a4f68', 'muted berry danger color is centralized');
   assert(getComputedStyle(fixture.lastElementChild).display === 'none', 'hidden actions take no space');
   fixture.remove();
 });
