@@ -55,7 +55,13 @@ export function createAnnotationModalController(
   const open = (book, trigger = null) => {
     const openVersion = ++version;
     returnFocus = trigger;
-    title.textContent = `«${book.title}» ${formatModalAuthors(book)}`;
+    const bookTitle = documentRef.createElement('span');
+    bookTitle.className = 'annotation-modal-book-title';
+    bookTitle.textContent = `«${book.title}»`;
+    const bookAuthors = documentRef.createElement('span');
+    bookAuthors.className = 'annotation-modal-authors';
+    bookAuthors.textContent = formatModalAuthors(book);
+    title.replaceChildren(bookTitle, documentRef.createTextNode(' '), bookAuthors);
     genres.textContent = book.genres?.length ? book.genres.join(', ') : 'Жанр не указан';
     text.textContent = book.annotation;
     resetCover();

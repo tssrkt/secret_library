@@ -673,11 +673,11 @@ await test('one full-width card per row, with download directly below equal-widt
     getComputedStyle(card.querySelector('.book-card-genre')).fontSize,
     getComputedStyle(card.querySelector('.book-card-annotation')).fontSize,
     getComputedStyle(card.querySelector('.book-annotation-more')).fontSize,
-  ], ['16px', '15px', '14px', '14px', '14px'], 'card typography sizes');
+  ], ['18px', '16px', '15px', '16px', '14px'], 'card typography sizes');
   const annotationTypography = getComputedStyle(card.querySelector('.book-card-annotation'));
   equal(
     [annotationTypography.fontSize, annotationTypography.lineHeight],
-    ['14px', '20.3px'],
+    ['16px', '24.8px'],
     'annotation has readable computed typography',
   );
   grid.remove();
@@ -824,6 +824,42 @@ await test('annotation modal limits only the displayed author list', () => {
   equal(formatModalAuthors({ author: 'Legacy Author' }), 'Legacy Author', 'legacy display author remains supported');
 });
 
+await test('annotation modal keeps close action fixed and uses readable computed typography', () => {
+  const fixture = document.createElement('div');
+  fixture.innerHTML = `
+    <section class="annotation-modal" style="width:500px; height:420px">
+      <div class="annotation-modal-cover"><div class="annotation-modal-cover-placeholder">No cover</div></div>
+      <div class="annotation-modal-content">
+        <div class="modal-header">
+          <h2><span class="annotation-modal-book-title">«A very long book title that wraps onto several lines in this deliberately narrow dialog»</span> <span class="annotation-modal-authors">First Author, Second Author и другие</span></h2>
+          <button id="annotation-modal-close" class="secondary compact">×</button>
+        </div>
+        <p class="annotation-modal-genres">Biography, History</p>
+        <p id="annotation-modal-text">Full annotation text.</p>
+      </div>
+    </section>`;
+  document.body.append(fixture);
+  const modal = fixture.querySelector('.annotation-modal');
+  const close = fixture.querySelector('#annotation-modal-close');
+  const title = fixture.querySelector('.annotation-modal-book-title');
+  const authors = fixture.querySelector('.annotation-modal-authors');
+  const genres = fixture.querySelector('.annotation-modal-genres');
+  const annotation = fixture.querySelector('#annotation-modal-text');
+  const modalRect = modal.getBoundingClientRect();
+  const closeRect = close.getBoundingClientRect();
+  assert(getComputedStyle(modal).position === 'relative' && getComputedStyle(close).position === 'absolute', 'close button is positioned against modal');
+  assert(Math.abs(closeRect.top - modalRect.top - 12) < 1 && Math.abs(modalRect.right - closeRect.right - 14) < 1, 'close button remains at modal top-right');
+  assert(Number.parseFloat(getComputedStyle(fixture.querySelector('.modal-header h2')).paddingRight) >= 40, 'heading reserves room for close button');
+  equal([
+    getComputedStyle(title).fontSize,
+    getComputedStyle(authors).fontSize,
+    getComputedStyle(genres).fontSize,
+    getComputedStyle(annotation).fontSize,
+    getComputedStyle(annotation).lineHeight,
+  ], ['18px', '16px', '15px', '17px', '27.2px'], 'modal computed typography');
+  fixture.remove();
+});
+
 await test('annotation modal cover uses full height and intrinsic proportions', () => {
   equal(modalCoverWidth(600, 300, 900, 1200), 200, 'narrow cover width follows aspect ratio');
   equal(modalCoverWidth(600, 450, 600, 1200), 450, 'regular cover width follows aspect ratio');
@@ -899,24 +935,32 @@ await test('production controls keep stop in status panel and menu actions out o
   assert(!page.querySelector('.app-header #stop-button'), 'stop is absent from header');
   assert(page.querySelector('h1').textContent === 'Тайная Библиотека', 'header title');
   const fixture = document.createElement('div');
-  fixture.innerHTML = '<div class="user-controls" style="width:43px"><button class="avatar-button"></button><div class="avatar-menu"><button>Item</button></div></div><section id="library-panel"><article class="book-card"></article></section><a href="#theme-link">Link</a><button class="theme-button">Action</button><button class="theme-disabled" disabled>Disabled</button><button hidden>Hidden</button>';
+  fixture.innerHTML = '<div class="user-controls" style="width:43px"><button class="avatar-button"></button><div class="avatar-menu"><button>Item</button></div></div><section id="library-panel"><article class="book-card"><button class="book-download-button">СКАЧАТЬ</button><button class="book-annotation-more">Читать далее</button></article></section><button class="theme-button">Action</button><button hidden>Hidden</button>';
   document.body.append(fixture);
   const menuStyles = getComputedStyle(fixture.querySelector('.avatar-menu'));
   assert(menuStyles.position === 'absolute', 'dropdown is outside layout flow');
   assert(menuStyles.right === '0px' && parseFloat(menuStyles.left) < 0, 'dropdown keeps its right edge and expands left');
   assert(menuStyles.width !== 'auto' && parseFloat(menuStyles.minWidth) >= 360, 'desktop dropdown accommodates long actions');
-  assert(getComputedStyle(fixture.querySelector('.avatar-menu button')).whiteSpace === 'nowrap', 'desktop menu actions stay on one line');
+  const menuButtonWhiteSpace = getComputedStyle(fixture.querySelector('.avatar-menu button')).whiteSpace;
+  assert(
+    matchMedia('(max-width: 650px)').matches ? menuButtonWhiteSpace === 'normal' : menuButtonWhiteSpace === 'nowrap',
+    'menu action wrapping follows the responsive breakpoint',
+  );
   const rootStyles = getComputedStyle(document.documentElement);
-  assert(rootStyles.getPropertyValue('--bg').trim() === '#f0ecf4', 'light lilac page palette is restored');
-  assert(rootStyles.getPropertyValue('--surface').trim() === '#f8f5fa', 'light lilac surface is restored');
-  assert(rootStyles.getPropertyValue('--link').trim() === '#6f527f', 'plum link color is centralized');
-  assert(rootStyles.getPropertyValue('--link-hover').trim() === '#543d63', 'plum link hover is centralized');
-  assert(rootStyles.getPropertyValue('--button').trim() === '#273142', 'dark blue button color is centralized');
-  assert(rootStyles.getPropertyValue('--button-hover').trim() === '#11141a', 'near-black button hover is centralized');
-  assert(rootStyles.getPropertyValue('--danger').trim() === '#88445f', 'muted berry danger color is centralized');
-  assert(getComputedStyle(fixture.querySelector('a')).color === 'rgb(111, 82, 127)', 'ordinary links use plum color');
-  assert(getComputedStyle(fixture.querySelector('.theme-button')).backgroundColor === 'rgb(39, 49, 66)', 'primary buttons use dark blue');
-  assert(getComputedStyle(fixture.querySelector('.theme-disabled')).backgroundColor === 'rgb(140, 145, 160)', 'disabled buttons use muted blue-gray');
+  assert(getComputedStyle(document.body).backgroundColor === 'rgb(245, 241, 232)', 'original page background is restored from history');
+  assert(getComputedStyle(fixture.querySelector('#library-panel')).backgroundColor === 'rgb(255, 253, 249)', 'original panel background is restored from history');
+  assert(getComputedStyle(fixture.querySelector('.book-card')).backgroundColor === 'rgb(255, 250, 243)', 'original card background is restored from history');
+  assert(getComputedStyle(fixture.querySelector('.avatar-menu')).backgroundColor === 'rgb(255, 253, 249)', 'original menu background is restored from history');
+  assert(getComputedStyle(fixture.querySelector('.theme-button')).backgroundColor === 'rgb(104, 70, 41)', 'ordinary buttons use original brown accent');
+  assert(rootStyles.getPropertyValue('--download-accent').trim() === '#273142', 'current download accent is preserved');
+  assert(rootStyles.getPropertyValue('--download-hover').trim() === '#11141a', 'current download hover is preserved');
+  const downloadColor = getComputedStyle(fixture.querySelector('.book-download-button')).backgroundColor;
+  const readMoreColor = getComputedStyle(fixture.querySelector('.book-annotation-more')).color;
+  assert(downloadColor === 'rgb(39, 49, 66)' && readMoreColor === downloadColor, 'read-more text exactly matches download accent');
+  const readMoreHoverRule = [...document.styleSheets]
+    .flatMap((sheet) => [...sheet.cssRules])
+    .find((rule) => rule.selectorText === '.book-annotation-more:not(:disabled):hover');
+  assert(readMoreHoverRule?.style.color === 'rgb(0, 0, 0)', 'read-more hover is explicitly black');
   assert(getComputedStyle(fixture.lastElementChild).display === 'none', 'hidden actions take no space');
   fixture.remove();
 });
