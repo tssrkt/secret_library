@@ -1,16 +1,18 @@
 :root {
   color-scheme: light;
-  --bg: #ddd4e6;
-  --content-bg: #e8e0ee;
-  --surface: #f5f1f7;
-  --surface-soft: #eee8f2;
-  --surface-hover: #e2d8e9;
-  --border: #c8bad3;
-  --text: #29242d;
-  --text-muted: #6e6475;
-  --accent: #684b83;
-  --accent-hover: #513768;
-  --accent-soft: #d8cbe2;
+  --bg: #f0ecf4;
+  --surface: #f8f5fa;
+  --surface-soft: #e8e0ef;
+  --border: #d5c9de;
+  --text: #2d2931;
+  --text-muted: #746d79;
+  --accent-soft: #e3d8eb;
+  --link: #6f527f;
+  --link-hover: #543d63;
+  --button: #273142;
+  --button-hover: #11141a;
+  --button-disabled: #8c91a0;
+  --button-text: #ffffff;
   --danger: #88445f;
   --danger-hover: #6e324b;
   font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -89,8 +91,8 @@ h1 { margin: 0; font: 750 clamp(2rem, 5vw, 3rem)/1.05 system-ui, sans-serif; whi
   text-align: left;
   white-space: nowrap;
 }
-.avatar-menu button:not(:disabled):hover, .avatar-menu button:not(:disabled):focus { background: var(--surface-hover); }
-.avatar-menu button:disabled { cursor: default; opacity: .55; }
+.avatar-menu button:not(:disabled):hover, .avatar-menu button:not(:disabled):focus { background: var(--surface-soft); }
+.avatar-menu button:disabled { cursor: default; background: transparent; opacity: .55; }
 .avatar-menu small { margin-left: .75rem; color: var(--text-muted); font-weight: 400; }
 .avatar-menu hr { margin: .35rem .5rem; border: 0; border-top: 1px solid var(--border); }
 .avatar-menu .account-menu-separator { margin-top: .55rem; border-top-color: var(--border); }
@@ -104,24 +106,27 @@ button {
   font: inherit;
   font-weight: 650;
   cursor: pointer;
-  color: white;
-  background: var(--accent);
+  color: var(--button-text);
+  background: var(--button);
 }
 
-button:not(:disabled):hover { background: var(--accent-hover); }
+button:not(:disabled):hover { background: var(--button-hover); }
 button:focus-visible { outline: 3px solid var(--accent-soft); outline-offset: 2px; }
-button.secondary { color: var(--accent-hover); background: var(--accent-soft); }
-button.secondary:not(:disabled):hover { color: var(--surface); background: var(--accent-hover); }
+button.secondary { color: var(--link-hover); background: var(--accent-soft); }
+button.secondary:not(:disabled):hover { color: var(--surface); background: var(--link-hover); }
 button.danger { background: var(--danger); }
 button.danger:not(:disabled):hover { background: var(--danger-hover); }
 button.compact { padding: .2rem .55rem; font-size: 1.25rem; }
-button:disabled { cursor: wait; opacity: .6; }
+button:disabled { cursor: default; color: var(--button-text); background: var(--button-disabled); opacity: 1; }
+
+a, a:visited { color: var(--link); }
+a:hover, a:visited:hover { color: var(--link-hover); }
 
 .status-panel, .error-panel, #library-panel {
   border: 1px solid var(--border);
   border-radius: .7rem;
   padding: 1rem 1.15rem;
-  background: var(--content-bg);
+  background: var(--surface);
   box-shadow: 0 2px 10px rgb(55 42 68 / 7%);
 }
 
@@ -149,10 +154,10 @@ dd { margin: 0; font-weight: 750; font-variant-numeric: tabular-nums; }
   font-weight: 650;
   text-align: left;
 }
-.folder-toggle::before { content: "▸"; display: inline-block; width: 1.2rem; color: var(--accent); }
+.folder-toggle::before { content: "▸"; display: inline-block; width: 1.2rem; color: var(--link); }
 .folder-toggle[aria-expanded="true"]::before { content: "▾"; }
 .folder-toggle.empty::before { content: "·"; }
-.folder-toggle:not(:disabled):hover { color: var(--accent-hover); background: var(--surface-hover); }
+.folder-toggle:not(:disabled):hover { color: var(--link-hover); background: var(--surface-soft); }
 .empty-library { color: var(--text-muted); }
 
 .book-grid-item { margin: .45rem 0 .9rem; }
@@ -247,7 +252,7 @@ dd { margin: 0; font-weight: 750; font-variant-numeric: tabular-nums; }
   padding: 4px 0 0;
   align-self: flex-start;
   flex: none;
-  color: var(--accent);
+  color: var(--link);
   background: transparent;
   font-size: 14px;
   line-height: 20px;
@@ -256,7 +261,7 @@ dd { margin: 0; font-weight: 750; font-variant-numeric: tabular-nums; }
   white-space: nowrap;
   mask-image: none;
 }
-.book-annotation-more:not(:disabled):hover { color: var(--accent-hover); background: transparent; }
+.book-annotation-more:not(:disabled):hover { color: var(--link-hover); background: transparent; }
 .book-download-button {
   width: var(--book-cover-width);
   height: var(--book-download-height);
