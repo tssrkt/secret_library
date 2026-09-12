@@ -116,12 +116,16 @@ export async function downloadAppDataFile(fileId) {
   return driveFetch(`/files/${encodeURIComponent(fileId)}?${params}`);
 }
 
-export async function downloadFileRange(fileId, start, end, signal) {
+export async function downloadFileRange(fileId, start, end, signal, { requirePartial = false } = {}) {
   const params = new URLSearchParams({ alt: 'media', supportsAllDrives: 'true' });
   const response = await driveFetch(`/files/${encodeURIComponent(fileId)}?${params}`, {
     headers: { Range: `bytes=${start}-${end}` },
     signal,
   });
+  if (requirePartial && response.status === 200) {
+    await response.body?.cancel();
+    throw new DriveError('Google Drive проигнорировал Range для ZIP; полный архив не загружен.', { code: 'range_ignored' });
+  }
   const bytes = new Uint8Array(await response.arrayBuffer());
   const contentRange = response.headers.get('Content-Range')?.match(/bytes\s+(\d+)-(\d+)\/(\d+|\*)/i);
   const reachedEnd = bytes.length < end - start + 1

@@ -1,5 +1,6 @@
 import { METADATA_CHECKPOINT_SIZE, METADATA_CONCURRENCY } from './config.js';
-import { extractFb2Metadata, Fb2Error } from './fb2.js';
+import { extractBookMetadata } from './book-metadata.js';
+import { Fb2Error } from './fb2.js';
 
 export function resetProcessingBooks(index) {
   for (const book of index.books) {
@@ -20,7 +21,7 @@ export async function indexPendingBooks(index, {
   signal,
   onProgress = () => {},
   onCheckpoint = async () => {},
-  extract = extractFb2Metadata,
+  extract = extractBookMetadata,
   concurrency = METADATA_CONCURRENCY,
   checkpointSize = METADATA_CHECKPOINT_SIZE,
 } = {}) {
@@ -38,6 +39,7 @@ export async function indexPendingBooks(index, {
       }
       Object.assign(book, metadata, { metadataStatus: 'ready' });
       delete book.metadataError;
+      if (!Object.hasOwn(metadata, 'metadataWarning')) delete book.metadataWarning;
       stats.succeeded += 1;
     } catch (error) {
       if (signal?.aborted || error?.name === 'AbortError') {

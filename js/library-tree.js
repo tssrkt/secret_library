@@ -1,7 +1,12 @@
 import { FOLDER_MIME_TYPE, INDEX_VERSION, SCAN_CONCURRENCY } from './config.js';
 import { getFolder, listFolderChildren } from './drive.js';
 
-const isBook = (file) => file.mimeType !== FOLDER_MIME_TYPE && /\.fb2$/i.test(file.name);
+export function classifyLibraryItem(file) {
+  if (file.mimeType === FOLDER_MIME_TYPE) return 'folder';
+  if (/\.fb2$/i.test(file.name)) return 'fb2';
+  if (/\.zip$/i.test(file.name) || ['application/zip', 'application/x-zip-compressed'].includes(file.mimeType)) return 'zip';
+  return 'other';
+}
 
 export async function scanLibrary(rootFolderId, onProgress = () => {}) {
   const root = await getFolder(rootFolderId);
@@ -23,10 +28,11 @@ export async function scanLibrary(rootFolderId, onProgress = () => {}) {
       for (const { folderId, children } of results) {
         for (const item of children) {
           const parentId = item.parents?.[0] || folderId;
-          if (item.mimeType === FOLDER_MIME_TYPE) {
+          const itemType = classifyLibraryItem(item);
+          if (itemType === 'folder') {
             folders.push({ id: item.id, parentId, name: item.name });
             pending.push(item.id);
-          } else if (isBook(item)) {
+          } else if (['fb2', 'zip'].includes(itemType)) {
             books.push({
               id: item.id,
               parentId,
@@ -34,6 +40,8 @@ export async function scanLibrary(rootFolderId, onProgress = () => {}) {
               size: item.size == null ? null : Number(item.size),
               modifiedTime: item.modifiedTime || null,
               md5Checksum: item.md5Checksum || null,
+              sourceType: itemType,
+              ...(itemType === 'zip' ? { entryPath: null } : {}),
               metadataStatus: 'pending',
             });
           }
@@ -51,9 +59,11 @@ export async function scanLibrary(rootFolderId, onProgress = () => {}) {
 
 const METADATA_FIELDS = [
   'metadataStatus', 'title', 'authors', 'series', 'seriesNumber', 'annotation', 'metadataError',
+  'entryPath', 'metadataWarning',
 ];
 
 function isUnchanged(current, previous) {
+  if ((current.sourceType || 'fb2') !== (previous.sourceType || 'fb2')) return false;
   if (current.md5Checksum && previous.md5Checksum) return current.md5Checksum === previous.md5Checksum;
   return current.modifiedTime === previous.modifiedTime && current.size === previous.size;
 }

@@ -11,7 +11,7 @@ export class IndexError extends Error {
 }
 
 function validateIndex(index, rootFolderId) {
-  if (!index || ![1, INDEX_VERSION].includes(index.version) || index.rootFolderId !== rootFolderId
+  if (!index || ![1, 2, INDEX_VERSION].includes(index.version) || index.rootFolderId !== rootFolderId
       || !Array.isArray(index.folders) || !Array.isArray(index.books)) {
     throw new IndexError('Сохраненный индекс поврежден или имеет несовместимый формат.', 'invalid_index');
   }
@@ -22,6 +22,11 @@ export function migrateIndex(index) {
   let migrated = index.version !== INDEX_VERSION;
   index.version = INDEX_VERSION;
   for (const book of index.books) {
+    if (!book.sourceType) {
+      book.sourceType = /\.zip$/i.test(book.fileName) ? 'zip' : 'fb2';
+      if (book.sourceType === 'zip' && !Object.hasOwn(book, 'entryPath')) book.entryPath = null;
+      migrated = true;
+    }
     if (!book.metadataStatus || book.metadataStatus === 'processing') {
       book.metadataStatus = 'pending';
       migrated = true;

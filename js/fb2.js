@@ -47,7 +47,7 @@ export function decodeFb2(bytes) {
   }
 }
 
-function descriptionEnd(text) {
+export function descriptionEnd(text) {
   const match = /<\/([\w.-]+:)?description\s*>/i.exec(text);
   return match ? match.index + match[0].length : -1;
 }
@@ -133,6 +133,13 @@ export function parseFb2Metadata(descriptionPrefix, Parser = globalThis.DOMParse
     seriesNumber: Number.isFinite(parsedNumber) ? parsedNumber : null,
     annotation: annotationText(directChild(titleInfo, 'annotation')),
   };
+}
+
+export function parseFb2Bytes(bytes, Parser = globalThis.DOMParser) {
+  const text = decodeFb2(bytes);
+  const endIndex = descriptionEnd(text);
+  if (endIndex < 0) throw new Fb2Error('description_not_found', 'FB2 description was not found in the available data.');
+  return parseFb2Metadata(text.slice(0, endIndex), Parser);
 }
 
 export async function extractFb2Metadata(book, options = {}) {

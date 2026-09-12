@@ -1,3 +1,6 @@
+import { setupDropdown } from './dropdown.js';
+import { bookDisplayLabel, buildLibraryLookups, folderHasLibraryChildren } from './library-view-model.js';
+
 const elements = {
   signIn: document.querySelector('#sign-in-button'),
   refresh: document.querySelector('#refresh-button'),
@@ -5,6 +8,9 @@ const elements = {
   retryMetadata: document.querySelector('#retry-metadata-button'),
   stop: document.querySelector('#stop-button'),
   signOut: document.querySelector('#sign-out-button'),
+  userControls: document.querySelector('#user-controls'),
+  avatar: document.querySelector('#avatar-button'),
+  avatarMenu: document.querySelector('#avatar-menu'),
   status: document.querySelector('#status-text'),
   stats: document.querySelector('#stats'),
   folderCount: document.querySelector('#folder-count'),
@@ -23,7 +29,7 @@ const elements = {
   detailsAnnotation: document.querySelector('#details-annotation'),
 };
 
-const collator = new Intl.Collator('ru', { sensitivity: 'base', numeric: true });
+const dropdown = setupDropdown(elements.avatar, elements.avatarMenu);
 
 export function bindActions(actions) {
   elements.signIn.addEventListener('click', actions.signIn);
@@ -38,9 +44,10 @@ export function bindActions(actions) {
 
 export function setAuthorized(authorized) {
   elements.signIn.hidden = authorized;
-  elements.refresh.hidden = !authorized;
+  elements.userControls.hidden = !authorized;
   elements.signOut.hidden = !authorized;
   if (!authorized) {
+    dropdown.close();
     elements.metadata.hidden = true;
     elements.retryMetadata.hidden = true;
     elements.stop.hidden = true;
@@ -72,6 +79,7 @@ export function setMetadataRunning(running) {
   elements.retryMetadata.disabled = running;
   elements.refresh.disabled = running;
   elements.signOut.disabled = running;
+  if (running) dropdown.close();
 }
 
 export function setStatus(message) { elements.status.textContent = message; }
@@ -90,35 +98,6 @@ export function showError(message, { canRebuild = false } = {}) {
 
 export function clearError() { elements.errorPanel.hidden = true; }
 
-function buildLookups(index) {
-  const foldersByParent = new Map();
-  const booksByParent = new Map();
-  for (const folder of index.folders) {
-    if (folder.parentId == null) continue;
-    const siblings = foldersByParent.get(folder.parentId) || [];
-    siblings.push(folder);
-    foldersByParent.set(folder.parentId, siblings);
-  }
-  for (const book of index.books) {
-    const siblings = booksByParent.get(book.parentId) || [];
-    siblings.push(book);
-    booksByParent.set(book.parentId, siblings);
-  }
-  for (const siblings of foldersByParent.values()) siblings.sort((a, b) => collator.compare(a.name, b.name));
-  for (const siblings of booksByParent.values()) siblings.sort((a, b) => collator.compare(a.fileName, b.fileName));
-  return { foldersByParent, booksByParent };
-}
-
-function bookLabel(book) {
-  if (book.metadataStatus !== 'ready') return book.fileName;
-  const title = book.title || book.fileName;
-  if (!book.authors?.length) return title;
-  const authors = book.authors.length > 2
-    ? `${book.authors.slice(0, 2).join(', ')} и др.`
-    : book.authors.join(', ');
-  return `${authors} — ${title}`;
-}
-
 function showBookDetails(book) {
   const ready = book.metadataStatus === 'ready';
   elements.detailsTitle.textContent = ready ? (book.title || 'Не указано') : 'Метаданные не извлечены';
@@ -126,7 +105,9 @@ function showBookDetails(book) {
   elements.detailsSeries.textContent = ready && book.series
     ? `${book.series}${book.seriesNumber == null ? '' : ` — № ${book.seriesNumber}`}`
     : 'Не указано';
-  elements.detailsFileName.textContent = book.fileName;
+  elements.detailsFileName.textContent = book.sourceType === 'zip' && book.entryPath
+    ? `${book.fileName} → ${book.entryPath}`
+    : book.fileName;
   elements.detailsAnnotation.textContent = ready && book.annotation ? book.annotation : 'Не указано';
   elements.details.hidden = false;
 }
@@ -135,7 +116,7 @@ export function renderLibrary(index) {
   elements.tree.replaceChildren();
   elements.libraryPanel.hidden = false;
   const root = index.folders.find((folder) => folder.id === index.rootFolderId);
-  const lookups = buildLookups(index);
+  const lookups = buildLibraryLookups(index);
 
   function createBranch(parentId) {
     const list = document.createElement('ul');
@@ -148,7 +129,7 @@ export function renderLibrary(index) {
       button.type = 'button';
       button.className = 'folder-toggle';
       button.textContent = folder.name;
-      const hasChildren = lookups.foldersByParent.has(folder.id) || lookups.booksByParent.has(folder.id);
+      const hasChildren = folderHasLibraryChildren(lookups, folder.id);
       button.classList.toggle('empty', !hasChildren);
       button.setAttribute('aria-expanded', 'false');
       row.append(button);
@@ -171,7 +152,7 @@ export function renderLibrary(index) {
       const button = document.createElement('button');
       button.type = 'button';
       button.className = 'book-button';
-      button.textContent = bookLabel(book);
+      button.textContent = bookDisplayLabel(book);
       button.addEventListener('click', () => showBookDetails(book));
       item.append(button);
       list.append(item);

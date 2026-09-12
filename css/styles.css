@@ -15,7 +15,7 @@ body { margin: 0; }
   padding: 2rem 0 4rem;
 }
 
-header {
+.app-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -23,9 +23,44 @@ header {
   margin-bottom: 1.5rem;
 }
 
-h1 { margin: 0; font-family: Georgia, serif; font-size: clamp(2rem, 5vw, 3rem); }
+h1 { margin: 0; font: 750 clamp(2rem, 5vw, 3rem)/1.05 system-ui, sans-serif; white-space: nowrap; }
 .subtitle { margin: .35rem 0 0; color: #6a6359; }
-.actions { display: flex; flex-wrap: wrap; gap: .65rem; }
+.account-actions { display: flex; align-items: center; flex: none; gap: .65rem; }
+.user-controls { position: relative; }
+.avatar-button {
+  width: 2.7rem;
+  height: 2.7rem;
+  border-radius: 50%;
+  padding: 0;
+  font-size: 1.35rem;
+  line-height: 1;
+}
+.avatar-menu {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + .55rem);
+  right: 0;
+  width: min(280px, calc(100vw - 2rem));
+  border: 1px solid #d6c9b8;
+  border-radius: .65rem;
+  padding: .4rem;
+  background: #fffdf9;
+  box-shadow: 0 10px 32px rgb(45 32 20 / 20%);
+}
+.avatar-menu button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: .65rem .7rem;
+  color: #342c24;
+  background: transparent;
+  text-align: left;
+}
+.avatar-menu button:not(:disabled):hover, .avatar-menu button:not(:disabled):focus { background: #f2eadf; }
+.avatar-menu button:disabled { cursor: default; opacity: .55; }
+.avatar-menu small { margin-left: .75rem; color: #756b60; font-weight: 400; }
+.avatar-menu hr { margin: .35rem .5rem; border: 0; border-top: 1px solid #e5dbce; }
 
 button {
   border: 0;
@@ -52,6 +87,8 @@ button:disabled { cursor: wait; opacity: .6; }
 }
 
 .status-panel { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+.status-panel > p { min-width: 0; flex: 1; overflow-wrap: anywhere; }
+.status-panel dl, .stop-button { flex: none; }
 .status-panel p, .error-panel p { margin: 0; }
 .error-panel { margin-top: 1rem; border-color: #cf847d; color: #7c211b; }
 .error-panel button { margin-top: .8rem; }
@@ -110,6 +147,18 @@ dd { margin: 0; font-weight: 750; font-variant-numeric: tabular-nums; }
 [hidden] { display: none !important; }
 
 @media (max-width: 650px) {
-  header, .status-panel { align-items: flex-start; flex-direction: column; }
+  .app-shell { width: min(100% - 1rem, 1050px); padding-top: 1rem; }
+  .app-header { align-items: center; gap: .75rem; }
+  h1 { font-size: clamp(1.45rem, 7vw, 2rem); }
+  .subtitle { font-size: .85rem; }
+  .account-actions { gap: .4rem; }
+  .account-actions > button { padding: .55rem .7rem; }
+  .status-panel { align-items: flex-start; flex-wrap: wrap; }
+  .status-panel > p { flex-basis: 100%; }
   dl div { text-align: left; }
+}
+
+@media (max-width: 410px) {
+  .app-header { align-items: flex-start; flex-direction: column; }
+  .account-actions { align-self: flex-end; }
 }
