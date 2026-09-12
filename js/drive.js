@@ -78,7 +78,7 @@ export async function getFolder(folderId) {
 }
 
 export async function getCurrentDriveUser(request = driveFetch) {
-  const params = new URLSearchParams({ fields: 'user(displayName,photoLink)' });
+  const params = new URLSearchParams({ fields: 'user(displayName,emailAddress,photoLink)' });
   const response = await request(`/about?${params}`);
   return (await response.json()).user || {};
 }

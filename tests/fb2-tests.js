@@ -7,7 +7,7 @@ import { buildLibraryLookups, folderHasLibraryChildren } from '../js/library-vie
 import { indexPendingBooks } from '../js/metadata-indexer.js';
 import { extractZipFb2, findEocd, parseCentralDirectory, ZipError } from '../js/zip.js';
 import { setupDropdown } from '../js/dropdown.js';
-import { applyDriveAvatar, createAvatarController, greetingText } from '../js/avatar.js';
+import { accountIdentity, applyDriveAvatar, createAvatarController } from '../js/avatar.js';
 import { downloadDriveFile, getCurrentDriveUser } from '../js/drive.js';
 import { bookCardView, createBookCard } from '../js/book-card.js';
 import { createAnnotationModalController } from '../js/annotation-modal.js';
@@ -395,10 +395,14 @@ await test('avatar dropdown supports toggle, outside click and Escape', () => {
   wrapper.remove();
 });
 
-await test('account greeting uses displayName with fallback', () => {
-  equal(greetingText('Ada King'), 'Привет, Ada King!', 'named greeting');
-  equal(greetingText(), 'Привет!', 'fallback greeting');
-  equal(greetingText('   '), 'Привет!', 'blank name fallback');
+await test('account identity uses Google name/email with fallbacks', () => {
+  equal(accountIdentity({ displayName: ' Ada King ', emailAddress: ' ada@example.com ' }), {
+    displayName: 'Ada King', emailAddress: 'ada@example.com',
+  }, 'Google identity');
+  equal(accountIdentity({}), { displayName: 'Пользователь Google', emailAddress: '' }, 'missing identity fallback');
+  equal(accountIdentity({ displayName: '   ', emailAddress: '   ' }), {
+    displayName: 'Пользователь Google', emailAddress: '',
+  }, 'blank identity fallback');
 });
 
 function avatarFixture() {
@@ -413,14 +417,14 @@ function avatarFixture() {
   return { button, placeholder, image, controller: createAvatarController(button, image, placeholder) };
 }
 
-await test('Drive about user returns displayName and photoLink without extra fields', async () => {
+await test('Drive about user returns name, email and photo in one request', async () => {
   let requestedPath = '';
   const user = await getCurrentDriveUser(async (path) => {
     requestedPath = path;
-    return { json: async () => ({ user: { displayName: 'Test User', photoLink: 'photo' } }) };
+    return { json: async () => ({ user: { displayName: 'Test User', emailAddress: 'test@example.com', photoLink: 'photo' } }) };
   });
-  equal(user, { displayName: 'Test User', photoLink: 'photo' }, 'Drive user');
-  assert(requestedPath.startsWith('/about?') && decodeURIComponent(requestedPath).includes('fields=user(displayName,photoLink)'), 'minimal about fields');
+  equal(user, { displayName: 'Test User', emailAddress: 'test@example.com', photoLink: 'photo' }, 'Drive user');
+  assert(requestedPath.startsWith('/about?') && decodeURIComponent(requestedPath).includes('fields=user(displayName,emailAddress,photoLink)'), 'single minimal about request');
 });
 
 await test('avatar shows photo, uses cover, and keeps dropdown button', async () => {
@@ -570,7 +574,7 @@ await test('lazy folder tree renders books as cards only after folder expansion'
   fixture.innerHTML = `
     <button id="sign-in-button"></button><button id="refresh-button"></button><button id="metadata-button"></button>
     <button id="retry-metadata-button"></button><button id="stop-button"></button>
-    <div id="user-controls"><span id="user-greeting" class="user-greeting">Привет!</span><button id="avatar-button"><span id="avatar-placeholder"></span><img id="avatar-image"></button><div id="avatar-menu"><button id="sign-out-button" role="menuitem">Выйти</button></div></div>
+    <div id="user-controls"><button id="avatar-button"><span id="avatar-placeholder"></span><img id="avatar-image"></button><div id="avatar-menu"><div class="account-identity"><strong id="account-display-name">Пользователь Google</strong><span id="account-email" hidden></span></div><button id="sign-out-button" role="menuitem">Выйти</button></div></div>
     <p id="status-text"></p><dl id="stats"><div><dd id="folder-count"></dd></div><div><dd id="book-count"></dd></div></dl>
     <div id="error-panel"><p id="error-text"></p></div><button id="retry-button"></button>
     <section id="library-panel"><div id="library-tree"></div></section>
@@ -586,8 +590,11 @@ await test('lazy folder tree renders books as cards only after folder expansion'
   fixture.querySelector('.folder-toggle').click();
   assert(fixture.querySelector('.book-card'), 'expanded folder contains card');
   assert(fixture.querySelectorAll('[aria-expanded]').length === 2, 'only avatar and folder are expandable');
-  await uiModule.setUserAvatar({ displayName: 'Ada King' });
-  assert(fixture.querySelector('#user-greeting').textContent === 'Привет, Ada King!', 'greeting updated from Drive user');
+  await uiModule.setUserAvatar({ displayName: 'Ada King', emailAddress: 'ada@example.com' });
+  assert(fixture.querySelector('#account-display-name').textContent === 'Ada King', 'account name updated');
+  assert(fixture.querySelector('#account-email').textContent === 'ada@example.com' && !fixture.querySelector('#account-email').hidden, 'account email updated');
+  assert(getComputedStyle(fixture.querySelector('#account-display-name')).textOverflow === 'ellipsis', 'long name is ellipsized');
+  assert(getComputedStyle(fixture.querySelector('#account-email')).textOverflow === 'ellipsis', 'long email is ellipsized');
   let signOutCalls = 0;
   const noop = () => {};
   uiModule.bindActions({ signIn: noop, refresh: noop, indexMetadata: noop, retryMetadata: noop, stopMetadata: noop, signOut: () => { signOutCalls += 1; }, rebuild: noop });
@@ -595,7 +602,8 @@ await test('lazy folder tree renders books as cards only after folder expansion'
   fixture.querySelector('#sign-out-button').click();
   assert(signOutCalls === 1 && fixture.querySelector('#avatar-menu').hidden, 'menu logout action and close');
   uiModule.setAuthorized(false);
-  assert(fixture.querySelector('#user-greeting').textContent === 'Привет!', 'logout resets greeting');
+  assert(fixture.querySelector('#account-display-name').textContent === 'Пользователь Google', 'logout resets account name');
+  assert(fixture.querySelector('#account-email').hidden && fixture.querySelector('#account-email').textContent === '', 'logout clears account email');
   fixture.remove();
 });
 
@@ -605,6 +613,10 @@ await test('production controls keep stop in status panel and menu actions out o
   assert(page.querySelector('#status-panel > #stop-button'), 'stop button belongs to status panel');
   assert(page.querySelector('#avatar-menu > #metadata-button'), 'metadata action belongs to avatar menu');
   assert(page.querySelector('#avatar-menu > #retry-metadata-button'), 'retry action belongs to avatar menu');
+  assert(page.querySelector('#avatar-menu .account-identity #account-display-name'), 'account identity belongs to menu');
+  assert(page.querySelector('#avatar-menu > #sign-out-button'), 'logout belongs to menu bottom');
+  assert(!page.querySelector('.app-header #user-greeting'), 'greeting is absent from header');
+  assert(!page.querySelector('#avatar-menu').textContent.includes('Мой профиль'), 'profile menu label removed');
   assert(!page.querySelector('.app-header #stop-button'), 'stop is absent from header');
   assert(page.querySelector('h1').textContent === 'Тайная Библиотека', 'header title');
   const fixture = document.createElement('div');

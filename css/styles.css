@@ -26,13 +26,7 @@ body { margin: 0; }
 h1 { margin: 0; font: 750 clamp(2rem, 5vw, 3rem)/1.05 system-ui, sans-serif; white-space: nowrap; }
 .subtitle { margin: .35rem 0 0; color: #6a6359; }
 .account-actions { display: flex; align-items: center; flex: none; gap: .65rem; }
-.user-controls { position: relative; display: flex; align-items: center; min-width: 0; gap: .65rem; }
-.user-greeting {
-  max-width: min(32vw, 320px);
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
+.user-controls { position: relative; }
 .avatar-button {
   width: 2.7rem;
   height: 2.7rem;
@@ -55,6 +49,15 @@ h1 { margin: 0; font: 750 clamp(2rem, 5vw, 3rem)/1.05 system-ui, sans-serif; whi
   background: #fffdf9;
   box-shadow: 0 10px 32px rgb(45 32 20 / 20%);
 }
+.account-identity { min-width: 0; padding: .65rem .7rem .55rem; }
+.account-identity strong, .account-identity span {
+  display: block;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.account-identity strong { font-size: 1rem; }
+.account-identity span { margin-top: .18rem; color: #756b60; font-size: .8rem; }
 .avatar-menu button {
   display: flex;
   align-items: center;
@@ -218,7 +221,6 @@ dd { margin: 0; font-weight: 750; font-variant-numeric: tabular-nums; }
   h1 { font-size: clamp(1.45rem, 7vw, 2rem); }
   .subtitle { font-size: .85rem; }
   .account-actions { gap: .4rem; }
-  .user-greeting { max-width: min(38vw, 220px); }
   .account-actions > button { padding: .55rem .7rem; }
   .status-panel { align-items: flex-start; flex-wrap: wrap; }
   .status-panel > p { flex-basis: 100%; }

@@ -1,6 +1,6 @@
 import { setupDropdown } from './dropdown.js';
 import { buildLibraryLookups, folderHasLibraryChildren } from './library-view-model.js';
-import { createAvatarController, greetingText } from './avatar.js';
+import { accountIdentity, createAvatarController } from './avatar.js';
 import { createBookCard } from './book-card.js';
 import { createAnnotationModalController } from './annotation-modal.js';
 
@@ -12,7 +12,8 @@ const elements = {
   stop: document.querySelector('#stop-button'),
   signOut: document.querySelector('#sign-out-button'),
   userControls: document.querySelector('#user-controls'),
-  greeting: document.querySelector('#user-greeting'),
+  accountDisplayName: document.querySelector('#account-display-name'),
+  accountEmail: document.querySelector('#account-email'),
   avatar: document.querySelector('#avatar-button'),
   avatarImage: document.querySelector('#avatar-image'),
   avatarPlaceholder: document.querySelector('#avatar-placeholder'),
@@ -40,11 +41,17 @@ const annotationModal = createAnnotationModalController(
 );
 
 export function setUserAvatar(user = {}) {
-  elements.greeting.textContent = greetingText(user.displayName);
+  const identity = accountIdentity(user);
+  elements.accountDisplayName.textContent = identity.displayName;
+  elements.accountEmail.textContent = identity.emailAddress;
+  elements.accountEmail.hidden = !identity.emailAddress;
   return avatar.set(user);
 }
 export function resetUserAvatar() {
-  elements.greeting.textContent = greetingText();
+  const identity = accountIdentity();
+  elements.accountDisplayName.textContent = identity.displayName;
+  elements.accountEmail.textContent = '';
+  elements.accountEmail.hidden = true;
   avatar.reset();
 }
 

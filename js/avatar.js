@@ -1,8 +1,9 @@
 const DEFAULT_LABEL = 'Открыть меню пользователя';
 
-export function greetingText(displayName = '') {
-  const name = typeof displayName === 'string' ? displayName.trim() : '';
-  return name ? `Привет, ${name}!` : 'Привет!';
+export function accountIdentity(user = {}) {
+  const displayName = typeof user.displayName === 'string' ? user.displayName.trim() : '';
+  const emailAddress = typeof user.emailAddress === 'string' ? user.emailAddress.trim() : '';
+  return { displayName: displayName || 'Пользователь Google', emailAddress };
 }
 
 export function createAvatarController(button, image, placeholder) {
