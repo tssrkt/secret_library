@@ -58,12 +58,18 @@
 
     <div id="annotation-modal" class="modal-backdrop" hidden>
       <section class="annotation-modal" role="dialog" aria-modal="true" aria-labelledby="annotation-modal-title">
-        <div class="modal-header">
-          <h2 id="annotation-modal-title"></h2>
-          <button id="annotation-modal-close" class="secondary compact" type="button" aria-label="Закрыть">×</button>
+        <div id="annotation-modal-cover" class="annotation-modal-cover" aria-hidden="true">
+          <div id="annotation-modal-cover-placeholder" class="annotation-modal-cover-placeholder">Нет обложки</div>
+          <img id="annotation-modal-cover-image" alt="" hidden>
         </div>
-        <p id="annotation-modal-label" class="annotation-modal-label">Аннотация</p>
-        <p id="annotation-modal-text"></p>
+        <div class="annotation-modal-content">
+          <div class="modal-header">
+            <h2 id="annotation-modal-title"></h2>
+            <button id="annotation-modal-close" class="secondary compact" type="button" aria-label="Закрыть">×</button>
+          </div>
+          <p id="annotation-modal-genres" class="annotation-modal-genres"></p>
+          <p id="annotation-modal-text"></p>
+        </div>
       </section>
     </div>
 

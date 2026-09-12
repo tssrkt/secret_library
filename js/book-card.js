@@ -24,6 +24,9 @@ export function createBookCard(book, onDownload, documentRef = document, options
   const media = documentRef.createElement('div');
   media.className = 'book-card-media';
 
+  const coverFrame = documentRef.createElement('div');
+  coverFrame.className = 'book-cover-frame';
+
   const cover = documentRef.createElement('div');
   cover.className = 'book-cover-placeholder';
   cover.setAttribute('aria-label', 'Обложка отсутствует');
@@ -54,6 +57,8 @@ export function createBookCard(book, onDownload, documentRef = document, options
     annotation: content.annotation,
     title: content.title,
     author: content.author,
+    genres: Array.isArray(book.genres) ? book.genres : [],
+    coverFileId: book.coverFileId || null,
   }, more));
   annotationBlock.append(annotation, more);
   const download = documentRef.createElement('button');
@@ -65,7 +70,8 @@ export function createBookCard(book, onDownload, documentRef = document, options
     try { await onDownload(book); }
     finally { download.disabled = false; }
   });
-  media.append(cover, download);
+  coverFrame.append(cover);
+  media.append(coverFrame, download);
   body.append(author, title, genre, annotationBlock);
   article.append(media, body);
 
@@ -93,6 +99,7 @@ export function createBookCard(book, onDownload, documentRef = document, options
     more.hidden = true;
     annotation.classList.remove('truncated');
     annotation.style.removeProperty('--annotation-lines');
+    annotation.style.removeProperty('--annotation-height');
     const overflowing = options.isAnnotationOverflowing
       ? options.isAnnotationOverflowing(annotation)
       : annotation.scrollHeight > annotation.clientHeight + 1;
@@ -102,6 +109,7 @@ export function createBookCard(book, onDownload, documentRef = document, options
       const lineHeight = Number.parseFloat(styles?.lineHeight) || 16;
       const lines = Math.max(1, Math.floor(annotation.clientHeight / lineHeight));
       annotation.style.setProperty('--annotation-lines', String(lines));
+      annotation.style.setProperty('--annotation-height', `${lines * lineHeight}px`);
       annotation.classList.add('truncated');
     }
   };

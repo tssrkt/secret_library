@@ -38,7 +38,9 @@ const elements = {
   annotationModalText: document.querySelector('#annotation-modal-text'),
   annotationModalClose: document.querySelector('#annotation-modal-close'),
   annotationModalTitle: document.querySelector('#annotation-modal-title'),
-  annotationModalLabel: document.querySelector('#annotation-modal-label'),
+  annotationModalGenres: document.querySelector('#annotation-modal-genres'),
+  annotationModalCoverImage: document.querySelector('#annotation-modal-cover-image'),
+  annotationModalCoverPlaceholder: document.querySelector('#annotation-modal-cover-placeholder'),
 };
 
 const dropdown = setupDropdown(elements.avatar, elements.avatarMenu);
@@ -48,7 +50,20 @@ const annotationModal = createAnnotationModalController(
   elements.annotationModalText,
   elements.annotationModalClose,
   elements.annotationModalTitle,
-  elements.annotationModalLabel,
+  elements.annotationModalGenres,
+  elements.annotationModalCoverImage,
+  elements.annotationModalCoverPlaceholder,
+  {
+    loadCover: async ({ coverFileId }) => {
+      const url = URL.createObjectURL(await loadCover(coverFileId));
+      coverUrls.add(url);
+      return url;
+    },
+    releaseCoverUrl: (url) => {
+      URL.revokeObjectURL(url);
+      coverUrls.delete(url);
+    },
+  },
 );
 
 export function setUserAvatar(user = {}) {

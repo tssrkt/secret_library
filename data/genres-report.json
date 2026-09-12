@@ -1,0 +1,140 @@
+{
+  "canonical_codes": 186,
+  "conflicts": [
+    {
+      "code": "science",
+      "kept": "Прочая научная литература (то, что не вошло в другие категории)",
+      "rejected": "Научная литература: прочее",
+      "source": "https://lib.rus.ec/g"
+    },
+    {
+      "code": "sf",
+      "kept": "Научная Фантастика",
+      "rejected": "Научная фантастика",
+      "source": "https://lib.rus.ec/g"
+    },
+    {
+      "code": "sf_horror",
+      "kept": "Ужасы и Мистика",
+      "rejected": "Ужасы",
+      "source": "https://lib.rus.ec/g"
+    },
+    {
+      "code": "sf_social",
+      "kept": "Социально-психологическая фантастика",
+      "rejected": "Социальная фантастика",
+      "source": "https://lib.rus.ec/g"
+    },
+    {
+      "code": "detective",
+      "kept": "Детектив (не относящийся в прочие категории).",
+      "rejected": "Детективы: прочее",
+      "source": "https://lib.rus.ec/g"
+    },
+    {
+      "code": "love_detective",
+      "kept": "Остросюжетные любовные романы",
+      "rejected": "Любовные детективы",
+      "source": "https://lib.rus.ec/g"
+    },
+    {
+      "code": "poetry",
+      "kept": "Поэзия",
+      "rejected": "Поэзия: прочее",
+      "source": "https://lib.rus.ec/g"
+    },
+    {
+      "code": "religion",
+      "kept": "Прочая религионая литература (то, что не вошло в другие категории)",
+      "rejected": "Религиозная литература: прочее",
+      "source": "https://lib.rus.ec/g"
+    },
+    {
+      "code": "home",
+      "kept": "Прочиее домоводство (то, что не вошло в другие категории)",
+      "rejected": "Домоводство",
+      "source": "https://lib.rus.ec/g"
+    },
+    {
+      "code": "adventure",
+      "kept": "Прочие приключения (то, что не вошло в другие категории)",
+      "rejected": "Приключения: прочее",
+      "source": "https://lib.rus.ec/g"
+    },
+    {
+      "code": "child_prose",
+      "kept": "Детскиая проза",
+      "rejected": "Детская проза",
+      "source": "https://lib.rus.ec/g"
+    },
+    {
+      "code": "children",
+      "kept": "Прочая детская литература (то, что не вошло в другие категории)",
+      "rejected": "Детская литература: прочее",
+      "source": "https://lib.rus.ec/g"
+    },
+    {
+      "code": "child_education",
+      "kept": "Детская образовательная литература",
+      "rejected": "Образовательная литература",
+      "source": "https://lib.rus.ec/g"
+    },
+    {
+      "code": "computers",
+      "kept": "Прочая околокомпьтерная литература (то, что не вошло в другие категории)",
+      "rejected": "Околокомпьютерная литература",
+      "source": "https://lib.rus.ec/g"
+    },
+    {
+      "code": "comp_hard",
+      "kept": "Компьютерное \"железо\" (аппаратное обеспечение)",
+      "rejected": "Аппаратное обеспечение",
+      "source": "https://lib.rus.ec/g"
+    },
+    {
+      "code": "antique_european",
+      "kept": "Европейская старинная литература",
+      "rejected": "Древнеевропейская литература",
+      "source": "https://lib.rus.ec/g"
+    },
+    {
+      "code": "antique",
+      "kept": "Прочая старинная литература (то, что не вошло в другие категории)",
+      "rejected": "Старинная литература: прочее",
+      "source": "https://lib.rus.ec/g"
+    },
+    {
+      "code": "nonfiction",
+      "kept": "Прочая документальная литература (то, что не вошло в другие категории)",
+      "rejected": "Документальная литература",
+      "source": "https://lib.rus.ec/g"
+    },
+    {
+      "code": "dramaturgy",
+      "kept": "Драматургия",
+      "rejected": "Драматургия: прочее",
+      "source": "https://lib.rus.ec/g"
+    },
+    {
+      "code": "reference",
+      "kept": "Прочая справочная литература (то, что не вошло в другие категории)",
+      "rejected": "Справочная литература",
+      "source": "https://lib.rus.ec/g"
+    },
+    {
+      "code": "humor",
+      "kept": "Прочий юмор (то, что не вошло в другие категории)",
+      "rejected": "Юмор: прочее",
+      "source": "https://lib.rus.ec/g"
+    }
+  ],
+  "mapped_codes": 186,
+  "overrides_loaded": 49,
+  "source_errors": {},
+  "source_stats": {
+    "https://lib.rus.ec/g": 141,
+    "https://sysadminmosaic.ru/fictionbook/fictionbook": 103
+  },
+  "unknown_override_codes": [],
+  "unmapped_codes": []
+}

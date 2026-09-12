@@ -151,13 +151,19 @@ dd { margin: 0; font-weight: 750; font-variant-numeric: tabular-nums; }
   background: #fffaf3;
 }
 .book-card-media { display: flex; width: var(--book-cover-width); min-height: 0; flex-direction: column; }
-.book-cover-placeholder, .book-cover-image {
+.book-cover-frame {
   width: var(--book-cover-width);
   height: var(--book-cover-height);
   aspect-ratio: 3 / 4;
   flex: none;
+  overflow: hidden;
 }
-.book-cover-image { display: block; object-fit: contain; }
+.book-cover-placeholder, .book-cover-image { width: 100%; height: 100%; }
+.book-cover-image {
+  display: block;
+  object-fit: cover;
+  object-position: center top;
+}
 .book-cover-placeholder {
   display: flex;
   align-items: center;
@@ -172,42 +178,57 @@ dd { margin: 0; font-weight: 750; font-variant-numeric: tabular-nums; }
 .book-cover-placeholder small { font-size: .7rem; }
 .book-card-body { display: flex; min-width: 0; min-height: 0; overflow: hidden; padding: .9rem 1rem; flex-direction: column; }
 .book-card-author, .book-card-genre, .book-card-annotation { margin: 0; color: #746b60; }
-.book-card-author { font-size: .8rem; font-weight: 650; }
+.book-card-author { font-size: 15px; font-weight: 650; }
 .book-card-author, .book-card-genre { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .book-card-title {
   display: -webkit-box;
   margin: .15rem 0 .35rem;
   overflow: hidden;
-  font-size: 1rem;
+  font-size: 16px;
+  font-weight: 650;
   overflow-wrap: anywhere;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
   line-clamp: 2;
 }
-.book-card-genre { font-size: .75rem; }
+.book-card-genre { font-size: 14px; }
 .book-card-annotation-block { display: flex; min-height: 0; margin-top: .55rem; flex: 1; flex-direction: column; }
 .book-card-annotation {
   display: block;
   min-height: 0;
   flex: 1;
   overflow: hidden;
-  font-size: .83rem;
+  font-size: 14px;
   line-height: 1.4;
   white-space: pre-line;
 }
 .book-card-annotation.truncated {
   display: -webkit-box;
+  height: var(--annotation-height);
+  min-height: var(--annotation-height);
+  max-height: var(--annotation-height);
+  flex: none;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: var(--annotation-lines, 1);
   line-clamp: var(--annotation-lines, 1);
 }
 .book-annotation-more {
-  margin-top: .15rem;
-  padding: 0;
+  width: auto;
+  height: 24px;
+  min-height: 24px;
+  max-height: 24px;
+  margin: auto 0 0;
+  padding: 4px 0 0;
+  align-self: flex-start;
+  flex: none;
   color: #684629;
   background: transparent;
-  font-size: .8rem;
+  font-size: 14px;
+  line-height: 20px;
+  text-align: left;
   text-decoration: underline;
+  white-space: nowrap;
+  mask-image: none;
 }
 .book-download-button {
   width: var(--book-cover-width);
@@ -232,18 +253,48 @@ dd { margin: 0; font-weight: 750; font-variant-numeric: tabular-nums; }
   background: rgb(35 27 20 / 55%);
 }
 .annotation-modal {
-  width: min(680px, 100%);
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  width: min(880px, 100%);
   max-height: min(80vh, 720px);
-  overflow: auto;
+  overflow: hidden;
   border-radius: .7rem;
-  padding: 1.1rem 1.2rem;
   background: #fffdf9;
   box-shadow: 0 12px 45px rgb(20 14 9 / 30%);
 }
+.annotation-modal-cover {
+  width: 150px;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  border-radius: .7rem 0 0 .7rem;
+  background: #e7dccd;
+}
+.annotation-modal-cover img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.annotation-modal-cover-placeholder {
+  display: grid;
+  width: 100%;
+  height: 100%;
+  place-items: center;
+  padding: 1rem;
+  color: #756858;
+  text-align: center;
+}
+.annotation-modal-content {
+  min-width: 0;
+  max-height: min(80vh, 720px);
+  overflow: auto;
+  padding: 1.1rem 1.2rem;
+}
 .modal-header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
 .modal-header h2 { margin: 0; font-size: 1.25rem; }
-.annotation-modal-label { margin: .45rem 0 0; color: #756b60; font-size: .85rem; }
-.annotation-modal > #annotation-modal-text { margin: 1rem 0 0; line-height: 1.55; white-space: pre-wrap; }
+.annotation-modal-genres { margin: .45rem 0 0; color: #756b60; font-size: .85rem; }
+.annotation-modal-content > #annotation-modal-text { margin: .7rem 0 0; line-height: 1.55; white-space: pre-wrap; }
 
 [hidden] { display: none !important; }
 
@@ -257,6 +308,9 @@ dd { margin: 0; font-weight: 750; font-variant-numeric: tabular-nums; }
   .status-panel { align-items: flex-start; flex-wrap: wrap; }
   .status-panel > p { flex-basis: 100%; }
   dl div { text-align: left; }
+  .annotation-modal { grid-template-columns: auto minmax(0, 1fr); }
+  .annotation-modal-cover { width: 90px; }
+  .annotation-modal-content { padding: .9rem; }
 }
 
 @media (max-width: 410px) {

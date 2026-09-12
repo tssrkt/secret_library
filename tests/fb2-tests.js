@@ -12,6 +12,7 @@ import { accountIdentity, applyDriveAvatar, createAvatarController } from '../js
 import { downloadDriveFile, getCurrentDriveUser } from '../js/drive.js';
 import { bookCardView, createBookCard } from '../js/book-card.js';
 import { createAnnotationModalController } from '../js/annotation-modal.js';
+import { genreLabels } from '../js/genre-labels.js';
 import {
   AUTH_SESSION_KEY, PREVIOUS_SIGN_IN_KEY, clearAccessToken, clearPersistedAuth,
   createAuthAttemptGuard, getAccessToken, persistAuthSession, recoverAuthSession, restoreAuthSession,
@@ -648,6 +649,7 @@ await test('one full-width card per row, with download directly below equal-widt
   assert(second.getBoundingClientRect().top > card.getBoundingClientRect().bottom, 'second card starts on next row');
   assert(card.getBoundingClientRect().height === second.getBoundingClientRect().height, 'long annotation does not increase fixed card height');
   const cover = card.querySelector('.book-cover-placeholder').getBoundingClientRect();
+  const coverFrame = card.querySelector('.book-cover-frame').getBoundingClientRect();
   const download = card.querySelector('.book-download-button').getBoundingClientRect();
   assert(cover.width === download.width, 'cover and download widths match');
   assert(download.top === cover.bottom, 'download touches cover');
@@ -656,12 +658,22 @@ await test('one full-width card per row, with download directly below equal-widt
   assert(download.height === 34, 'download button has compact fixed height');
   assert(getComputedStyle(card.querySelector('.book-download-button')).whiteSpace === 'nowrap', 'download label does not wrap');
   assert(card.querySelector('.book-download-button').textContent === 'СКАЧАТЬ', 'download label is uppercase');
-  assert(getComputedStyle(card.querySelector('.book-cover-placeholder')).aspectRatio === '3 / 4', 'cover uses 3:4 ratio');
+  assert(getComputedStyle(card.querySelector('.book-cover-frame')).aspectRatio === '3 / 4', 'cover container uses 3:4 ratio');
+  assert(cover.width === coverFrame.width && cover.height === coverFrame.height, 'placeholder fills cover container');
   const image = document.createElement('img');
   image.className = 'book-cover-image';
   card.querySelector('.book-cover-placeholder').replaceWith(image);
-  assert(getComputedStyle(image).aspectRatio === '3 / 4', 'real cover uses 3:4 ratio');
-  assert(getComputedStyle(image).objectFit === 'contain', 'real cover is not distorted');
+  const imageRect = image.getBoundingClientRect();
+  assert(imageRect.width === coverFrame.width && imageRect.height === coverFrame.height, 'square or portrait image fills fixed container');
+  assert(getComputedStyle(image).objectFit === 'cover', 'different image ratios are cropped without distortion');
+  assert(getComputedStyle(image).objectPosition === '50% 0%', 'cover is positioned at center top');
+  equal([
+    getComputedStyle(card.querySelector('.book-card-title')).fontSize,
+    getComputedStyle(card.querySelector('.book-card-author')).fontSize,
+    getComputedStyle(card.querySelector('.book-card-genre')).fontSize,
+    getComputedStyle(card.querySelector('.book-card-annotation')).fontSize,
+    getComputedStyle(card.querySelector('.book-annotation-more')).fontSize,
+  ], ['16px', '15px', '14px', '14px', '14px'], 'card typography sizes');
   grid.remove();
 });
 
@@ -683,8 +695,24 @@ await test('Read more is shown only for visually truncated annotation', async ()
   assert(shortCard.querySelector('.book-annotation-more').hidden, 'fitting annotation has no link');
   assert(!longCard.querySelector('.book-annotation-more').hidden, 'overflowing annotation has link');
   assert(longCard.querySelector('.book-annotation-more').textContent === 'Читать далее', 'link has updated label');
+  const annotation = longCard.querySelector('.book-card-annotation');
+  const more = longCard.querySelector('.book-annotation-more');
+  const annotationRect = annotation.getBoundingClientRect();
+  const moreRect = more.getBoundingClientRect();
+  const bodyRect = longCard.querySelector('.book-card-body').getBoundingClientRect();
+  const annotationStyles = getComputedStyle(annotation);
+  const moreStyles = getComputedStyle(more);
+  const lineHeight = Number.parseFloat(annotationStyles.lineHeight);
+  assert(Math.abs((annotationRect.height / lineHeight) - Math.round(annotationRect.height / lineHeight)) < 0.02, 'annotation ends on a whole text line');
+  assert(moreRect.left === annotationRect.left, 'read-more link aligns with annotation left edge');
+  assert(moreRect.top >= annotationRect.bottom, 'read-more row does not overlap annotation');
+  assert(Math.abs(moreRect.bottom - (bodyRect.bottom - Number.parseFloat(getComputedStyle(longCard.querySelector('.book-card-body')).paddingBottom))) < 1, 'read-more link stays at text column bottom');
+  assert(moreStyles.textAlign === 'left' && moreStyles.alignSelf === 'flex-start', 'read-more link is left aligned');
+  assert(moreRect.height === 24, 'read-more has a separate fixed-height row');
+  assert(annotation.classList.contains('truncated') && annotationStyles.webkitLineClamp !== 'none', 'overflow uses line clamp with ellipsis');
+  assert(annotationStyles.maskImage === 'none' && annotationStyles.backgroundImage === 'none', 'annotation has no masks, gradients or overlay lines');
   longCard.querySelector('.book-annotation-more').click();
-  equal(openedBook, { annotation: 'Long '.repeat(100).trim(), title: 'Noah', author: 'Julia' }, 'link opens complete book annotation data');
+  equal(openedBook, { annotation: 'Long '.repeat(100).trim(), title: 'Noah', author: 'Julia', genres: [], coverFileId: null }, 'link opens complete book annotation data');
   shortCard.remove();
   longCard.remove();
 });
@@ -720,25 +748,35 @@ await test('genre renders as exactly one current line', () => {
   equal(missing.querySelector('.book-card-genre').textContent, 'Жанр не указан', 'genre fallback');
 });
 
-await test('full annotation modal closes by button, backdrop and Escape', () => {
+await test('genre dictionary translates only for display and preserves unknown codes', async () => {
+  const source = ['biography', 'unknown_code'];
+  const labels = await genreLabels(source, async () => ({ biography: 'Биографии и мемуары' }));
+  equal(labels, 'Биографии и мемуары, unknown_code', 'display labels');
+  equal(source, ['biography', 'unknown_code'], 'source genre codes remain unchanged');
+});
+
+await test('full annotation modal renders genres and closes normally', async () => {
   const overlay = document.createElement('div');
   overlay.hidden = true;
   const dialog = document.createElement('section');
   const closeButton = document.createElement('button');
   const title = document.createElement('h2');
-  const label = document.createElement('p');
-  label.className = 'annotation-modal-label';
+  const genres = document.createElement('p');
+  genres.className = 'annotation-modal-genres';
   const text = document.createElement('p');
-  dialog.append(closeButton, title, label, text);
+  dialog.append(closeButton, title, genres, text);
   overlay.append(dialog);
   document.body.append(overlay);
-  const modal = createAnnotationModalController(overlay, text, closeButton, title, label);
-  const book = { title: 'Ноев ковчег', author: 'Юлия Васильевна Артюхович', annotation: 'Full annotation' };
+  const modal = createAnnotationModalController(overlay, text, closeButton, title, genres, null, null, {
+    genreLabels: async () => 'Биографии и мемуары, Историческая проза',
+  });
+  const book = { title: 'Ноев ковчег', author: 'Юлия Васильевна Артюхович', genres: ['biography', 'prose_history'], annotation: 'Full annotation' };
   modal.open(book);
+  await Promise.resolve();
   assert(!overlay.hidden && text.textContent === 'Full annotation', 'modal opens');
   assert(title.textContent === '«Ноев ковчег» Юлия Васильевна Артюхович', 'modal heading contains quoted title and author without dash');
-  assert(label.textContent === 'Аннотация', 'modal has a separate annotation label');
-  assert(getComputedStyle(label).color !== getComputedStyle(title).color, 'annotation label is visually muted');
+  assert(genres.textContent === 'Биографии и мемуары, Историческая проза', 'translated genres have no prefix');
+  assert(getComputedStyle(genres).color !== getComputedStyle(title).color, 'genre line is visually muted');
   closeButton.click();
   assert(overlay.hidden, 'close button');
   modal.open(book);
@@ -759,7 +797,7 @@ await test('lazy folder tree renders books as cards only after folder expansion'
     <p id="status-text"></p><dl id="stats"><div><dd id="folder-count"></dd></div><div><dd id="book-count"></dd></div></dl>
     <div id="error-panel"><p id="error-text"></p></div><button id="retry-button"></button>
     <section id="library-panel"><div id="library-tree"></div></section>
-    <div id="annotation-modal" hidden><section><button id="annotation-modal-close"></button><h2 id="annotation-modal-title"></h2><p id="annotation-modal-label"></p><p id="annotation-modal-text"></p></section></div>`;
+    <div id="annotation-modal" hidden><section class="annotation-modal"><div id="annotation-modal-cover"><div id="annotation-modal-cover-placeholder"></div><img id="annotation-modal-cover-image"></div><div><button id="annotation-modal-close"></button><h2 id="annotation-modal-title"></h2><p id="annotation-modal-genres"></p><p id="annotation-modal-text"></p></div></section></div>`;
   document.body.append(fixture);
   const uiModule = await import(`../js/ui.js?tree-test=${Date.now()}`);
   uiModule.renderLibrary({
@@ -796,6 +834,9 @@ await test('production controls keep stop in status panel and menu actions out o
   assert(page.querySelector('#avatar-menu > #retry-metadata-button'), 'retry action belongs to avatar menu');
   assert(page.querySelector('#avatar-menu .account-identity #account-display-name'), 'account identity belongs to menu');
   assert(page.querySelector('#avatar-menu > #sign-out-button'), 'logout belongs to menu bottom');
+  assert(page.querySelector('.annotation-modal > .annotation-modal-cover'), 'modal has a left cover column');
+  assert(page.querySelector('.annotation-modal-content > #annotation-modal-genres'), 'genres are in the right text column');
+  assert(!page.querySelector('#annotation-modal-label'), 'annotation heading is removed');
   assert(!page.querySelector('.app-header #user-greeting'), 'greeting is absent from header');
   assert(!page.querySelector('#avatar-menu').textContent.includes('Мой профиль'), 'profile menu label removed');
   assert(!page.querySelector('.app-header #stop-button'), 'stop is absent from header');
