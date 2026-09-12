@@ -11,6 +11,7 @@ export class Fb2Error extends Error {
     super(message);
     this.name = 'Fb2Error';
     this.code = code;
+    this.stage = ['invalid_xml', 'unsupported_encoding', 'parse_failed'].includes(code) ? 'parse' : 'metadata-extraction';
   }
 }
 
@@ -62,11 +63,13 @@ function concatChunks(chunks, totalLength) {
   return result;
 }
 
-export async function readFb2Description(fileId, { signal, fetchRange = downloadFileRange } = {}) {
+export async function readFb2Description(fileId, { signal, fetchRange = downloadFileRange, size } = {}) {
   const chunks = [];
   let totalLength = 0;
   for (const [start, end] of FB2_RANGES) {
-    const response = await fetchRange(fileId, start, end, signal);
+    if (Number.isFinite(size) && start >= size) break;
+    const response = await fetchRange(fileId, start, Number.isFinite(size) ? Math.min(end, size - 1) : end, signal);
+    if (response.status === 200) { chunks.length = 0; totalLength = 0; }
     chunks.push(response.bytes);
     totalLength += response.bytes.length;
     const bytes = concatChunks(chunks, totalLength);
@@ -91,6 +94,10 @@ function directChild(element, localName) {
 
 function childText(element, localName) {
   return directChild(element, localName)?.textContent?.replace(/\s+/g, ' ').trim() || '';
+}
+
+function atStage(stage, action) {
+  try { return action(); } catch (error) { error.stage = stage; throw error; }
 }
 
 function annotationText(annotation) {
@@ -185,7 +192,7 @@ function titleInfoMetadata(titleInfo) {
     genres,
     series: sequence?.getAttribute('name')?.trim() || null,
     seriesNumber: Number.isFinite(parsedNumber) ? parsedNumber : null,
-    annotation: annotationText(directChild(titleInfo, 'annotation')),
+    annotation: atStage('annotation', () => annotationText(directChild(titleInfo, 'annotation'))),
     preview: null,
     language: childText(titleInfo, 'lang') || null,
     coverId: coverHref?.replace(/^#/, '') || null,
@@ -224,7 +231,7 @@ export function parseFullFb2(bytes, Parser = globalThis.DOMParser) {
   const titleInfo = [...document.getElementsByTagNameNS('*', 'title-info')][0];
   if (!titleInfo) throw new Fb2Error('parse_failed', 'FB2 title-info is missing.');
   const metadata = titleInfoMetadata(titleInfo);
-  if (!metadata.annotation) metadata.preview = extractBodyPreview(document);
+  if (!metadata.annotation) metadata.preview = atStage('preview', () => extractBodyPreview(document));
   if (!metadata.coverId) return metadata;
   const binary = [...document.getElementsByTagNameNS('*', 'binary')]
     .find((element) => element.getAttribute('id') === metadata.coverId);
@@ -233,7 +240,7 @@ export function parseFullFb2(bytes, Parser = globalThis.DOMParser) {
   if (!['image/jpeg', 'image/png', 'image/webp', 'image/gif'].includes(mimeType)) {
     return { ...metadata, metadataWarning: 'unsupported_cover_format' };
   }
-  return { ...metadata, cover: { mimeType, bytes: decodeBase64(binary.textContent) } };
+  return { ...metadata, cover: { mimeType, bytes: atStage('cover', () => decodeBase64(binary.textContent)) } };
 }
 
 export function parseFb2Bytes(bytes, Parser = globalThis.DOMParser) {
@@ -245,12 +252,18 @@ export function parseFb2Bytes(bytes, Parser = globalThis.DOMParser) {
 
 export async function extractFb2Metadata(book, options = {}) {
   try {
-    const metadata = parseFb2Metadata(await readFb2Description(book.id, options), options.Parser);
+    // Small/unknown-size books need one full read, also supplying preview and cover.
+    if (!Number.isFinite(book.size) || book.size <= 1_048_576) {
+      const blob = await (options.downloadFile || downloadDriveFile)(book.id, options.signal);
+      return parseFullFb2(new Uint8Array(await blob.arrayBuffer()), options.Parser);
+    }
+    const metadata = parseFb2Metadata(await readFb2Description(book.id, { ...options, size: book.size }), options.Parser);
     if (metadata.annotation && !metadata.coverId) return metadata;
     const blob = await (options.downloadFile || downloadDriveFile)(book.id, options.signal);
     return parseFullFb2(new Uint8Array(await blob.arrayBuffer()), options.Parser);
   } catch (error) {
     if (error instanceof Fb2Error || error?.name === 'AbortError' || error?.status === 401) throw error;
-    throw new Fb2Error('download_failed', error?.message || 'FB2 download failed.');
+    error.stage ||= 'download';
+    throw error;
   }
 }

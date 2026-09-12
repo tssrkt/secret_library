@@ -22,6 +22,7 @@ import { BOOKS_PER_PAGE, createPaginator, paginateItems, paginationTokens } from
 import { filterBooksByDirectValue, russianBookCount } from '../js/direct-filter.js';
 import { seriesLabel } from '../js/book-series.js';
 import { runSearchTests } from './search-tests.js';
+import { runIndexingErrorTests } from './indexing-errors-tests.js';
 import {
   AUTH_SESSION_KEY, PREVIOUS_SIGN_IN_KEY, clearAccessToken, clearPersistedAuth,
   createAuthAttemptGuard, getAccessToken, persistAuthSession, recoverAuthSession, restoreAuthSession,
@@ -102,6 +103,7 @@ await test('late Google response cannot restore authorization after logout', () 
 });
 
 async function test(name, callback) {
+  output.textContent = `${passed} passed, ${failures.length} failed; running: ${name}`;
   try {
     await callback();
     passed += 1;
@@ -306,7 +308,7 @@ await test('body preview ignores a notes body when the main body is named', () =
   equal(parseFullFb2(new TextEncoder().encode(source)).preview, 'The actual book opens with this paragraph.', 'main body selected');
 });
 
-await test('standalone FB2 downloads the full source only for a cover or missing annotation', async () => {
+await test('small standalone FB2 uses one full read including cover, annotation and preview', async () => {
   const covered = `${xml('<book-title>Covered</book-title><coverpage><image xlink:href="#c"/></coverpage>')}</FictionBook>`
     .replace('</FictionBook>', '<binary id="c" content-type="image/png">AQID</binary></FictionBook>');
   let downloads = 0;
@@ -320,13 +322,13 @@ await test('standalone FB2 downloads the full source only for a cover or missing
     fetchRange: rangeFetcher(new TextEncoder().encode(annotated)).fetchRange,
     downloadFile: async () => { downloads += 1; return new Blob([annotated]); },
   });
-  equal(downloads, 1, 'annotated coverless FB2 stays on partial ranges');
+  equal(downloads, 2, 'small annotated FB2 also uses one full download');
   const missing = `${xml('<book-title>Missing</book-title>')}<body><section><p>Fallback text from the book body.</p></section></body></FictionBook>`;
   const fallback = await extractFb2Metadata({ id: 'missing' }, {
     fetchRange: rangeFetcher(new TextEncoder().encode(missing)).fetchRange,
     downloadFile: async () => { downloads += 1; return new Blob([missing]); },
   });
-  equal([downloads, fallback.annotation, fallback.preview], [2, null, 'Fallback text from the book body.'], 'missing annotation triggers one full read for preview');
+  equal([downloads, fallback.annotation, fallback.preview], [3, null, 'Fallback text from the book body.'], 'missing annotation uses the same full read for preview');
 });
 
 await test('Windows-1251 declaration and decoding', () => {
@@ -1492,6 +1494,7 @@ await test('direct result navigation uses all folders, current-page DOM, home an
 });
 
 await runSearchTests(test, assert, equal);
+await runIndexingErrorTests(test, assert, equal, makeZip);
 
 output.textContent = failures.length
   ? `${passed} passed, ${failures.length} failed\n\n${failures.join('\n\n')}`

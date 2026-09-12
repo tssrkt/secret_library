@@ -12,12 +12,14 @@ function activeSignature(index) {
 
 export function prepareBuildingIndex(activeIndex, { retryErrors = false, now = () => new Date().toISOString() } = {}) {
   const building = cloneIndex(activeIndex);
+  const previousFailures = new Set((activeIndex.indexingErrors || []).filter((entry) => entry.outcome === 'failed').map((entry) => entry.fileId));
+  building.indexingErrors = [];
   let total = 0;
   for (const book of building.books) {
     const needsMetadata = book.metadataStatus === 'pending'
       || book.metadataStatus === 'processing'
       || book.metadataVersion !== METADATA_VERSION
-      || (retryErrors && book.metadataStatus === 'error');
+      || (retryErrors && (book.metadataStatus === 'error' || previousFailures.has(book.id)));
     if (!needsMetadata) continue;
     book.metadataStatus = 'pending';
     delete book.metadataError;
@@ -60,13 +62,18 @@ export function validateCompletedIndex(candidate, activeIndex) {
   if (candidate.books.length !== activeIndex.books.length) throw new Error('Built index has an incomplete book list.');
   const activeIds = new Set(activeIndex.books.map((book) => book.id));
   const builtIds = new Set();
+  const oldBooks = new Map(activeIndex.books.map((book) => [book.id, book]));
+  const preservedIds = new Set((candidate.indexingErrors || []).filter((entry) => entry.previousEntryPreserved && entry.outcome === 'failed').map((entry) => entry.fileId));
   for (const book of candidate.books) {
     if (!book?.id || builtIds.has(book.id) || !activeIds.has(book.id) || !book.fileName || !['fb2', 'zip'].includes(book.sourceType)) {
       throw new Error('Built index contains an invalid book record.');
     }
     builtIds.add(book.id);
     if (!['ready', 'error'].includes(book.metadataStatus)) throw new Error('Built index is not complete.');
-    if (book.metadataStatus === 'ready' && book.metadataVersion !== METADATA_VERSION) {
+    const unchangedPrevious = preservedIds.has(book.id) && oldBooks.get(book.id)?.metadataStatus === 'ready'
+      && JSON.stringify(book) === JSON.stringify(oldBooks.get(book.id));
+    if (preservedIds.has(book.id) && !unchangedPrevious) throw new Error('Preserved index entry differs from the previous good record.');
+    if (book.metadataStatus === 'ready' && book.metadataVersion !== METADATA_VERSION && !unchangedPrevious) {
       throw new Error('Built index contains stale metadata.');
     }
     if (book.metadataStatus === 'ready'

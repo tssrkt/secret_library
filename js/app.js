@@ -16,6 +16,14 @@ import {
   canResumeBuildingIndex, prepareBuildingIndex, updateBuildProgress, validateCompletedIndex,
 } from './index-build.js';
 import * as ui from './ui.js';
+import { errorDetails, recordIndexingError } from './indexing-errors.js';
+
+function reportOperationError(index, error, stage, fileId = '', fileName = '') {
+  if (!index || error.indexingLogged) return;
+  recordIndexingError(index, { id: error.fileId || fileId, fileName }, [errorDetails(error, { stage: error.stage || stage })], { outcome: 'interrupted' });
+  error.indexingLogged = true;
+  ui.updateIndexingErrors(index.indexingErrors);
+}
 
 let indexFileId = null;
 let currentIndex = null;
@@ -76,10 +84,12 @@ async function rebuildIndex() {
       indexFileId = await saveIndex(index, indexFileId);
       ui.setStatus(`Библиотека обновлена: ${index.books.length.toLocaleString('ru-RU')} книг.`);
     } catch (error) {
+      reportOperationError(index, error, 'index-write', indexFileId, 'secret-library-index.json');
       ui.setStatus('Сканирование завершено, библиотека доступна в этой вкладке.');
       ui.showError(readableError(error), { canRebuild: false });
     }
   } catch (error) {
+    reportOperationError(currentIndex || {}, error, 'list', ROOT_FOLDER_ID);
     ui.showError(readableError(error), { canRebuild: true });
     ui.setStatus('Не удалось обновить библиотеку.');
   } finally {
@@ -105,6 +115,7 @@ async function runMetadataIndexing({ retryErrors = false } = {}) {
   });
 
   metadataController = new AbortController();
+  ui.updateIndexingErrors(buildingIndex.indexingErrors || []);
   ui.clearError();
   ui.setMetadataRunning(true);
   ui.setStatus(`Индексирование FB2… Обработано: ${(previousProgress.processed || 0).toLocaleString('ru-RU')} / ${buildingIndex.buildState.total.toLocaleString('ru-RU')}. Из кеша: ${cachedCount.toLocaleString('ru-RU')}.`);
@@ -117,6 +128,8 @@ async function runMetadataIndexing({ retryErrors = false } = {}) {
   };
   try {
     const runStats = await indexPendingBooks(buildingIndex, {
+      previousIndex: activeIndex,
+      onErrors: (entries) => ui.updateIndexingErrors(entries),
       signal: metadataController.signal,
       onProgress: (progress) => {
         stats = overallProgress(progress);
@@ -148,16 +161,20 @@ async function runMetadataIndexing({ retryErrors = false } = {}) {
       buildingIndexFileId = null;
       try { await deleteBuildingIndex(completedBuildingFileId); } catch { /* Active index is already safely committed. */ }
       try { await removeCovers(obsoleteCovers); } catch { /* Orphan cleanup can be retried on the next load. */ }
-      ui.setStatus(`Обработано ${stats.processed.toLocaleString('ru-RU')} книг. Успешно: ${stats.succeeded.toLocaleString('ru-RU')}. Из кеша: ${stats.skipped.toLocaleString('ru-RU')}. Ошибок: ${stats.failed.toLocaleString('ru-RU')}.`);
+      const preserved = (currentIndex.indexingErrors || []).filter((entry) => entry.previousEntryPreserved).length;
+      ui.setStatus(`Всего: ${stats.total.toLocaleString('ru-RU')}. Успешно: ${stats.succeeded.toLocaleString('ru-RU')}. Из кеша: ${stats.skipped.toLocaleString('ru-RU')}. Ошибок: ${stats.failed.toLocaleString('ru-RU')}. Сохранены из предыдущего индекса: ${preserved}.`);
     }
   } catch (error) {
+    reportOperationError(buildingIndex, error, 'index-write', buildingIndexFileId, 'secret-library-index-building.json');
     resetProcessingBooks(buildingIndex);
     try {
       buildingIndex.updatedAt = new Date().toISOString();
       buildingIndexFileId = await saveBuildingIndex(buildingIndex, buildingIndexFileId);
-    } catch { /* The original error is more useful, commonly an expired token. */ }
+    } catch (checkpointError) {
+      reportOperationError(buildingIndex, checkpointError, 'index-write', buildingIndexFileId, 'secret-library-index-building.json');
+    }
     ui.showError(readableError(error));
-    ui.setStatus('Индексирование FB2 прервано. Рабочая библиотека не изменена, checkpoints черновика сохранены.');
+    ui.setStatus('Индексирование FB2 прервано. Рабочая библиотека не изменена. Подробности и ошибки сохранения — в журнале.');
   } finally {
     metadataController = null;
     ui.setMetadataRunning(false);
@@ -208,6 +225,7 @@ async function afterAuthorization({ restoredUser = null } = {}) {
         buildingIndexFileId = null;
       }
       renderLibrary(currentIndex);
+      ui.updateIndexingErrors(buildingIndex?.indexingErrors || currentIndex.indexingErrors || []);
       const coverIndex = buildingIndex
         ? { books: [...currentIndex.books, ...buildingIndex.books] }
         : currentIndex;

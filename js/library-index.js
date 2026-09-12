@@ -74,6 +74,9 @@ export async function saveIndex(index, fileId = null) {
   } catch (error) {
     const wrapped = new IndexError(`Библиотека отсканирована, но сохранить индекс не удалось: ${error.message}`, 'index_write_failed');
     wrapped.status = error.status;
+    wrapped.stage = 'index-write';
+    wrapped.attempt = error.attempt;
+    wrapped.retryResult = error.retryResult;
     if (error.code === 'unauthorized') wrapped.code = 'unauthorized';
     throw wrapped;
   }

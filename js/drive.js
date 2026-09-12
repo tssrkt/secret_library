@@ -4,7 +4,7 @@ import { getAccessToken } from './auth.js';
 const API_ROOT = 'https://www.googleapis.com/drive/v3';
 const UPLOAD_ROOT = 'https://www.googleapis.com/upload/drive/v3';
 const RETRYABLE_STATUSES = new Set([429, 500, 502, 503, 504]);
-const MAX_RETRIES = 3;
+const MAX_RETRIES = 2;
 
 export class DriveError extends Error {
   constructor(message, { status = 0, code = 'drive_error', retryable = false } = {}) {
@@ -24,23 +24,37 @@ function resourceKeyHeaders() {
     : {};
 }
 
-async function driveFetch(path, options = {}, retry = 0, apiRoot = API_ROOT) {
+export async function driveFetch(path, options = {}, retry = 0, apiRoot = API_ROOT) {
+  const { diagnostics = {}, ...requestOptions } = options;
+  const report = (error, retryResult) => {
+    Object.assign(error, { stage: diagnostics.stage || (requestOptions.method ? 'index-write' : path.includes('alt=media') ? 'download' : path.startsWith('/files?') ? 'list' : 'metadata'),
+      fileId: diagnostics.fileId || decodeURIComponent(path.match(/^\/files\/([^?]+)/)?.[1] || ''),
+      attempt: retry + 1, range: options.headers?.Range || null, retryResult });
+    diagnostics.onIssue?.(error);
+    return error;
+  };
   const token = getAccessToken();
   if (!token) throw new DriveError('Сеанс Google истек. Войдите снова.', { status: 401, code: 'unauthorized' });
 
   let response;
   try {
     response = await fetch(`${apiRoot}${path}`, {
-      ...options,
+      ...requestOptions,
+      signal: options.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(30000)]) : AbortSignal.timeout(30000),
       headers: { Authorization: `Bearer ${token}`, ...resourceKeyHeaders(), ...options.headers },
     });
   } catch (error) {
     if (options.signal?.aborted || error?.name === 'AbortError') throw error;
-    if (retry < MAX_RETRIES) {
-      await delay(500 * (2 ** retry) + Math.random() * 250);
+    const timedOut = error?.name === 'TimeoutError';
+    const failure = new DriveError(timedOut ? 'Google Drive не ответил за 30 секунд.'
+      : 'Не удалось связаться с Google Drive. Проверьте подключение к интернету.',
+    { code: timedOut ? 'download_timeout' : 'network_error', retryable: true });
+    if (retry < (diagnostics.maxRetries ?? MAX_RETRIES)) {
+      report(failure, 'retrying');
+      await (diagnostics.sleep || delay)(500 * (2 ** retry));
       return driveFetch(path, options, retry + 1, apiRoot);
     }
-    throw new DriveError('Не удалось связаться с Google Drive. Проверьте подключение к интернету.', { retryable: true });
+    throw report(failure, retry ? 'exhausted' : 'not-retried');
   }
 
   if (response.ok) return response;
@@ -49,9 +63,10 @@ async function driveFetch(path, options = {}, retry = 0, apiRoot = API_ROOT) {
   const reason = errorBody?.error?.errors?.[0]?.reason || '';
   const retryable = RETRYABLE_STATUSES.has(response.status)
     || (response.status === 403 && ['rateLimitExceeded', 'userRateLimitExceeded'].includes(reason));
-  if (retryable && retry < MAX_RETRIES) {
+  if (retryable && retry < (diagnostics.maxRetries ?? MAX_RETRIES)) {
+    report(new DriveError(errorBody?.error?.message || `HTTP ${response.status}`, { status: response.status, retryable }), 'retrying');
     const retryAfter = Number(response.headers.get('Retry-After')) * 1000;
-    await delay(retryAfter || (700 * (2 ** retry) + Math.random() * 300));
+    await (diagnostics.sleep || delay)(Math.min(retryAfter || 700 * (2 ** retry), 10000));
     return driveFetch(path, options, retry + 1, apiRoot);
   }
 
@@ -59,14 +74,17 @@ async function driveFetch(path, options = {}, retry = 0, apiRoot = API_ROOT) {
   const messages = {
     401: 'Сеанс Google истек. Войдите снова.',
     403: retryable ? 'Google Drive временно ограничил число запросов. Повторите позже.' : 'Нет доступа к запрошенным данным Google Drive.',
-    404: 'Корневая папка Google Drive не существует или недоступна.',
+    404: 'Файл Google Drive не найден или недоступен.',
+    416: 'Запрошенный диапазон находится за пределами доступного файла (Range Not Satisfiable).',
     429: 'Google Drive временно ограничил число запросов. Повторите позже.',
   };
-  throw new DriveError(messages[response.status] || apiMessage || 'Google Drive вернул ошибку.', {
+  const error = new DriveError(messages[response.status] || apiMessage || 'Google Drive вернул ошибку.', {
     status: response.status,
     code: response.status === 401 ? 'unauthorized' : 'drive_error',
     retryable,
   });
+  error.contentRange = response.headers.get('Content-Range');
+  throw report(error, retry ? 'exhausted' : 'not-retried');
 }
 
 export async function getFolder(folderId) {
@@ -96,7 +114,7 @@ export async function listFolderChildren(folderId) {
       includeItemsFromAllDrives: 'true',
     });
     if (pageToken) params.set('pageToken', pageToken);
-    const response = await driveFetch(`/files?${params}`);
+    const response = await driveFetch(`/files?${params}`, { diagnostics: { stage: 'list', fileId: folderId } });
     const page = await response.json();
     files.push(...(page.files || []));
     pageToken = page.nextPageToken || '';
@@ -139,17 +157,21 @@ export async function downloadAppDataFile(fileId) {
   return driveFetch(`/files/${encodeURIComponent(fileId)}?${params}`);
 }
 
-export async function downloadDriveFile(fileId, signal, request = driveFetch) {
+export async function downloadDriveFile(fileId, signal, request = driveFetch, diagnostics = {}) {
   const params = new URLSearchParams({ alt: 'media', supportsAllDrives: 'true' });
-  const response = await request(`/files/${encodeURIComponent(fileId)}?${params}`, { signal });
+  const response = await request(`/files/${encodeURIComponent(fileId)}?${params}`, { signal, diagnostics });
   return response.blob();
 }
 
-export async function downloadFileRange(fileId, start, end, signal, { requirePartial = false } = {}) {
+export async function downloadFileRange(fileId, start, end, signal, { requirePartial = false, diagnostics = {} } = {}) {
+  if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || end < start) {
+    throw Object.assign(new DriveError('Некорректный диапазон байтов.', { code: 'invalid_range' }), { stage: 'download' });
+  }
   const params = new URLSearchParams({ alt: 'media', supportsAllDrives: 'true' });
   const response = await driveFetch(`/files/${encodeURIComponent(fileId)}?${params}`, {
     headers: { Range: `bytes=${start}-${end}` },
     signal,
+    diagnostics,
   });
   if (requirePartial && response.status === 200) {
     await response.body?.cancel();
@@ -157,8 +179,12 @@ export async function downloadFileRange(fileId, start, end, signal, { requirePar
   }
   const bytes = new Uint8Array(await response.arrayBuffer());
   const contentRange = response.headers.get('Content-Range')?.match(/bytes\s+(\d+)-(\d+)\/(\d+|\*)/i);
+  if (response.status === 206 && contentRange
+      && (Number(contentRange[1]) !== start || Number(contentRange[2]) - start + 1 !== bytes.length)) {
+    throw Object.assign(new DriveError('Content-Range не соответствует запрошенным байтам.', { code: 'invalid_content_range' }), { stage: 'download' });
+  }
   const reachedEnd = bytes.length < end - start + 1
-    || (contentRange?.[3] !== '*' && Number(contentRange?.[2]) + 1 >= Number(contentRange?.[3]));
+    || (contentRange && contentRange[3] !== '*' && Number(contentRange[2]) + 1 >= Number(contentRange[3]));
   return {
     bytes,
     isComplete: response.status === 200 || reachedEnd,

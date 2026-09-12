@@ -9,6 +9,7 @@ import { createPaginator, paginateItems } from './pagination.js';
 import { METADATA_VERSION } from './config.js';
 import { filterBooksByDirectValue, russianBookCount } from './direct-filter.js';
 import { createSearchController } from './search-ui.js';
+import { createIndexingErrorsController } from './indexing-errors-ui.js';
 
 const genresRu = await loadGenreDictionary().catch(() => ({}));
 
@@ -66,6 +67,8 @@ const elements = {
 };
 
 const dropdown = setupDropdown(elements.avatar, elements.avatarMenu);
+const indexingErrors = createIndexingErrorsController(document.querySelector('#indexing-errors'));
+export function updateIndexingErrors(entries) { indexingErrors.update(entries); }
 const avatar = createAvatarController(elements.avatar, elements.avatarImage, elements.avatarPlaceholder);
 const annotationModal = createAnnotationModalController(
   elements.annotationModal,
@@ -146,7 +149,9 @@ export function setBusy(busy) {
 
 export function updateMetadataActions(index) {
   const pending = index.books.filter((book) => book.metadataStatus === 'pending' || book.metadataVersion !== METADATA_VERSION).length;
-  const failed = index.books.filter((book) => book.metadataStatus === 'error').length;
+  const failedIds = new Set(index.books.filter((book) => book.metadataStatus === 'error').map((book) => book.id));
+  for (const entry of index.indexingErrors || []) if (entry.outcome === 'failed' && entry.previousEntryPreserved) failedIds.add(entry.fileId);
+  const failed = failedIds.size;
   elements.metadata.hidden = pending === 0;
   elements.metadata.textContent = pending ? `Проиндексировать книги (${pending.toLocaleString('ru-RU')})` : 'Проиндексировать книги';
   elements.retryMetadata.hidden = failed === 0;
@@ -370,6 +375,7 @@ export function renderLibrary(index, onDownload = async () => {}) {
 }
 
 export function resetUi() {
+  indexingErrors.reset();
   searchController?.destroy();
   searchController = null;
   clearCoverUrls();
