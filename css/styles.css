@@ -203,7 +203,7 @@ dd { margin: 0; font-weight: 750; font-variant-numeric: tabular-nums; }
   line-clamp: 2;
 }
 .book-card-genre { font-size: 15px; }
-.book-card-annotation-block { display: flex; min-height: 0; margin-top: .55rem; padding-bottom: 28px; flex: 1; flex-direction: column; }
+.book-card-annotation-block { display: flex; min-height: 0; margin-top: .55rem; padding-bottom: 20px; flex: 1; flex-direction: column; }
 .book-card-annotation {
   display: block;
   margin: 0;
@@ -227,8 +227,9 @@ dd { margin: 0; font-weight: 750; font-variant-numeric: tabular-nums; }
 }
 .book-annotation-more {
   position: absolute;
-  right: 1rem;
-  bottom: .9rem;
+  right: auto;
+  bottom: calc((var(--book-download-height) - 24px) / 2);
+  left: 1rem;
   width: auto;
   height: 24px;
   min-height: 24px;
@@ -239,7 +240,7 @@ dd { margin: 0; font-weight: 750; font-variant-numeric: tabular-nums; }
   background: transparent;
   font-size: 14px;
   line-height: 20px;
-  text-align: right;
+  text-align: left;
   text-decoration: none;
   white-space: nowrap;
   mask-image: none;

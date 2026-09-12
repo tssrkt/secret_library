@@ -704,6 +704,9 @@ await test('Read more stays bottom-right while only overflowing annotation is tr
   updateLong();
   assert(!shortCard.querySelector('.book-annotation-more').hidden, 'fitting annotation keeps the link at the bottom');
   assert(!shortCard.querySelector('.book-card-annotation').classList.contains('truncated'), 'fitting annotation is not truncated');
+  const shortMoreRect = shortCard.querySelector('.book-annotation-more').getBoundingClientRect();
+  const shortDownloadRect = shortCard.querySelector('.book-download-button').getBoundingClientRect();
+  assert(Math.abs((shortMoreRect.top + shortMoreRect.height / 2) - (shortDownloadRect.top + shortDownloadRect.height / 2)) < 1, 'short annotation does not move read-more away from download row');
   assert(!longCard.querySelector('.book-annotation-more').hidden, 'overflowing annotation has link');
   assert(longCard.querySelector('.book-annotation-more').textContent === 'ЧИТАТЬ ДАЛЕЕ', 'link uses uppercase label');
   const annotation = longCard.querySelector('.book-card-annotation');
@@ -711,14 +714,15 @@ await test('Read more stays bottom-right while only overflowing annotation is tr
   const annotationRect = annotation.getBoundingClientRect();
   const moreRect = more.getBoundingClientRect();
   const bodyRect = longCard.querySelector('.book-card-body').getBoundingClientRect();
+  const downloadRect = longCard.querySelector('.book-download-button').getBoundingClientRect();
   const annotationStyles = getComputedStyle(annotation);
   const moreStyles = getComputedStyle(more);
   const lineHeight = Number.parseFloat(annotationStyles.lineHeight);
   assert(Math.abs((annotationRect.height / lineHeight) - Math.round(annotationRect.height / lineHeight)) < 0.02, 'annotation ends on a whole text line');
-  assert(Math.abs(moreRect.right - (bodyRect.right - Number.parseFloat(getComputedStyle(longCard.querySelector('.book-card-body')).paddingRight))) < 1, 'read-more aligns with text column right edge');
+  assert(Math.abs(moreRect.left - (bodyRect.left + Number.parseFloat(getComputedStyle(longCard.querySelector('.book-card-body')).paddingLeft))) < 1, 'read-more aligns with text column left edge');
   assert(moreRect.top >= annotationRect.bottom, 'reserved row prevents overlap with annotation');
-  assert(Math.abs(moreRect.bottom - (bodyRect.bottom - Number.parseFloat(getComputedStyle(longCard.querySelector('.book-card-body')).paddingBottom))) < 1, 'read-more link stays at text column bottom');
-  assert(moreStyles.position === 'absolute' && moreStyles.textAlign === 'right', 'read-more is anchored at bottom-right');
+  assert(Math.abs((moreRect.top + moreRect.height / 2) - (downloadRect.top + downloadRect.height / 2)) < 1, 'read-more and download have the same vertical center');
+  assert(moreStyles.position === 'absolute' && moreStyles.textAlign === 'left', 'read-more is anchored at bottom-left');
   assert(moreStyles.textDecorationLine === 'none', 'read-more has no underline');
   assert(moreRect.height === 24, 'read-more has a separate fixed-height row');
   assert(annotation.classList.contains('truncated') && annotationStyles.webkitLineClamp !== 'none', 'overflow uses line clamp with ellipsis');
