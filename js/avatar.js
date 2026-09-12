@@ -1,5 +1,10 @@
 const DEFAULT_LABEL = 'Открыть меню пользователя';
 
+export function greetingText(displayName = '') {
+  const name = typeof displayName === 'string' ? displayName.trim() : '';
+  return name ? `Привет, ${name}!` : 'Привет!';
+}
+
 export function createAvatarController(button, image, placeholder) {
   let version = 0;
   let settlePending = null;

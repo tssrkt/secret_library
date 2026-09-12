@@ -26,7 +26,13 @@ body { margin: 0; }
 h1 { margin: 0; font: 750 clamp(2rem, 5vw, 3rem)/1.05 system-ui, sans-serif; white-space: nowrap; }
 .subtitle { margin: .35rem 0 0; color: #6a6359; }
 .account-actions { display: flex; align-items: center; flex: none; gap: .65rem; }
-.user-controls { position: relative; }
+.user-controls { position: relative; display: flex; align-items: center; min-width: 0; gap: .65rem; }
+.user-greeting {
+  max-width: min(32vw, 320px);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
 .avatar-button {
   width: 2.7rem;
   height: 2.7rem;
@@ -63,6 +69,8 @@ h1 { margin: 0; font: 750 clamp(2rem, 5vw, 3rem)/1.05 system-ui, sans-serif; whi
 .avatar-menu button:disabled { cursor: default; opacity: .55; }
 .avatar-menu small { margin-left: .75rem; color: #756b60; font-weight: 400; }
 .avatar-menu hr { margin: .35rem .5rem; border: 0; border-top: 1px solid #e5dbce; }
+.avatar-menu .account-menu-separator { margin-top: .55rem; border-top-color: #cdbbab; }
+.avatar-menu .sign-out-menu-item { color: #8a2923; }
 
 button {
   border: 0;
@@ -101,7 +109,7 @@ dt { color: #746b60; font-size: .78rem; }
 dd { margin: 0; font-weight: 750; font-variant-numeric: tabular-nums; }
 
 #library-panel { margin-top: 1rem; overflow: auto; }
-.library-tree { min-width: max-content; }
+.library-tree { min-width: 0; }
 .tree-list { list-style: none; margin: 0; padding-left: 1.25rem; }
 .library-tree > .tree-list { padding-left: 0; }
 .tree-row { display: flex; align-items: center; min-height: 1.9rem; }
@@ -115,36 +123,57 @@ dd { margin: 0; font-weight: 750; font-variant-numeric: tabular-nums; }
 .folder-toggle::before { content: "▸"; display: inline-block; width: 1.2rem; color: #8a623b; }
 .folder-toggle[aria-expanded="true"]::before { content: "▾"; }
 .folder-toggle.empty::before { content: "·"; }
-.book-button {
-  padding: .25rem .35rem .25rem 1.55rem;
-  color: #3d3934;
-  background: transparent;
-  font-weight: 400;
-  text-align: left;
-}
-.book-button::before { content: "📄"; margin-right: .45rem; font-size: .85rem; }
-.book-button:hover, .folder-toggle:hover { background: #f4eee5; }
+.folder-toggle:hover { background: #f4eee5; }
 .empty-library { color: #746b60; }
 
-.book-details {
-  position: fixed;
-  right: 1rem;
-  bottom: 1rem;
-  width: min(440px, calc(100% - 2rem));
-  max-height: min(70vh, 650px);
-  overflow: auto;
-  border: 1px solid #cdbda9;
-  border-radius: .7rem;
-  padding: 1rem 1.15rem;
-  background: #fffdf9;
-  box-shadow: 0 8px 35px rgb(45 32 20 / 22%);
+.book-grid-item { margin: .45rem 0 .9rem; }
+.book-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr));
+  gap: .85rem;
 }
-.details-header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
-.details-header h2 { margin: 0; font-family: Georgia, serif; }
-.details-list { display: block; margin-top: 1rem; }
-.details-list div { margin-top: .75rem; text-align: left; }
-.details-list dd { margin-top: .15rem; font-weight: 400; overflow-wrap: anywhere; }
-.details-list .annotation dd { white-space: pre-wrap; line-height: 1.5; }
+.book-card {
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr);
+  gap: .9rem;
+  min-width: 0;
+  border: 1px solid #e0d6c8;
+  border-radius: .6rem;
+  padding: .8rem;
+  background: #fffaf3;
+}
+.book-cover-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: .35rem;
+  width: 88px;
+  min-height: 126px;
+  border-radius: .35rem;
+  color: #756858;
+  background: linear-gradient(145deg, #e7dccd, #f5ede2);
+  text-align: center;
+}
+.book-cover-placeholder span { font-size: 2rem; }
+.book-cover-placeholder small { font-size: .7rem; }
+.book-card-body { display: flex; min-width: 0; flex-direction: column; }
+.book-card-author, .book-card-genres, .book-card-annotation { margin: 0; color: #746b60; }
+.book-card-author { font-size: .8rem; font-weight: 650; }
+.book-card-title { margin: .15rem 0 .35rem; font-size: 1rem; overflow-wrap: anywhere; }
+.book-card-genres { font-size: .75rem; }
+.book-card-annotation {
+  display: -webkit-box;
+  margin-top: .55rem;
+  overflow: hidden;
+  font-size: .83rem;
+  line-height: 1.4;
+  white-space: pre-line;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 5;
+  line-clamp: 5;
+}
+.book-download-button { align-self: flex-start; margin-top: auto; padding: .45rem .75rem; font-size: .8rem; }
 
 [hidden] { display: none !important; }
 
@@ -154,6 +183,7 @@ dd { margin: 0; font-weight: 750; font-variant-numeric: tabular-nums; }
   h1 { font-size: clamp(1.45rem, 7vw, 2rem); }
   .subtitle { font-size: .85rem; }
   .account-actions { gap: .4rem; }
+  .user-greeting { max-width: min(38vw, 220px); }
   .account-actions > button { padding: .55rem .7rem; }
   .status-panel { align-items: flex-start; flex-wrap: wrap; }
   .status-panel > p { flex-basis: 100%; }

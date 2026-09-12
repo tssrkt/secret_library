@@ -1,6 +1,7 @@
 import { setupDropdown } from './dropdown.js';
-import { bookDisplayLabel, buildLibraryLookups, folderHasLibraryChildren } from './library-view-model.js';
-import { createAvatarController } from './avatar.js';
+import { buildLibraryLookups, folderHasLibraryChildren } from './library-view-model.js';
+import { createAvatarController, greetingText } from './avatar.js';
+import { createBookCard } from './book-card.js';
 
 const elements = {
   signIn: document.querySelector('#sign-in-button'),
@@ -10,6 +11,7 @@ const elements = {
   stop: document.querySelector('#stop-button'),
   signOut: document.querySelector('#sign-out-button'),
   userControls: document.querySelector('#user-controls'),
+  greeting: document.querySelector('#user-greeting'),
   avatar: document.querySelector('#avatar-button'),
   avatarImage: document.querySelector('#avatar-image'),
   avatarPlaceholder: document.querySelector('#avatar-placeholder'),
@@ -23,20 +25,19 @@ const elements = {
   retry: document.querySelector('#retry-button'),
   libraryPanel: document.querySelector('#library-panel'),
   tree: document.querySelector('#library-tree'),
-  details: document.querySelector('#book-details'),
-  closeDetails: document.querySelector('#close-details-button'),
-  detailsTitle: document.querySelector('#details-book-title'),
-  detailsAuthors: document.querySelector('#details-authors'),
-  detailsSeries: document.querySelector('#details-series'),
-  detailsFileName: document.querySelector('#details-file-name'),
-  detailsAnnotation: document.querySelector('#details-annotation'),
 };
 
 const dropdown = setupDropdown(elements.avatar, elements.avatarMenu);
 const avatar = createAvatarController(elements.avatar, elements.avatarImage, elements.avatarPlaceholder);
 
-export function setUserAvatar(user) { return avatar.set(user); }
-export function resetUserAvatar() { avatar.reset(); }
+export function setUserAvatar(user = {}) {
+  elements.greeting.textContent = greetingText(user.displayName);
+  return avatar.set(user);
+}
+export function resetUserAvatar() {
+  elements.greeting.textContent = greetingText();
+  avatar.reset();
+}
 
 export function bindActions(actions) {
   elements.signIn.addEventListener('click', actions.signIn);
@@ -46,7 +47,6 @@ export function bindActions(actions) {
   elements.stop.addEventListener('click', actions.stopMetadata);
   elements.signOut.addEventListener('click', actions.signOut);
   elements.retry.addEventListener('click', actions.rebuild);
-  elements.closeDetails.addEventListener('click', () => { elements.details.hidden = true; });
 }
 
 export function setAuthorized(authorized) {
@@ -106,21 +106,7 @@ export function showError(message, { canRebuild = false } = {}) {
 
 export function clearError() { elements.errorPanel.hidden = true; }
 
-function showBookDetails(book) {
-  const ready = book.metadataStatus === 'ready';
-  elements.detailsTitle.textContent = ready ? (book.title || 'Не указано') : 'Метаданные не извлечены';
-  elements.detailsAuthors.textContent = ready && book.authors?.length ? book.authors.join(', ') : 'Не указано';
-  elements.detailsSeries.textContent = ready && book.series
-    ? `${book.series}${book.seriesNumber == null ? '' : ` — № ${book.seriesNumber}`}`
-    : 'Не указано';
-  elements.detailsFileName.textContent = book.sourceType === 'zip' && book.entryPath
-    ? `${book.fileName} → ${book.entryPath}`
-    : book.fileName;
-  elements.detailsAnnotation.textContent = ready && book.annotation ? book.annotation : 'Не указано';
-  elements.details.hidden = false;
-}
-
-export function renderLibrary(index) {
+export function renderLibrary(index, onDownload = async () => {}) {
   elements.tree.replaceChildren();
   elements.libraryPanel.hidden = false;
   const root = index.folders.find((folder) => folder.id === index.rootFolderId);
@@ -154,15 +140,14 @@ export function renderLibrary(index) {
       });
       list.append(item);
     }
-    for (const book of lookups.booksByParent.get(parentId) || []) {
+    const books = lookups.booksByParent.get(parentId) || [];
+    if (books.length) {
       const item = document.createElement('li');
-      item.className = 'tree-row';
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.className = 'book-button';
-      button.textContent = bookDisplayLabel(book);
-      button.addEventListener('click', () => showBookDetails(book));
-      item.append(button);
+      item.className = 'book-grid-item';
+      const grid = document.createElement('div');
+      grid.className = 'book-grid';
+      for (const book of books) grid.append(createBookCard(book, onDownload));
+      item.append(grid);
       list.append(item);
     }
     return list;
@@ -186,6 +171,16 @@ export function resetUi() {
   elements.libraryPanel.hidden = true;
   elements.stats.hidden = true;
   elements.tree.replaceChildren();
-  elements.details.hidden = true;
   clearError();
+}
+
+export function saveDownloadedFile(blob, fileName) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = fileName;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }

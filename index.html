@@ -16,6 +16,7 @@
       <div class="account-actions">
         <button id="sign-in-button" type="button">Войти через Google</button>
         <div id="user-controls" class="user-controls" hidden>
+          <span id="user-greeting" class="user-greeting">Привет!</span>
           <button id="avatar-button" class="avatar-button" type="button" aria-label="Открыть меню пользователя" aria-haspopup="menu" aria-expanded="false">
             <span id="avatar-placeholder" aria-hidden="true">☺</span>
             <img id="avatar-image" alt="" hidden>
@@ -28,9 +29,10 @@
             <button id="retry-metadata-button" type="button" role="menuitem" hidden>Повторить ошибки</button>
             <hr>
             <button type="button" role="menuitem" disabled title="Будет доступно позже">Настройки <small>Будет позже</small></button>
+            <hr class="account-menu-separator">
+            <button id="sign-out-button" class="sign-out-menu-item" type="button" role="menuitem">Выйти</button>
           </div>
         </div>
-        <button id="sign-out-button" class="secondary" type="button" hidden>Выйти</button>
       </div>
     </header>
 
@@ -52,19 +54,6 @@
       <div id="library-tree" class="library-tree"></div>
     </section>
 
-    <aside id="book-details" class="book-details" aria-labelledby="details-title" hidden>
-      <div class="details-header">
-        <h2 id="details-title">Сведения о книге</h2>
-        <button id="close-details-button" class="secondary compact" type="button" aria-label="Закрыть">×</button>
-      </div>
-      <dl class="details-list">
-        <div><dt>Название</dt><dd id="details-book-title"></dd></div>
-        <div><dt>Автор</dt><dd id="details-authors"></dd></div>
-        <div><dt>Серия</dt><dd id="details-series"></dd></div>
-        <div><dt>Имя файла</dt><dd id="details-file-name"></dd></div>
-        <div class="annotation"><dt>Аннотация</dt><dd id="details-annotation"></dd></div>
-      </dl>
-    </aside>
   </main>
   <script type="module" src="./js/app.js"></script>
 </body>

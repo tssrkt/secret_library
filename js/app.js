@@ -1,6 +1,6 @@
 import { clearAccessToken, initializeAuth, requestAccessToken } from './auth.js';
 import { ROOT_FOLDER_ID } from './config.js';
-import { getCurrentDriveUser } from './drive.js';
+import { downloadDriveFile, getCurrentDriveUser } from './drive.js';
 import { applyDriveAvatar } from './avatar.js';
 import { IndexError, loadIndex, saveIndex } from './library-index.js';
 import { preserveBookMetadata, scanLibrary } from './library-tree.js';
@@ -21,6 +21,18 @@ function readableError(error) {
   return error?.message || 'Произошла непредвиденная ошибка.';
 }
 
+async function downloadBook(book) {
+  try {
+    ui.saveDownloadedFile(await downloadDriveFile(book.id), book.fileName);
+  } catch (error) {
+    ui.showError(readableError(error));
+  }
+}
+
+function renderLibrary(index) {
+  ui.renderLibrary(index, downloadBook);
+}
+
 async function rebuildIndex() {
   ui.clearError();
   ui.setBusy(true);
@@ -32,7 +44,7 @@ async function rebuildIndex() {
     });
     const index = preserveBookMetadata(scannedIndex, currentIndex);
     currentIndex = index;
-    ui.renderLibrary(index);
+    renderLibrary(index);
     ui.setStatus('Сканирование завершено. Сохраняем индекс…');
     try {
       indexFileId = await saveIndex(index, indexFileId);
@@ -89,7 +101,7 @@ async function runMetadataIndexing({ retryErrors = false } = {}) {
   } finally {
     metadataController = null;
     ui.setMetadataRunning(false);
-    ui.renderLibrary(currentIndex);
+    renderLibrary(currentIndex);
   }
 }
 
@@ -117,7 +129,7 @@ async function afterAuthorization() {
         saved.index.updatedAt = new Date().toISOString();
         indexFileId = await saveIndex(saved.index, indexFileId);
       }
-      ui.renderLibrary(saved.index);
+      renderLibrary(saved.index);
       ui.setStatus('Показан сохраненный индекс. При необходимости обновите библиотеку.');
       return;
     }

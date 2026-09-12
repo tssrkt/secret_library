@@ -122,6 +122,12 @@ export async function downloadAppDataFile(fileId) {
   return driveFetch(`/files/${encodeURIComponent(fileId)}?${params}`);
 }
 
+export async function downloadDriveFile(fileId, signal, request = driveFetch) {
+  const params = new URLSearchParams({ alt: 'media', supportsAllDrives: 'true' });
+  const response = await request(`/files/${encodeURIComponent(fileId)}?${params}`, { signal });
+  return response.blob();
+}
+
 export async function downloadFileRange(fileId, start, end, signal, { requirePartial = false } = {}) {
   const params = new URLSearchParams({ alt: 'media', supportsAllDrives: 'true' });
   const response = await driveFetch(`/files/${encodeURIComponent(fileId)}?${params}`, {

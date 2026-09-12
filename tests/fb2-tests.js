@@ -7,8 +7,9 @@ import { buildLibraryLookups, folderHasLibraryChildren } from '../js/library-vie
 import { indexPendingBooks } from '../js/metadata-indexer.js';
 import { extractZipFb2, findEocd, parseCentralDirectory, ZipError } from '../js/zip.js';
 import { setupDropdown } from '../js/dropdown.js';
-import { applyDriveAvatar, createAvatarController } from '../js/avatar.js';
-import { getCurrentDriveUser } from '../js/drive.js';
+import { applyDriveAvatar, createAvatarController, greetingText } from '../js/avatar.js';
+import { downloadDriveFile, getCurrentDriveUser } from '../js/drive.js';
+import { bookCardView, createBookCard } from '../js/book-card.js';
 
 const output = document.querySelector('#results');
 let passed = 0;
@@ -237,7 +238,7 @@ await test('folders are expandable from indexed children, independently of files
   const lookups = buildLibraryLookups(index);
   assert(folderHasLibraryChildren(lookups, 'parent'), 'folder containing only a subfolder');
   assert(folderHasLibraryChildren(lookups, 'zip-folder'), 'folder containing a ZIP book');
-  assert(!folderHasLibraryChildren(lookups, 'bad-zip-folder'), 'folder containing only a rejected ZIP');
+  assert(folderHasLibraryChildren(lookups, 'bad-zip-folder'), 'every indexed ZIP candidate remains visible');
   assert(!folderHasLibraryChildren(lookups, 'empty'), 'truly empty folder');
 });
 
@@ -393,6 +394,12 @@ await test('avatar dropdown supports toggle, outside click and Escape', () => {
   wrapper.remove();
 });
 
+await test('account greeting uses displayName with fallback', () => {
+  equal(greetingText('Ada King'), 'Привет, Ada King!', 'named greeting');
+  equal(greetingText(), 'Привет!', 'fallback greeting');
+  equal(greetingText('   '), 'Привет!', 'blank name fallback');
+});
+
 function avatarFixture() {
   const button = document.createElement('button');
   button.className = 'avatar-button';
@@ -446,6 +453,92 @@ await test('about error is noncritical and logout resets avatar', async () => {
   fixture.controller.reset();
   assert(!fixture.placeholder.hidden && fixture.image.hidden && !fixture.image.hasAttribute('src'), 'logout reset');
   fixture.button.remove();
+});
+
+await test('book card uses ready metadata and placeholder fields', () => {
+  const ready = bookCardView({
+    metadataStatus: 'ready', fileName: 'fallback.fb2', title: 'Book title',
+    authors: ['First Author', 'Second Author'], annotation: 'Book annotation',
+  });
+  equal(ready, {
+    author: 'First Author, Second Author', title: 'Book title', genres: 'Жанр не указан', annotation: 'Book annotation',
+  }, 'ready card');
+  const pending = bookCardView({ metadataStatus: 'pending', fileName: 'pending.zip' });
+  equal(pending, {
+    author: 'Автор не указан', title: 'pending.zip', genres: 'Жанр не указан', annotation: 'Аннотация пока не загружена',
+  }, 'pending card');
+});
+
+await test('book card is not a tree branch and download receives original source', async () => {
+  for (const sourceType of ['fb2', 'zip']) {
+    let selected = null;
+    const book = { id: `${sourceType}-id`, sourceType, fileName: `book.${sourceType}`, metadataStatus: 'pending' };
+    const card = createBookCard(book, async (value) => { selected = value; });
+    document.body.append(card);
+    assert(!card.hasAttribute('aria-expanded') && !card.querySelector('[aria-expanded]'), 'card has no tree expansion state');
+    assert(card.querySelector('.book-cover-placeholder') && !card.querySelector('.book-cover-placeholder img'), 'neutral cover placeholder');
+    card.querySelector('.book-download-button').click();
+    await new Promise((resolve) => setTimeout(resolve));
+    assert(selected === book, `${sourceType} original selected`);
+    card.remove();
+  }
+});
+
+await test('Drive download requests the original file ID', async () => {
+  let path = '';
+  const expected = new Blob(['source']);
+  const blob = await downloadDriveFile('drive zip/id', undefined, async (requestPath) => {
+    path = requestPath;
+    return { blob: async () => expected };
+  });
+  assert(blob === expected, 'original response blob');
+  assert(path.startsWith('/files/drive%20zip%2Fid?') && path.includes('alt=media'), 'Drive media path');
+});
+
+await test('annotation is visually clamped and cards form a grid', () => {
+  const card = createBookCard({ metadataStatus: 'ready', fileName: 'book.fb2', annotation: 'Long '.repeat(100) }, async () => {});
+  const grid = document.createElement('div');
+  grid.className = 'book-grid';
+  grid.append(card);
+  document.body.append(grid);
+  const annotation = getComputedStyle(card.querySelector('.book-card-annotation'));
+  assert(annotation.overflow === 'hidden', 'annotation overflow');
+  assert(annotation.getPropertyValue('-webkit-line-clamp') === '5', 'annotation line clamp');
+  assert(getComputedStyle(grid).display === 'grid', 'book grid');
+  grid.remove();
+});
+
+await test('lazy folder tree renders books as cards only after folder expansion', async () => {
+  const fixture = document.createElement('div');
+  fixture.innerHTML = `
+    <button id="sign-in-button"></button><button id="refresh-button"></button><button id="metadata-button"></button>
+    <button id="retry-metadata-button"></button><button id="stop-button"></button>
+    <div id="user-controls"><span id="user-greeting" class="user-greeting">Привет!</span><button id="avatar-button"><span id="avatar-placeholder"></span><img id="avatar-image"></button><div id="avatar-menu"><button id="sign-out-button" role="menuitem">Выйти</button></div></div>
+    <p id="status-text"></p><dl id="stats"><div><dd id="folder-count"></dd></div><div><dd id="book-count"></dd></div></dl>
+    <div id="error-panel"><p id="error-text"></p></div><button id="retry-button"></button>
+    <section id="library-panel"><div id="library-tree"></div></section>`;
+  document.body.append(fixture);
+  const uiModule = await import(`../js/ui.js?tree-test=${Date.now()}`);
+  uiModule.renderLibrary({
+    rootFolderId: 'root',
+    folders: [{ id: 'root', parentId: null, name: 'Root' }, { id: 'folder', parentId: 'root', name: 'Folder' }],
+    books: [{ id: 'book', parentId: 'folder', fileName: 'book.fb2', sourceType: 'fb2', metadataStatus: 'pending' }],
+  });
+  assert(!fixture.querySelector('.book-card'), 'collapsed folder has no book DOM');
+  fixture.querySelector('.folder-toggle').click();
+  assert(fixture.querySelector('.book-card'), 'expanded folder contains card');
+  assert(fixture.querySelectorAll('[aria-expanded]').length === 2, 'only avatar and folder are expandable');
+  await uiModule.setUserAvatar({ displayName: 'Ada King' });
+  assert(fixture.querySelector('#user-greeting').textContent === 'Привет, Ada King!', 'greeting updated from Drive user');
+  let signOutCalls = 0;
+  const noop = () => {};
+  uiModule.bindActions({ signIn: noop, refresh: noop, indexMetadata: noop, retryMetadata: noop, stopMetadata: noop, signOut: () => { signOutCalls += 1; }, rebuild: noop });
+  fixture.querySelector('#avatar-button').click();
+  fixture.querySelector('#sign-out-button').click();
+  assert(signOutCalls === 1 && fixture.querySelector('#avatar-menu').hidden, 'menu logout action and close');
+  uiModule.setAuthorized(false);
+  assert(fixture.querySelector('#user-greeting').textContent === 'Привет!', 'logout resets greeting');
+  fixture.remove();
 });
 
 await test('production controls keep stop in status panel and menu actions out of header flow', async () => {
