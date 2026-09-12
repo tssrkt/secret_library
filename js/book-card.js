@@ -2,7 +2,7 @@ function textOrFallback(value, fallback) {
   return typeof value === 'string' && value.trim() ? value.trim() : fallback;
 }
 
-export function bookCardView(book) {
+export function bookCardView(book, genresRu = {}) {
   const ready = book.metadataStatus === 'ready';
   const genre = Array.isArray(book.genres)
     ? book.genres.find((value) => typeof value === 'string' && value.trim())
@@ -11,13 +11,15 @@ export function bookCardView(book) {
   return {
     author: ready && book.authors?.length ? book.authors.join(', ') : 'Автор не указан',
     title: ready ? textOrFallback(book.title, fallbackTitle) : fallbackTitle,
-    genreLine: ready && typeof genre === 'string' && genre.trim() ? `Жанр: ${book.genres?.join(', ') || genre.trim()}` : 'Жанр не указан',
+    genreLine: ready && typeof genre === 'string' && genre.trim()
+      ? `Жанр: ${(book.genres || [genre]).map((code) => genresRu[code] || code).join(', ')}`
+      : 'Жанр не указан',
     annotation: ready ? textOrFallback(book.annotation, 'Аннотация отсутствует') : 'Аннотация отсутствует',
   };
 }
 
 export function createBookCard(book, onDownload, documentRef = document, options = {}) {
-  const content = bookCardView(book);
+  const content = bookCardView(book, options.genresRu);
   const article = documentRef.createElement('article');
   article.className = 'book-card';
 

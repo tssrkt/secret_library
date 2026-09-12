@@ -748,6 +748,22 @@ await test('genre renders as exactly one current line', () => {
   equal(missing.querySelector('.book-card-genre').textContent, 'Жанр не указан', 'genre fallback');
 });
 
+await test('book card translates known genre codes without mutating source order', () => {
+  const book = {
+    metadataStatus: 'ready', fileName: 'book.fb2',
+    genres: ['nonf_biography', 'popular_business', 'religion_self', 'unknown_code'],
+  };
+  const originalGenres = [...book.genres];
+  const view = bookCardView(book, {
+    nonf_biography: 'Биографии и мемуары',
+    popular_business: 'О бизнесе популярно',
+    religion_self: 'Самосовершенствование',
+  });
+  equal(view.genreLine, 'Жанр: Биографии и мемуары, О бизнесе популярно, Самосовершенствование, unknown_code', 'translated genre line');
+  equal(book.genres, originalGenres, 'source genre codes and order are unchanged');
+  equal(bookCardView(book, {}).genreLine, 'Жанр: nonf_biography, popular_business, religion_self, unknown_code', 'dictionary failure falls back to source codes');
+});
+
 await test('genre dictionary translates only for display and preserves unknown codes', async () => {
   const source = ['biography', 'unknown_code'];
   const labels = await genreLabels(source, async () => ({ biography: 'Биографии и мемуары' }));

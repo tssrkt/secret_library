@@ -4,6 +4,9 @@ import { accountIdentity, createAvatarController } from './avatar.js';
 import { createBookCard } from './book-card.js';
 import { createAnnotationModalController } from './annotation-modal.js';
 import { loadCover } from './cover-cache.js';
+import { loadGenreDictionary } from './genre-labels.js';
+
+const genresRu = await loadGenreDictionary().catch(() => ({}));
 
 const coverUrls = new Set();
 function clearCoverUrls() {
@@ -192,6 +195,7 @@ export function renderLibrary(index, onDownload = async () => {}) {
       for (const book of books) {
         grid.append(createBookCard(book, onDownload, document, {
           onAnnotation: (book, trigger) => annotationModal.open(book, trigger),
+          genresRu,
           loadCover: async ({ coverFileId }) => {
             const url = URL.createObjectURL(await loadCover(coverFileId));
             coverUrls.add(url);
