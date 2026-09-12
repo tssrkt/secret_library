@@ -12,6 +12,10 @@ import { accountIdentity, applyDriveAvatar, createAvatarController } from '../js
 import { downloadDriveFile, getCurrentDriveUser } from '../js/drive.js';
 import { bookCardView, createBookCard } from '../js/book-card.js';
 import { createAnnotationModalController } from '../js/annotation-modal.js';
+import {
+  AUTH_SESSION_KEY, PREVIOUS_SIGN_IN_KEY, clearAccessToken, clearPersistedAuth,
+  createAuthAttemptGuard, getAccessToken, persistAuthSession, recoverAuthSession, restoreAuthSession,
+} from '../js/auth.js';
 
 const output = document.querySelector('#results');
 let passed = 0;
@@ -24,6 +28,68 @@ function assert(value, message) {
 function equal(actual, expected, message) {
   assert(JSON.stringify(actual) === JSON.stringify(expected), `${message}: ${JSON.stringify(actual)} !== ${JSON.stringify(expected)}`);
 }
+
+function memoryStorage(entries = {}) {
+  const values = new Map(Object.entries(entries));
+  return {
+    getItem: (key) => values.get(key) ?? null,
+    setItem: (key, value) => values.set(key, String(value)),
+    removeItem: (key) => values.delete(key),
+  };
+}
+
+await test('valid Google session restores token and account after reload', async () => {
+  const session = memoryStorage({
+    [AUTH_SESSION_KEY]: JSON.stringify({ accessToken: 'valid-token', expiresAt: 20_000, user: { displayName: 'Ada', emailAddress: 'ada@example.com', photoLink: 'photo' } }),
+  });
+  const restored = restoreAuthSession({ session, now: 10_000 });
+  equal([getAccessToken(), restored.user.displayName, restored.user.emailAddress], ['valid-token', 'Ada', 'ada@example.com'], 'restored session');
+  let requests = 0;
+  const recovery = await recoverAuthSession({ restore: () => restored, previous: () => true, request: async () => { requests += 1; } });
+  equal([recovery.mode, requests], ['session', 0], 'valid session skips GIS request');
+});
+
+await test('expired token is discarded and triggers silent GIS recovery', async () => {
+  const session = memoryStorage({
+    [AUTH_SESSION_KEY]: JSON.stringify({ accessToken: 'expired', expiresAt: 9_000, user: { displayName: 'Old' } }),
+  });
+  equal(restoreAuthSession({ session, now: 10_000 }), null, 'expired session rejected');
+  equal(getAccessToken(), null, 'expired token not installed');
+  let prompt = null;
+  const recovered = await recoverAuthSession({
+    restore: () => null, previous: () => true,
+    request: async (options) => { prompt = options.prompt; },
+  });
+  equal([recovered.mode, prompt], ['silent', ''], 'silent request uses empty prompt');
+});
+
+await test('failed silent recovery returns unauthenticated state without throwing', async () => {
+  const recovered = await recoverAuthSession({
+    restore: () => null, previous: () => true, request: async () => { throw new Error('silent denied'); },
+  });
+  equal(recovered, null, 'normal sign-in screen fallback');
+});
+
+await test('session persists account data and manual logout clears all state', () => {
+  const session = memoryStorage({
+    [AUTH_SESSION_KEY]: JSON.stringify({ accessToken: 'token', expiresAt: Date.now() + 60_000, user: {} }),
+  });
+  const local = memoryStorage();
+  restoreAuthSession({ session });
+  persistAuthSession({ displayName: 'Ada King', emailAddress: 'ada@example.com', photoLink: 'photo' }, { session, local });
+  const saved = JSON.parse(session.getItem(AUTH_SESSION_KEY));
+  equal([saved.user.displayName, saved.user.emailAddress], ['Ada King', 'ada@example.com'], 'account persisted');
+  clearPersistedAuth({ forget: true, session, local });
+  clearAccessToken();
+  equal([session.getItem(AUTH_SESSION_KEY), local.getItem(PREVIOUS_SIGN_IN_KEY), getAccessToken()], [null, null, null], 'manual logout clears session, marker and token');
+});
+
+await test('late Google response cannot restore authorization after logout', () => {
+  const guard = createAuthAttemptGuard();
+  const request = guard.begin();
+  guard.invalidate();
+  assert(!guard.isCurrent(request), 'late response is invalidated');
+});
 
 async function test(name, callback) {
   try {
@@ -571,7 +637,7 @@ await test('Drive download requests the original file ID', async () => {
 
 await test('one full-width card per row, with download directly below equal-width cover', () => {
   const card = createBookCard({ metadataStatus: 'ready', fileName: 'book.fb2', annotation: 'Text' }, async () => {});
-  const second = createBookCard({ metadataStatus: 'pending', fileName: 'second.fb2' }, async () => {});
+  const second = createBookCard({ metadataStatus: 'ready', fileName: 'second.fb2', annotation: 'Long '.repeat(500) }, async () => {});
   const grid = document.createElement('div');
   grid.className = 'book-grid';
   grid.style.width = '600px';
@@ -580,10 +646,16 @@ await test('one full-width card per row, with download directly below equal-widt
   assert(getComputedStyle(grid).flexDirection === 'column', 'one-column layout');
   assert(card.getBoundingClientRect().width === grid.getBoundingClientRect().width, 'card fills row');
   assert(second.getBoundingClientRect().top > card.getBoundingClientRect().bottom, 'second card starts on next row');
+  assert(card.getBoundingClientRect().height === second.getBoundingClientRect().height, 'long annotation does not increase fixed card height');
   const cover = card.querySelector('.book-cover-placeholder').getBoundingClientRect();
   const download = card.querySelector('.book-download-button').getBoundingClientRect();
   assert(cover.width === download.width, 'cover and download widths match');
   assert(download.top === cover.bottom, 'download touches cover');
+  const secondDownload = second.querySelector('.book-download-button');
+  assert(download.height === secondDownload.getBoundingClientRect().height, 'download buttons have equal height');
+  assert(download.height === 34, 'download button has compact fixed height');
+  assert(getComputedStyle(card.querySelector('.book-download-button')).whiteSpace === 'nowrap', 'download label does not wrap');
+  assert(card.querySelector('.book-download-button').textContent === 'СКАЧАТЬ', 'download label is uppercase');
   assert(getComputedStyle(card.querySelector('.book-cover-placeholder')).aspectRatio === '3 / 4', 'cover uses 3:4 ratio');
   const image = document.createElement('img');
   image.className = 'book-cover-image';
@@ -595,16 +667,19 @@ await test('one full-width card per row, with download directly below equal-widt
 
 await test('Read more is shown only for visually truncated annotation', async () => {
   let openedBook = null;
+  let updateShort = null;
+  let updateLong = null;
   const shortCard = createBookCard(
     { metadataStatus: 'ready', fileName: 'short.fb2', annotation: 'Short' }, async () => {}, document,
-    { isAnnotationOverflowing: () => false },
+    { scheduleFrame: (callback) => { updateShort = callback; } },
   );
   const longCard = createBookCard(
     { metadataStatus: 'ready', fileName: 'long.fb2', title: 'Noah', authors: ['Julia'], annotation: 'Long '.repeat(100) }, async () => {}, document,
-    { isAnnotationOverflowing: () => true, onAnnotation: (book) => { openedBook = book; } },
+    { scheduleFrame: (callback) => { updateLong = callback; }, onAnnotation: (book) => { openedBook = book; } },
   );
   document.body.append(shortCard, longCard);
-  await new Promise(requestAnimationFrame);
+  updateShort();
+  updateLong();
   assert(shortCard.querySelector('.book-annotation-more').hidden, 'fitting annotation has no link');
   assert(!longCard.querySelector('.book-annotation-more').hidden, 'overflowing annotation has link');
   assert(longCard.querySelector('.book-annotation-more').textContent === 'Читать далее', 'link has updated label');
@@ -612,6 +687,29 @@ await test('Read more is shown only for visually truncated annotation', async ()
   equal(openedBook, { annotation: 'Long '.repeat(100).trim(), title: 'Noah', author: 'Julia' }, 'link opens complete book annotation data');
   shortCard.remove();
   longCard.remove();
+});
+
+await test('annotation overflow is recalculated after card width changes', async () => {
+  let overflowing = false;
+  let resizeCallback = null;
+  let scheduledUpdate = null;
+  const card = createBookCard(
+    { metadataStatus: 'ready', fileName: 'resize.fb2', annotation: 'Responsive annotation' }, async () => {}, document,
+    {
+      isAnnotationOverflowing: () => overflowing,
+      observeResize: (_element, callback) => { resizeCallback = callback; },
+      scheduleFrame: (callback) => { scheduledUpdate = callback; },
+    },
+  );
+  document.body.append(card);
+  scheduledUpdate();
+  assert(card.querySelector('.book-annotation-more').hidden, 'link initially hidden');
+  overflowing = true;
+  resizeCallback();
+  scheduledUpdate();
+  assert(!card.querySelector('.book-annotation-more').hidden, 'link appears after narrower layout overflows');
+  assert(card.classList.contains('book-card') && card.getBoundingClientRect().height > 0, 'annotation does not resize card');
+  card.remove();
 });
 
 await test('genre renders as exactly one current line', () => {
@@ -629,6 +727,7 @@ await test('full annotation modal closes by button, backdrop and Escape', () => 
   const closeButton = document.createElement('button');
   const title = document.createElement('h2');
   const label = document.createElement('p');
+  label.className = 'annotation-modal-label';
   const text = document.createElement('p');
   dialog.append(closeButton, title, label, text);
   overlay.append(dialog);
@@ -637,8 +736,9 @@ await test('full annotation modal closes by button, backdrop and Escape', () => 
   const book = { title: 'Ноев ковчег', author: 'Юлия Васильевна Артюхович', annotation: 'Full annotation' };
   modal.open(book);
   assert(!overlay.hidden && text.textContent === 'Full annotation', 'modal opens');
-  assert(title.textContent === '«Ноев ковчег» — Юлия Васильевна Артюхович', 'modal heading contains quoted title and author');
+  assert(title.textContent === '«Ноев ковчег» Юлия Васильевна Артюхович', 'modal heading contains quoted title and author without dash');
   assert(label.textContent === 'Аннотация', 'modal has a separate annotation label');
+  assert(getComputedStyle(label).color !== getComputedStyle(title).color, 'annotation label is visually muted');
   closeButton.click();
   assert(overlay.hidden, 'close button');
   modal.open(book);

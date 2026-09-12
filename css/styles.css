@@ -136,17 +136,24 @@ dd { margin: 0; font-weight: 750; font-variant-numeric: tabular-nums; }
   gap: .85rem;
 }
 .book-card {
+  --book-cover-height: 150px;
+  --book-cover-width: 112.5px;
+  --book-download-height: 34px;
   display: grid;
-  grid-template-columns: 112px minmax(0, 1fr);
+  grid-template-columns: var(--book-cover-width) minmax(0, 1fr);
+  height: calc(var(--book-cover-height) + var(--book-download-height) + 2px);
+  min-height: calc(var(--book-cover-height) + var(--book-download-height) + 2px);
+  max-height: calc(var(--book-cover-height) + var(--book-download-height) + 2px);
   min-width: 0;
   border: 1px solid #e0d6c8;
   border-radius: .6rem;
   overflow: hidden;
   background: #fffaf3;
 }
-.book-card-media { display: flex; width: 112px; flex-direction: column; }
+.book-card-media { display: flex; width: var(--book-cover-width); min-height: 0; flex-direction: column; }
 .book-cover-placeholder, .book-cover-image {
-  width: 112px;
+  width: var(--book-cover-width);
+  height: var(--book-cover-height);
   aspect-ratio: 3 / 4;
   flex: none;
 }
@@ -163,9 +170,10 @@ dd { margin: 0; font-weight: 750; font-variant-numeric: tabular-nums; }
 }
 .book-cover-placeholder span { font-size: 2rem; }
 .book-cover-placeholder small { font-size: .7rem; }
-.book-card-body { display: flex; min-width: 0; padding: .9rem 1rem; flex-direction: column; }
+.book-card-body { display: flex; min-width: 0; min-height: 0; overflow: hidden; padding: .9rem 1rem; flex-direction: column; }
 .book-card-author, .book-card-genre, .book-card-annotation { margin: 0; color: #746b60; }
 .book-card-author { font-size: .8rem; font-weight: 650; }
+.book-card-author, .book-card-genre { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .book-card-title {
   display: -webkit-box;
   margin: .15rem 0 .35rem;
@@ -177,16 +185,21 @@ dd { margin: 0; font-weight: 750; font-variant-numeric: tabular-nums; }
   line-clamp: 2;
 }
 .book-card-genre { font-size: .75rem; }
-.book-card-annotation-block { margin-top: .55rem; }
+.book-card-annotation-block { display: flex; min-height: 0; margin-top: .55rem; flex: 1; flex-direction: column; }
 .book-card-annotation {
-  display: -webkit-box;
+  display: block;
+  min-height: 0;
+  flex: 1;
   overflow: hidden;
   font-size: .83rem;
   line-height: 1.4;
   white-space: pre-line;
+}
+.book-card-annotation.truncated {
+  display: -webkit-box;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 5;
-  line-clamp: 5;
+  -webkit-line-clamp: var(--annotation-lines, 1);
+  line-clamp: var(--annotation-lines, 1);
 }
 .book-annotation-more {
   margin-top: .15rem;
@@ -197,11 +210,16 @@ dd { margin: 0; font-weight: 750; font-variant-numeric: tabular-nums; }
   text-decoration: underline;
 }
 .book-download-button {
-  width: 112px;
-  flex: 1;
+  width: var(--book-cover-width);
+  height: var(--book-download-height);
+  min-height: var(--book-download-height);
+  max-height: var(--book-download-height);
+  flex: none;
   border-radius: 0;
-  padding: .55rem .3rem;
+  padding: 0 .3rem;
   font-size: .8rem;
+  line-height: 1;
+  white-space: nowrap;
 }
 
 .modal-backdrop {

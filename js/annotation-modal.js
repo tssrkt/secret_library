@@ -11,7 +11,7 @@ export function createAnnotationModalController(overlay, text, closeButton, titl
 
   const open = (book, trigger = null) => {
     returnFocus = trigger;
-    title.textContent = `«${book.title}» — ${book.author}`;
+    title.textContent = `«${book.title}» ${book.author}`;
     label.textContent = 'Аннотация';
     text.textContent = book.annotation;
     overlay.hidden = false;

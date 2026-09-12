@@ -1,4 +1,7 @@
-import { clearAccessToken, initializeAuth, requestAccessToken } from './auth.js';
+import {
+  clearAccessToken, clearPersistedAuth, createAuthAttemptGuard,
+  initializeAuth, persistAuthSession, recoverAuthSession, requestAccessToken,
+} from './auth.js';
 import { ROOT_FOLDER_ID } from './config.js';
 import { downloadDriveFile, getCurrentDriveUser } from './drive.js';
 import { applyDriveAvatar } from './avatar.js';
@@ -12,6 +15,7 @@ let indexFileId = null;
 let currentIndex = null;
 let metadataController = null;
 let avatarRequestId = 0;
+const authAttempts = createAuthAttemptGuard();
 
 async function cacheBookCover(book, cover) {
   const previousCover = book.coverFileId;
@@ -22,6 +26,7 @@ async function cacheBookCover(book, cover) {
 
 function readableError(error) {
   if (error?.status === 401 || error?.code === 'unauthorized') {
+    clearPersistedAuth();
     clearAccessToken();
     ui.setAuthorized(false);
     return 'Сеанс Google истек. Войдите снова, чтобы продолжить.';
@@ -124,13 +129,22 @@ function stopMetadataIndexing() {
   metadataController.abort();
 }
 
-async function afterAuthorization() {
+async function afterAuthorization({ restoredUser = null } = {}) {
   ui.setAuthorized(true);
+  persistAuthSession(restoredUser || {});
   const requestId = ++avatarRequestId;
-  void applyDriveAvatar(
-    async () => (requestId === avatarRequestId ? getCurrentDriveUser() : null),
-    (user) => (requestId === avatarRequestId ? ui.setUserAvatar(user) : false),
-  );
+  if (restoredUser) {
+    void ui.setUserAvatar(restoredUser);
+  } else {
+    void applyDriveAvatar(
+      async () => (requestId === avatarRequestId ? getCurrentDriveUser() : null),
+      (user) => {
+        if (requestId !== avatarRequestId) return false;
+        persistAuthSession(user || {});
+        return ui.setUserAvatar(user);
+      },
+    );
+  }
   ui.clearError();
   ui.setStatus('Проверяем сохраненный индекс…');
   try {
@@ -157,22 +171,31 @@ async function afterAuthorization() {
 }
 
 async function signIn() {
+  const attempt = authAttempts.begin();
   ui.clearError();
   ui.setBusy(true);
   ui.setStatus('Ожидаем авторизацию Google…');
   try {
     await requestAccessToken({ prompt: 'consent' });
+    if (!authAttempts.isCurrent(attempt)) {
+      clearAccessToken();
+      return;
+    }
     await afterAuthorization();
   } catch (error) {
-    ui.showError(readableError(error));
-    ui.setStatus('Авторизация не завершена.');
+    if (authAttempts.isCurrent(attempt)) {
+      ui.showError(readableError(error));
+      ui.setStatus('Авторизация не завершена.');
+    }
   } finally {
     ui.setBusy(false);
   }
 }
 
 function signOut() {
+  authAttempts.invalidate();
   avatarRequestId += 1;
+  clearPersistedAuth({ forget: true });
   clearAccessToken({ revoke: true });
   indexFileId = null;
   currentIndex = null;
@@ -191,8 +214,26 @@ ui.bindActions({
   stopMetadata: stopMetadataIndexing,
 });
 
+async function restoreAuthorization() {
+  const attempt = authAttempts.begin();
+  const recovered = await recoverAuthSession();
+  if (!authAttempts.isCurrent(attempt)) {
+    clearAccessToken();
+    return;
+  }
+  if (recovered) {
+    await afterAuthorization({ restoredUser: recovered.mode === 'session' ? recovered.user : null });
+  } else {
+    clearPersistedAuth();
+    clearAccessToken();
+    ui.setAuthorized(false);
+    ui.setStatus('Для доступа к библиотеке войдите через Google.');
+  }
+}
+
 try {
   await initializeAuth();
+  await restoreAuthorization();
 } catch (error) {
   ui.showError(readableError(error));
   ui.setBusy(true);

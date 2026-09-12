@@ -59,7 +59,7 @@ export function createBookCard(book, onDownload, documentRef = document, options
   const download = documentRef.createElement('button');
   download.type = 'button';
   download.className = 'book-download-button';
-  download.textContent = 'Скачать';
+  download.textContent = 'СКАЧАТЬ';
   download.addEventListener('click', async () => {
     download.disabled = true;
     try { await onDownload(book); }
@@ -90,12 +90,31 @@ export function createBookCard(book, onDownload, documentRef = document, options
   }
 
   const updateMore = () => {
+    more.hidden = true;
+    annotation.classList.remove('truncated');
+    annotation.style.removeProperty('--annotation-lines');
     const overflowing = options.isAnnotationOverflowing
       ? options.isAnnotationOverflowing(annotation)
       : annotation.scrollHeight > annotation.clientHeight + 1;
     more.hidden = !overflowing;
+    if (overflowing) {
+      const styles = documentRef.defaultView?.getComputedStyle(annotation);
+      const lineHeight = Number.parseFloat(styles?.lineHeight) || 16;
+      const lines = Math.max(1, Math.floor(annotation.clientHeight / lineHeight));
+      annotation.style.setProperty('--annotation-lines', String(lines));
+      annotation.classList.add('truncated');
+    }
   };
-  if (documentRef.defaultView?.requestAnimationFrame) documentRef.defaultView.requestAnimationFrame(updateMore);
-  else globalThis.requestAnimationFrame(updateMore);
+  const scheduleUpdate = () => {
+    if (options.scheduleFrame) {
+      options.scheduleFrame(updateMore);
+      return;
+    }
+    const frame = documentRef.defaultView?.requestAnimationFrame || globalThis.requestAnimationFrame;
+    frame(updateMore);
+  };
+  scheduleUpdate();
+  if (options.observeResize) options.observeResize(article, scheduleUpdate);
+  else if (documentRef.defaultView?.ResizeObserver) new documentRef.defaultView.ResizeObserver(scheduleUpdate).observe(article);
   return article;
 }

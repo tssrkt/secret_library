@@ -5,7 +5,7 @@
 ## Архитектура
 
 - `index.html`, `css/styles.css` — статический интерфейс;
-- `js/auth.js` — Google Identity Services и access token только в памяти вкладки;
+- `js/auth.js` — Google Identity Services и восстановление действующего access token из `sessionStorage`;
 - `js/drive.js` — минимальный клиент Google Drive API v3, пагинация и ограниченные retry;
 - `js/library-tree.js` — рекурсивный обход папок с concurrency 4 и построение плоского индекса;
 - `js/library-index.js` — чтение и запись индекса в `appDataFolder`;
