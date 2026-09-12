@@ -21,6 +21,7 @@ import { genreLabels, loadGenreDictionary } from '../js/genre-labels.js';
 import { BOOKS_PER_PAGE, createPaginator, paginateItems, paginationTokens } from '../js/pagination.js';
 import { filterBooksByDirectValue, russianBookCount } from '../js/direct-filter.js';
 import { seriesLabel } from '../js/book-series.js';
+import { runSearchTests } from './search-tests.js';
 import {
   AUTH_SESSION_KEY, PREVIOUS_SIGN_IN_KEY, clearAccessToken, clearPersistedAuth,
   createAuthAttemptGuard, getAccessToken, persistAuthSession, recoverAuthSession, restoreAuthSession,
@@ -1489,6 +1490,8 @@ await test('direct result navigation uses all folders, current-page DOM, home an
   ui.resetUi();
   fixture.remove();
 });
+
+await runSearchTests(test, assert, equal);
 
 output.textContent = failures.length
   ? `${passed} passed, ${failures.length} failed\n\n${failures.join('\n\n')}`

@@ -23,6 +23,7 @@ body {
 }
 
 .app-header {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -392,7 +393,93 @@ dd { margin: 0; font-weight: 750; font-variant-numeric: tabular-nums; }
 
 [hidden] { display: none !important; }
 
+.search-icon-button {
+  display: grid;
+  place-items: center;
+  width: 2.7rem;
+  height: 2.7rem;
+  padding: 0;
+  flex: none;
+  color: #746b60;
+  background: transparent;
+}
+.search-icon-button:not(:disabled):hover { color: black; cursor: pointer; }
+.search-icon-button:focus-visible, .advanced-search-link:focus-visible {
+  outline: 2px solid black;
+  outline-offset: 2px;
+}
+.quick-search-form {
+  position: absolute;
+  z-index: 10;
+  right: 6.7rem;
+  top: 50%;
+  width: 260px;
+  visibility: hidden;
+  opacity: 0;
+  transform: translateY(-50%) scaleX(.85);
+  transform-origin: right center;
+  transition: opacity .18s ease, transform .18s ease;
+}
+.quick-search-open .quick-search-form {
+  visibility: visible;
+  opacity: 1;
+  transform: translateY(-50%) scaleX(1);
+}
+.quick-search-form input, .book-search-form input, .book-search-form select {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  border: 1px solid #cdbbab;
+  border-radius: .25rem;
+  padding: .5rem .6rem;
+  color: inherit;
+  background: #fffdf9;
+  font: inherit;
+}
+.quick-search-form input:focus-visible, .book-search-form input:focus-visible, .book-search-form select:focus-visible {
+  outline: 2px solid #273142;
+  outline-offset: 2px;
+}
+.advanced-search-link {
+  padding: .2rem 0;
+  font-size: .8rem;
+  font-weight: 400;
+  color: #746b60;
+  background: transparent;
+}
+.advanced-search-link:hover { color: black; }
+.book-search-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: .8rem 1rem;
+  margin-bottom: 1.2rem;
+}
+.book-search-form label { display: grid; gap: .3rem; min-width: 0; }
+.search-submit-button {
+  justify-self: start;
+  min-width: 135px;
+  height: 34px;
+  border: 0;
+  border-radius: 0;
+  padding: 0 .3rem;
+  font-size: .8rem;
+  line-height: 1;
+  color: var(--download-text);
+  background: var(--download-accent);
+}
+.search-submit-button:not(:disabled):hover { background: var(--download-hover); }
+@media (max-width: 1000px) {
+  .app-header.quick-search-open { padding-bottom: 4.5rem; }
+  .quick-search-form { right: 0; left: 0; top: auto; bottom: 0; width: auto; transform: translateY(-.3rem); }
+  .quick-search-open .quick-search-form { transform: translateY(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .quick-search-form { transition: none; }
+}
+
 @media (max-width: 650px) {
+  .book-search-form { grid-template-columns: minmax(0, 1fr); }
+  .account-actions > .search-icon-button { padding: 0; }
   .app-shell { width: min(100% - 1rem, 1050px); padding-top: 1rem; }
   .app-header { align-items: center; gap: .75rem; }
   h1 { font-size: clamp(1.45rem, 7vw, 2rem); }
@@ -409,7 +496,7 @@ dd { margin: 0; font-weight: 750; font-variant-numeric: tabular-nums; }
   .avatar-menu button { white-space: normal; }
 }
 
-@media (max-width: 410px) {
+@media (max-width: 520px) {
   .app-header { align-items: flex-start; flex-direction: column; }
   .account-actions { align-self: flex-end; }
 }

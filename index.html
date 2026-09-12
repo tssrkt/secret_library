@@ -15,6 +15,9 @@
       </div>
       <div class="account-actions">
         <button id="sign-in-button" type="button">Войти через Google</button>
+        <button id="book-search-button" class="search-icon-button" type="button" aria-label="Поиск книг" aria-expanded="false" aria-controls="quick-search-form" disabled hidden>
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4.5 4.5"/></svg>
+        </button>
         <div id="user-controls" class="user-controls" hidden>
           <button id="avatar-button" class="avatar-button" type="button" aria-label="Открыть меню пользователя" aria-haspopup="menu" aria-expanded="false">
             <span id="avatar-placeholder" aria-hidden="true">☺</span>
@@ -35,6 +38,10 @@
           </div>
         </div>
       </div>
+      <form id="quick-search-form" class="quick-search-form" role="search" inert>
+        <input id="quick-search-input" type="text" aria-label="Общий запрос" autocomplete="off" placeholder="Поиск книг">
+        <button id="advanced-search-button" class="advanced-search-link" type="button">Расширенный поиск</button>
+      </form>
     </header>
 
     <section id="status-panel" class="status-panel" aria-live="polite">

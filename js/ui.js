@@ -8,6 +8,7 @@ import { loadGenreDictionary } from './genre-labels.js';
 import { createPaginator, paginateItems } from './pagination.js';
 import { METADATA_VERSION } from './config.js';
 import { filterBooksByDirectValue, russianBookCount } from './direct-filter.js';
+import { createSearchController } from './search-ui.js';
 
 const genresRu = await loadGenreDictionary().catch(() => ({}));
 
@@ -15,6 +16,7 @@ const coverUrls = new Set();
 const pageByFolderId = new Map();
 let resetLibraryHome = () => {};
 let selectDirectFilter = () => {};
+let searchController = null;
 const onAuthorFilter = (value) => selectDirectFilter({ type: 'author', value: value.trim() });
 const onGenreFilter = (value) => selectDirectFilter({ type: 'genre', value });
 const onSeriesFilter = (value) => selectDirectFilter({ type: 'series', value: value.trim() });
@@ -122,6 +124,8 @@ export function setAuthorized(authorized) {
   elements.signIn.hidden = authorized;
   elements.userControls.hidden = !authorized;
   elements.signOut.hidden = !authorized;
+  const searchButton = document.querySelector('#book-search-button');
+  if (searchButton) searchButton.hidden = !authorized;
   if (!authorized) {
     dropdown.close();
     resetUserAvatar();
@@ -178,6 +182,7 @@ export function clearError() { elements.errorPanel.hidden = true; }
 export function showLibraryHome() { resetLibraryHome(); }
 
 export function renderLibrary(index, onDownload = async () => {}) {
+  searchController?.destroy();
   clearCoverUrls();
   disposeBookCards(elements.tree);
   elements.tree.replaceChildren();
@@ -200,6 +205,22 @@ export function renderLibrary(index, onDownload = async () => {}) {
     releaseCoverUrl: (url) => {
       URL.revokeObjectURL(url);
       coverUrls.delete(url);
+    },
+  });
+
+  searchController = createSearchController({
+    container: elements.tree,
+    header: document.querySelector('.app-header'),
+    button: document.querySelector('#book-search-button'),
+    quickForm: document.querySelector('#quick-search-form'),
+    quickInput: document.querySelector('#quick-search-input'),
+    advancedButton: document.querySelector('#advanced-search-button'),
+    books: index.books, genresRu, createCard, disposeCards: disposeBookCards,
+    onOpen: () => {
+      annotationModal.close();
+      resultsState.filter = null;
+      resultsState.page = 1;
+      elements.libraryPanel.scrollTop = 0;
     },
   });
 
@@ -278,14 +299,21 @@ export function renderLibrary(index, onDownload = async () => {}) {
   }
   resetLibraryHome = () => {
     annotationModal.close();
-    const wasResults = Boolean(resultsState.filter);
-    if (resultsState.filter) {
+    const wasResults = Boolean(resultsState.filter) || searchController.active;
+    searchController.reset();
+    if (wasResults) {
       resultsState.filter = null;
       resultsState.page = 1;
       disposeBookCards(elements.tree);
       pageByFolderId.set(rootId, 1);
       branch = createBranch(rootId);
       elements.tree.replaceChildren(branch);
+      if (!branch.childElementCount) {
+        const empty = document.createElement('p');
+        empty.className = 'empty-library';
+        empty.textContent = 'В библиотеке пока нет папок или FB2-файлов.';
+        elements.tree.append(empty);
+      }
     }
     pageByFolderId.set(rootId, 1);
     if (!wasResults) renderRootBookPage?.();
@@ -331,6 +359,7 @@ export function renderLibrary(index, onDownload = async () => {}) {
     heading.focus({ preventScroll: true });
   };
   selectDirectFilter = (filter) => {
+    searchController.leave();
     annotationModal.close();
     resultsState.filter = filter;
     resultsState.page = 1;
@@ -341,6 +370,8 @@ export function renderLibrary(index, onDownload = async () => {}) {
 }
 
 export function resetUi() {
+  searchController?.destroy();
+  searchController = null;
   clearCoverUrls();
   elements.libraryPanel.hidden = true;
   elements.stats.hidden = true;
