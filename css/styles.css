@@ -31,6 +31,12 @@ body {
 }
 
 h1 { margin: 0; font: 750 clamp(2rem, 5vw, 3rem)/1.05 system-ui, sans-serif; white-space: nowrap; }
+.branding h1 a, .branding h1 a:visited {
+  color: inherit;
+  text-decoration: none;
+  cursor: pointer;
+}
+.branding h1 a:focus-visible { outline: 3px solid #8a623b; outline-offset: .2rem; }
 .subtitle { margin: .35rem 0 0; color: #6a6359; }
 .account-actions { display: flex; align-items: center; flex: none; gap: .65rem; }
 .user-controls { position: relative; }
@@ -146,6 +152,25 @@ dd { margin: 0; font-weight: 750; font-variant-numeric: tabular-nums; }
   flex-direction: column;
   gap: .85rem;
 }
+.book-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: .25rem;
+  margin-top: .85rem;
+  flex-wrap: wrap;
+}
+.book-pagination-button {
+  min-width: 2rem;
+  min-height: 2rem;
+  padding: .3rem .5rem;
+  color: #4f3825;
+  background: transparent;
+}
+.book-pagination-button:not(:disabled):not([aria-current="page"]):hover { background: #f4eee5; }
+.book-pagination-button[aria-current="page"] { color: #fff; background: #684629; cursor: default; }
+.book-pagination-button:disabled { cursor: default; opacity: .4; }
+.book-pagination-ellipsis { min-width: 1.5rem; color: #746b60; text-align: center; }
 .book-card {
   --book-cover-height: 180px;
   --book-cover-width: 135px;

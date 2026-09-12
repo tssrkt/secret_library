@@ -15,6 +15,7 @@ import { downloadDriveFile, getCurrentDriveUser } from '../js/drive.js';
 import { bookCardView, createBookCard } from '../js/book-card.js';
 import { createAnnotationModalController, formatModalAuthors, modalCoverWidth } from '../js/annotation-modal.js';
 import { genreLabels, loadGenreDictionary } from '../js/genre-labels.js';
+import { BOOKS_PER_PAGE, createPaginator, paginateItems, paginationTokens } from '../js/pagination.js';
 import {
   AUTH_SESSION_KEY, PREVIOUS_SIGN_IN_KEY, clearAccessToken, clearPersistedAuth,
   createAuthAttemptGuard, getAccessToken, persistAuthSession, recoverAuthSession, restoreAuthSession,
@@ -106,6 +107,26 @@ async function test(name, callback) {
 const xml = (titleInfo, encoding = 'UTF-8') => `<?xml version="1.0" encoding="${encoding}"?>
 <FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0" xmlns:xlink="http://www.w3.org/1999/xlink">
 <description><title-info>${titleInfo}</title-info></description>`;
+
+await test('book pagination has exact 50-item boundaries', () => {
+  for (const [count, pages] of [[0, 0], [1, 1], [50, 1], [51, 2], [100, 2], [101, 3]]) {
+    const result = paginateItems(Array.from({ length: count }, (_, index) => index));
+    equal([result.totalPages, result.items.length], [pages, Math.min(count, BOOKS_PER_PAGE)], `${count} item boundary`);
+  }
+  const lastOf51 = paginateItems(Array.from({ length: 51 }, (_, index) => index), 2);
+  equal(lastOf51.items, [50], 'second page of 51 has one item');
+  assert(createPaginator({ totalPages: 0, currentPage: 1, onPageChange: () => {}, documentRef: document }) === null, 'empty result has no paginator');
+});
+
+await test('compact paginator handles small and large page counts', () => {
+  equal(paginationTokens(5, 1), [1, 2, 3, 4, 5], 'all small-page links');
+  equal(paginationTokens(100, 1), [1, 2, 3, 4, 5, 'ellipsis', 100], 'large-page start');
+  equal(paginationTokens(100, 49), [1, 'ellipsis', 47, 48, 49, 50, 51, 'ellipsis', 100], 'large-page middle');
+  const paginator = createPaginator({ totalPages: 2, currentPage: 1, onPageChange: () => {}, documentRef: document });
+  assert(paginator.querySelector('[aria-label="Предыдущая страница"]').disabled, 'previous is disabled on first page');
+  assert(!paginator.querySelector('[aria-label="Следующая страница"]').disabled, 'next is enabled before last page');
+  assert(createPaginator({ totalPages: 1, currentPage: 1, onPageChange: () => {}, documentRef: document }) === null, 'single page has no paginator');
+});
 
 function encodeWindows1251(text) {
   return Uint8Array.from([...text].map((character) => {
@@ -1044,6 +1065,82 @@ await test('lazy folder tree renders books as cards only after folder expansion'
   uiModule.setAuthorized(false);
   assert(fixture.querySelector('#account-display-name').textContent === 'Пользователь Google', 'logout resets account name');
   assert(fixture.querySelector('#account-email').hidden && fixture.querySelector('#account-email').textContent === '', 'logout clears account email');
+  fixture.remove();
+});
+
+await test('root and expanded folders paginate only direct books with independent session pages', async () => {
+  const fixture = document.createElement('div');
+  fixture.innerHTML = `
+    <h1><a id="library-home-link" href="./">Тайная Библиотека</a></h1>
+    <button id="sign-in-button"></button><button id="refresh-button"></button><button id="metadata-button"></button>
+    <button id="retry-metadata-button"></button><button id="stop-button"></button>
+    <div id="user-controls"><button id="avatar-button"><span id="avatar-placeholder"></span><img id="avatar-image"></button><div id="avatar-menu"><div class="account-identity"><strong id="account-display-name"></strong><span id="account-email"></span></div><button id="sign-out-button"></button></div></div>
+    <p id="status-text"></p><dl id="stats"><div><dd id="folder-count"></dd></div><div><dd id="book-count"></dd></div></dl>
+    <div id="error-panel"><p id="error-text"></p></div><button id="retry-button"></button>
+    <section id="library-panel"><div id="library-tree"></div></section>
+    <div id="annotation-modal" hidden><section><div><div id="annotation-modal-cover-placeholder"></div><img id="annotation-modal-cover-image"></div><div><button id="annotation-modal-close"></button><h2 id="annotation-modal-title"></h2><p id="annotation-modal-genres"></p><p id="annotation-modal-text"></p></div></section></div>`;
+  document.body.append(fixture);
+  const uiModule = await import(`../js/ui.js?pagination-test=${Date.now()}`);
+  const books = (parentId, prefix, count) => Array.from({ length: count }, (_, index) => ({
+    id: `${prefix}-${index}`, parentId, fileName: `${prefix}-${index}.fb2`, sourceType: 'fb2', metadataStatus: 'pending',
+  }));
+  uiModule.renderLibrary({
+    rootFolderId: 'root',
+    folders: [
+      { id: 'root', parentId: null, name: 'Root' },
+      { id: 'a', parentId: 'root', name: 'Folder A' },
+      { id: 'b', parentId: 'root', name: 'Folder B' },
+      { id: 'nested', parentId: 'a', name: 'Nested' },
+    ],
+    books: [
+      ...books('root', 'root-book', 51), ...books('a', 'a-book', 101),
+      ...books('b', 'b-book', 51), ...books('nested', 'nested-book', 75),
+    ],
+  });
+  const noop = () => {};
+  uiModule.bindActions({
+    home: () => uiModule.showLibraryHome(), signIn: noop, refresh: noop, indexMetadata: noop,
+    retryMetadata: noop, stopMetadata: noop, signOut: noop, rebuild: noop,
+  });
+  const folderItem = (name) => [...fixture.querySelectorAll('.folder-toggle')]
+    .find((button) => button.textContent === name).closest('li');
+  const directBranch = (item) => item.querySelector(':scope > .tree-list');
+  const directGrid = (branch) => branch.querySelector(':scope > .book-grid-item > .book-grid');
+  const directPaginator = (branch) => branch.querySelector(':scope > .book-grid-item > .book-pagination');
+
+  const rootBranch = fixture.querySelector('#library-tree > .tree-list');
+  assert(directGrid(rootBranch).children.length === 50, 'root renders only its first 50 direct books');
+  assert(directPaginator(rootBranch), '51 root books have pagination');
+  assert(fixture.querySelectorAll('.book-card').length === 50, 'collapsed folders create no off-page cards');
+
+  const itemA = folderItem('Folder A');
+  itemA.querySelector(':scope > .tree-row > .folder-toggle').click();
+  let branchA = directBranch(itemA);
+  assert(directGrid(branchA).children.length === 50, 'folder A renders at most 50 direct books');
+  assert(directPaginator(branchA).querySelectorAll('.book-pagination-button[aria-label^="Страница "]').length === 3, 'nested folder books do not affect parent page count');
+  directPaginator(branchA).querySelector('[aria-label="Страница 3"]').click();
+  assert(directGrid(branchA).children.length === 1, 'folder A third page has one card');
+
+  const itemB = folderItem('Folder B');
+  itemB.querySelector(':scope > .tree-row > .folder-toggle').click();
+  const branchB = directBranch(itemB);
+  directPaginator(branchB).querySelector('[aria-label="Страница 2"]').click();
+  assert(directGrid(branchB).children.length === 1, 'folder B independently reaches page two');
+  assert(directPaginator(branchA).querySelector('[aria-current="page"]').textContent === '3', 'changing folder B keeps folder A on page three');
+  assert(fixture.querySelectorAll('.book-card').length === 52, 'DOM contains only current pages of root and open folders');
+
+  itemA.querySelector(':scope > .tree-row > .folder-toggle').click();
+  assert(!directBranch(itemA), 'collapsed folder removes its card branch from DOM');
+  itemA.querySelector(':scope > .tree-row > .folder-toggle').click();
+  branchA = directBranch(itemA);
+  assert(directGrid(branchA).children.length === 1 && directPaginator(branchA).querySelector('[aria-current="page"]').textContent === '3', 'reopened folder restores its session page');
+
+  directPaginator(rootBranch).querySelector('[aria-label="Страница 2"]').click();
+  assert(directGrid(rootBranch).children.length === 1, 'root second page contains only the 51st direct book');
+  assert(rootBranch.querySelectorAll(':scope > li > .tree-row > .folder-toggle').length === 2, 'all root folders remain visible on every book page');
+  fixture.querySelector('#library-home-link').click();
+  assert(directPaginator(rootBranch).querySelector('[aria-current="page"]').textContent === '1', 'home resets root books to page one');
+  assert(!directBranch(itemA) && !directBranch(itemB), 'home returns to the collapsed root tree');
   fixture.remove();
 });
 

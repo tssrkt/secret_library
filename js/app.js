@@ -205,6 +205,7 @@ function signOut() {
 }
 
 ui.bindActions({
+  home: () => ui.showLibraryHome(),
   signIn,
   refresh: rebuildIndex,
   rebuild: rebuildIndex,

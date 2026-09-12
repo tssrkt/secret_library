@@ -136,6 +136,10 @@ export function createBookCard(book, onDownload, documentRef = document, options
   };
   scheduleUpdate();
   if (options.observeResize) options.observeResize(article, scheduleUpdate);
-  else if (documentRef.defaultView?.ResizeObserver) new documentRef.defaultView.ResizeObserver(scheduleUpdate).observe(article);
+  else if (documentRef.defaultView?.ResizeObserver) {
+    const resizeObserver = new documentRef.defaultView.ResizeObserver(scheduleUpdate);
+    resizeObserver.observe(article);
+    article.addEventListener('book-card-dispose', () => resizeObserver.disconnect(), { once: true });
+  }
   return article;
 }

@@ -5,17 +5,28 @@ import { createBookCard } from './book-card.js';
 import { createAnnotationModalController } from './annotation-modal.js';
 import { loadCover } from './cover-cache.js';
 import { loadGenreDictionary } from './genre-labels.js';
+import { createPaginator, paginateItems } from './pagination.js';
 
 const genresRu = await loadGenreDictionary().catch(() => ({}));
 
 const coverUrls = new Set();
+const pageByFolderId = new Map();
+let resetLibraryHome = () => {};
+
 function clearCoverUrls() {
   for (const url of coverUrls) URL.revokeObjectURL(url);
   coverUrls.clear();
 }
 
+function disposeBookCards(container) {
+  for (const card of container?.querySelectorAll?.('.book-card') || []) {
+    card.dispatchEvent(new Event('book-card-dispose'));
+  }
+}
+
 const elements = {
   signIn: document.querySelector('#sign-in-button'),
+  home: document.querySelector('#library-home-link'),
   refresh: document.querySelector('#refresh-button'),
   metadata: document.querySelector('#metadata-button'),
   retryMetadata: document.querySelector('#retry-metadata-button'),
@@ -85,6 +96,10 @@ export function resetUserAvatar() {
 }
 
 export function bindActions(actions) {
+  elements.home?.addEventListener('click', (event) => {
+    event.preventDefault();
+    actions.home?.();
+  });
   elements.signIn.addEventListener('click', actions.signIn);
   elements.refresh.addEventListener('click', actions.refresh);
   elements.metadata.addEventListener('click', actions.indexMetadata);
@@ -151,13 +166,59 @@ export function showError(message, { canRebuild = false } = {}) {
 
 export function clearError() { elements.errorPanel.hidden = true; }
 
+export function showLibraryHome() { resetLibraryHome(); }
+
 export function renderLibrary(index, onDownload = async () => {}) {
   clearCoverUrls();
+  disposeBookCards(elements.tree);
   elements.tree.replaceChildren();
   elements.libraryPanel.hidden = false;
   const root = index.folders.find((folder) => folder.id === index.rootFolderId);
   const lookups = buildLibraryLookups(index);
 
+  const createCard = (book) => createBookCard(book, onDownload, document, {
+    onAnnotation: (details, trigger) => annotationModal.open(details, trigger),
+    genresRu,
+    loadCover: async ({ coverFileId }) => {
+      const url = URL.createObjectURL(await loadCover(coverFileId));
+      coverUrls.add(url);
+      return url;
+    },
+    releaseCoverUrl: (url) => {
+      URL.revokeObjectURL(url);
+      coverUrls.delete(url);
+    },
+  });
+
+  function appendBookPage(list, parentId) {
+    const books = lookups.booksByParent.get(parentId) || [];
+    if (!books.length) return null;
+    const item = document.createElement('li');
+    item.className = 'book-grid-item';
+
+    const renderPage = () => {
+      const page = paginateItems(books, pageByFolderId.get(parentId) || 1);
+      pageByFolderId.set(parentId, page.currentPage);
+      const grid = document.createElement('div');
+      grid.className = 'book-grid';
+      for (const book of page.items) grid.append(createCard(book));
+      const paginator = createPaginator({
+        totalPages: page.totalPages,
+        currentPage: page.currentPage,
+        onPageChange: (nextPage) => {
+          pageByFolderId.set(parentId, nextPage);
+          renderPage();
+        },
+      });
+      disposeBookCards(item);
+      item.replaceChildren(grid, ...(paginator ? [paginator] : []));
+    };
+    renderPage();
+    list.append(item);
+    return renderPage;
+  }
+
+  let renderRootBookPage = null;
   function createBranch(parentId) {
     const list = document.createElement('ul');
     list.className = 'tree-list';
@@ -177,8 +238,9 @@ export function renderLibrary(index, onDownload = async () => {}) {
       button.addEventListener('click', () => {
         const existing = item.querySelector(':scope > .tree-list');
         if (existing) {
-          existing.hidden = !existing.hidden;
-          button.setAttribute('aria-expanded', String(!existing.hidden));
+          disposeBookCards(existing);
+          existing.remove();
+          button.setAttribute('aria-expanded', 'false');
         } else if (hasChildren) {
           item.append(createBranch(folder.id));
           button.setAttribute('aria-expanded', 'true');
@@ -186,30 +248,8 @@ export function renderLibrary(index, onDownload = async () => {}) {
       });
       list.append(item);
     }
-    const books = lookups.booksByParent.get(parentId) || [];
-    if (books.length) {
-      const item = document.createElement('li');
-      item.className = 'book-grid-item';
-      const grid = document.createElement('div');
-      grid.className = 'book-grid';
-      for (const book of books) {
-        grid.append(createBookCard(book, onDownload, document, {
-          onAnnotation: (book, trigger) => annotationModal.open(book, trigger),
-          genresRu,
-          loadCover: async ({ coverFileId }) => {
-            const url = URL.createObjectURL(await loadCover(coverFileId));
-            coverUrls.add(url);
-            return url;
-          },
-          releaseCoverUrl: (url) => {
-            URL.revokeObjectURL(url);
-            coverUrls.delete(url);
-          },
-        }));
-      }
-      item.append(grid);
-      list.append(item);
-    }
+    const renderBooks = appendBookPage(list, parentId);
+    if (parentId === (root?.id || index.rootFolderId)) renderRootBookPage = renderBooks;
     return list;
   }
 
@@ -223,6 +263,18 @@ export function renderLibrary(index, onDownload = async () => {}) {
   } else {
     elements.tree.append(branch);
   }
+  resetLibraryHome = () => {
+    pageByFolderId.set(rootId, 1);
+    renderRootBookPage?.();
+    for (const item of branch.children) {
+      const toggle = item.querySelector(':scope > .tree-row > .folder-toggle');
+      const child = item.querySelector(':scope > .tree-list');
+      disposeBookCards(child);
+      child?.remove();
+      toggle?.setAttribute('aria-expanded', 'false');
+    }
+    elements.libraryPanel.scrollTop = 0;
+  };
   showStats(Math.max(0, index.folders.length - (root ? 1 : 0)), index.books.length);
   updateMetadataActions(index);
 }
@@ -231,7 +283,9 @@ export function resetUi() {
   clearCoverUrls();
   elements.libraryPanel.hidden = true;
   elements.stats.hidden = true;
+  disposeBookCards(elements.tree);
   elements.tree.replaceChildren();
+  resetLibraryHome = () => {};
   clearError();
 }
 
