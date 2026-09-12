@@ -117,6 +117,23 @@ export async function listAppDataFiles(name) {
   return (await response.json()).files || [];
 }
 
+export async function listAppDataFilesByPrefix(prefix) {
+  const files = [];
+  let pageToken = '';
+  const safePrefix = prefix.replaceAll('\\', '\\\\').replaceAll("'", "\\'");
+  do {
+    const params = new URLSearchParams({
+      spaces: 'appDataFolder', q: `name contains '${safePrefix}' and trashed = false`,
+      fields: 'nextPageToken,files(id,name)', pageSize: '1000',
+    });
+    if (pageToken) params.set('pageToken', pageToken);
+    const page = await (await driveFetch(`/files?${params}`)).json();
+    files.push(...(page.files || []).filter((file) => file.name.startsWith(prefix)));
+    pageToken = page.nextPageToken || '';
+  } while (pageToken);
+  return files;
+}
+
 export async function downloadAppDataFile(fileId) {
   const params = new URLSearchParams({ alt: 'media' });
   return driveFetch(`/files/${encodeURIComponent(fileId)}?${params}`);
@@ -170,4 +187,26 @@ export async function updateAppDataFile(fileId, jsonText) {
     body: jsonText,
   }, 0, UPLOAD_ROOT);
   return response.json();
+}
+
+export async function createAppDataBlob(name, blob) {
+  const boundary = `secret_library_${crypto.randomUUID()}`;
+  const metadata = JSON.stringify({ name, parents: ['appDataFolder'], mimeType: blob.type });
+  const body = new Blob([
+    `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${metadata}\r\n`,
+    `--${boundary}\r\nContent-Type: ${blob.type}\r\n\r\n`, blob, `\r\n--${boundary}--`,
+  ]);
+  const params = new URLSearchParams({ uploadType: 'multipart', fields: 'id' });
+  const response = await driveFetch(`/files?${params}`, {
+    method: 'POST', headers: { 'Content-Type': `multipart/related; boundary=${boundary}` }, body,
+  }, 0, UPLOAD_ROOT);
+  return response.json();
+}
+
+export async function downloadAppDataBlob(fileId, signal) {
+  return (await driveFetch(`/files/${encodeURIComponent(fileId)}?alt=media`, { signal })).blob();
+}
+
+export async function deleteAppDataFile(fileId) {
+  await driveFetch(`/files/${encodeURIComponent(fileId)}`, { method: 'DELETE' });
 }

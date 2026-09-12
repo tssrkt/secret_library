@@ -1,4 +1,4 @@
-import { METADATA_CHECKPOINT_SIZE, METADATA_CONCURRENCY } from './config.js';
+import { METADATA_CHECKPOINT_SIZE, METADATA_CONCURRENCY, METADATA_VERSION } from './config.js';
 import { extractBookMetadata } from './book-metadata.js';
 import { Fb2Error } from './fb2.js';
 
@@ -13,6 +13,7 @@ export function retryMetadataErrors(index) {
     if (book.metadataStatus === 'error') {
       book.metadataStatus = 'pending';
       delete book.metadataError;
+      delete book.metadataErrorMessage;
     }
   }
 }
@@ -24,9 +25,10 @@ export async function indexPendingBooks(index, {
   extract = extractBookMetadata,
   concurrency = METADATA_CONCURRENCY,
   checkpointSize = METADATA_CHECKPOINT_SIZE,
+  onCover = async () => ({}),
 } = {}) {
   const pending = index.books.filter((book) => book.metadataStatus === 'pending');
-  const stats = { total: pending.length, processed: 0, succeeded: 0, failed: 0 };
+  const stats = { total: pending.length, processed: 0, succeeded: 0, skipped: index.books.length - pending.length, failed: 0 };
 
   const processBook = async (book) => {
     if (signal?.aborted) return;
@@ -37,8 +39,17 @@ export async function indexPendingBooks(index, {
         book.metadataStatus = 'pending';
         return;
       }
-      Object.assign(book, metadata, { metadataStatus: 'ready' });
+      let coverFields = {};
+      try { coverFields = await onCover(book, metadata.cover || null); }
+      catch (error) {
+        if (error?.status === 401 || error?.code === 'unauthorized') throw error;
+        metadata.metadataWarning = metadata.metadataWarning || 'cover_cache_failed';
+      }
+      delete metadata.cover;
+      delete metadata.coverId;
+      Object.assign(book, metadata, coverFields, { metadataStatus: 'ready', metadataVersion: METADATA_VERSION });
       delete book.metadataError;
+      delete book.metadataErrorMessage;
       if (!Object.hasOwn(metadata, 'metadataWarning')) delete book.metadataWarning;
       stats.succeeded += 1;
     } catch (error) {
@@ -51,7 +62,9 @@ export async function indexPendingBooks(index, {
         throw error;
       }
       book.metadataStatus = 'error';
-      book.metadataError = error instanceof Fb2Error ? error.code : 'download_failed';
+      book.metadataError = error?.status === 403 ? 'insufficient_permissions'
+        : error instanceof Fb2Error ? error.code : 'download_failed';
+      book.metadataErrorMessage = String(error?.message || book.metadataError).slice(0, 240);
       stats.failed += 1;
     }
     stats.processed += 1;

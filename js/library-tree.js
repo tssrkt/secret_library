@@ -1,4 +1,4 @@
-import { FOLDER_MIME_TYPE, INDEX_VERSION, SCAN_CONCURRENCY } from './config.js';
+import { FOLDER_MIME_TYPE, INDEX_VERSION, METADATA_VERSION, SCAN_CONCURRENCY } from './config.js';
 import { getFolder, listFolderChildren } from './drive.js';
 
 export function classifyLibraryItem(file) {
@@ -37,6 +37,7 @@ export async function scanLibrary(rootFolderId, onProgress = () => {}) {
               id: item.id,
               parentId,
               fileName: item.name,
+              extension: itemType,
               size: item.size == null ? null : Number(item.size),
               modifiedTime: item.modifiedTime || null,
               md5Checksum: item.md5Checksum || null,
@@ -59,12 +60,12 @@ export async function scanLibrary(rootFolderId, onProgress = () => {}) {
 
 const METADATA_FIELDS = [
   'metadataStatus', 'title', 'authors', 'series', 'seriesNumber', 'annotation', 'metadataError',
-  'entryPath', 'metadataWarning',
+  'metadataErrorMessage', 'entryPath', 'metadataWarning', 'genres', 'language', 'metadataVersion',
+  'coverFileId', 'coverMimeType',
 ];
 
 function isUnchanged(current, previous) {
   if ((current.sourceType || 'fb2') !== (previous.sourceType || 'fb2')) return false;
-  if (current.md5Checksum && previous.md5Checksum) return current.md5Checksum === previous.md5Checksum;
   return current.modifiedTime === previous.modifiedTime && current.size === previous.size;
 }
 
@@ -78,7 +79,18 @@ export function preserveBookMetadata(currentIndex, previousIndex) {
       if (Object.hasOwn(previous, field)) book[field] = previous[field];
     }
     if (book.metadataStatus === 'processing') book.metadataStatus = 'pending';
+    if (book.metadataVersion !== METADATA_VERSION) book.metadataStatus = 'pending';
   }
   currentIndex.createdAt = previousIndex.createdAt || currentIndex.createdAt;
   return currentIndex;
+}
+
+export function staleCoverFileIds(currentIndex, previousIndex) {
+  if (!previousIndex) return [];
+  const currentBooks = new Map(currentIndex.books.map((book) => [book.id, book]));
+  return previousIndex.books.flatMap((previous) => {
+    if (!previous.coverFileId) return [];
+    const current = currentBooks.get(previous.id);
+    return current && isUnchanged(current, previous) ? [] : [previous.coverFileId];
+  });
 }

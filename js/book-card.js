@@ -7,11 +7,12 @@ export function bookCardView(book) {
   const genre = Array.isArray(book.genres)
     ? book.genres.find((value) => typeof value === 'string' && value.trim())
     : book.genre;
+  const fallbackTitle = String(book.fileName || '').replace(/\.(fb2|zip)$/i, '').trim() || book.fileName;
   return {
     author: ready && book.authors?.length ? book.authors.join(', ') : 'Автор не указан',
-    title: ready ? textOrFallback(book.title, book.fileName) : book.fileName,
-    genreLine: ready && typeof genre === 'string' && genre.trim() ? `Жанр: ${genre.trim()}` : 'Жанр не указан',
-    annotation: ready ? textOrFallback(book.annotation, 'Аннотация пока не загружена') : 'Аннотация пока не загружена',
+    title: ready ? textOrFallback(book.title, fallbackTitle) : fallbackTitle,
+    genreLine: ready && typeof genre === 'string' && genre.trim() ? `Жанр: ${book.genres?.join(', ') || genre.trim()}` : 'Жанр не указан',
+    annotation: ready ? textOrFallback(book.annotation, 'Аннотация отсутствует') : 'Аннотация отсутствует',
   };
 }
 
@@ -67,6 +68,26 @@ export function createBookCard(book, onDownload, documentRef = document, options
   media.append(cover, download);
   body.append(author, title, genre, annotationBlock);
   article.append(media, body);
+
+  if (book.coverFileId && options.loadCover) {
+    Promise.resolve(options.loadCover(book)).then((url) => {
+      if (!url) return;
+      if (!cover.isConnected) {
+        options.releaseCoverUrl?.(url);
+        return;
+      }
+      const image = documentRef.createElement('img');
+      image.className = 'book-cover-image';
+      image.alt = `Обложка: ${content.title}`;
+      image.src = url;
+      image.addEventListener('load', () => options.releaseCoverUrl?.(url), { once: true });
+      image.addEventListener('error', () => {
+        options.releaseCoverUrl?.(url);
+        image.replaceWith(cover);
+      }, { once: true });
+      cover.replaceWith(image);
+    }).catch(() => {});
+  }
 
   const updateMore = () => {
     const overflowing = options.isAnnotationOverflowing

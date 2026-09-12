@@ -2,8 +2,9 @@ import { clearAccessToken, initializeAuth, requestAccessToken } from './auth.js'
 import { ROOT_FOLDER_ID } from './config.js';
 import { downloadDriveFile, getCurrentDriveUser } from './drive.js';
 import { applyDriveAvatar } from './avatar.js';
+import { removeCovers, removeOrphanCovers, storeCover } from './cover-cache.js';
 import { IndexError, loadIndex, saveIndex } from './library-index.js';
-import { preserveBookMetadata, scanLibrary } from './library-tree.js';
+import { preserveBookMetadata, scanLibrary, staleCoverFileIds } from './library-tree.js';
 import { indexPendingBooks, resetProcessingBooks, retryMetadataErrors } from './metadata-indexer.js';
 import * as ui from './ui.js';
 
@@ -11,6 +12,13 @@ let indexFileId = null;
 let currentIndex = null;
 let metadataController = null;
 let avatarRequestId = 0;
+
+async function cacheBookCover(book, cover) {
+  const previousCover = book.coverFileId;
+  const fields = cover ? await storeCover(book, cover) : { coverFileId: null, coverMimeType: null };
+  if (previousCover && previousCover !== fields.coverFileId) await removeCovers([previousCover]);
+  return fields;
+}
 
 function readableError(error) {
   if (error?.status === 401 || error?.code === 'unauthorized') {
@@ -42,7 +50,10 @@ async function rebuildIndex() {
       ui.setStatus(`Сканирование библиотеки… Обработано папок: ${processedFolders}. Найдено книг: ${books}.`);
       ui.showStats(processedFolders, books);
     });
+    const obsoleteCovers = staleCoverFileIds(scannedIndex, currentIndex);
     const index = preserveBookMetadata(scannedIndex, currentIndex);
+    try { await removeCovers(obsoleteCovers); }
+    catch (error) { ui.showError(`Не удалось полностью очистить старый кеш обложек: ${error.message}`); }
     currentIndex = index;
     renderLibrary(index);
     ui.setStatus('Сканирование завершено. Сохраняем индекс…');
@@ -66,19 +77,21 @@ async function runMetadataIndexing({ retryErrors = false } = {}) {
   if (retryErrors) retryMetadataErrors(currentIndex);
   const pendingCount = currentIndex.books.filter((book) => book.metadataStatus === 'pending').length;
   if (!pendingCount) return;
+  const cachedCount = currentIndex.books.length - pendingCount;
 
   metadataController = new AbortController();
   ui.clearError();
   ui.setMetadataRunning(true);
-  ui.setStatus(`Индексирование FB2… Обработано: 0 / ${pendingCount.toLocaleString('ru-RU')}.`);
-  let stats = { total: pendingCount, processed: 0, succeeded: 0, failed: 0 };
+  ui.setStatus(`Индексирование FB2… Обработано: 0 / ${pendingCount.toLocaleString('ru-RU')}. Из кеша: ${cachedCount.toLocaleString('ru-RU')}.`);
+  let stats = { total: pendingCount, processed: 0, succeeded: 0, skipped: cachedCount, failed: 0 };
   try {
     stats = await indexPendingBooks(currentIndex, {
       signal: metadataController.signal,
       onProgress: (progress) => {
         stats = progress;
-        ui.setStatus(`Индексирование FB2… Обработано: ${progress.processed.toLocaleString('ru-RU')} / ${progress.total.toLocaleString('ru-RU')}. Успешно: ${progress.succeeded.toLocaleString('ru-RU')}. Ошибок: ${progress.failed.toLocaleString('ru-RU')}.`);
+        ui.setStatus(`Индексирование FB2… Обработано: ${progress.processed.toLocaleString('ru-RU')} / ${progress.total.toLocaleString('ru-RU')}. Успешно: ${progress.succeeded.toLocaleString('ru-RU')}. Из кеша: ${progress.skipped.toLocaleString('ru-RU')}. Ошибок: ${progress.failed.toLocaleString('ru-RU')}.`);
       },
+      onCover: cacheBookCover,
       onCheckpoint: async (index) => {
         indexFileId = await saveIndex(index, indexFileId);
       },
@@ -88,7 +101,7 @@ async function runMetadataIndexing({ retryErrors = false } = {}) {
     if (metadataController.signal.aborted) {
       ui.setStatus(`Индексирование остановлено. Сохранено результатов: ${stats.processed.toLocaleString('ru-RU')}.`);
     } else {
-      ui.setStatus(`Обработано ${stats.processed.toLocaleString('ru-RU')} книг. Успешно: ${stats.succeeded.toLocaleString('ru-RU')}. Ошибок: ${stats.failed.toLocaleString('ru-RU')}.`);
+      ui.setStatus(`Обработано ${stats.processed.toLocaleString('ru-RU')} книг. Успешно: ${stats.succeeded.toLocaleString('ru-RU')}. Из кеша: ${stats.skipped.toLocaleString('ru-RU')}. Ошибок: ${stats.failed.toLocaleString('ru-RU')}.`);
     }
   } catch (error) {
     resetProcessingBooks(currentIndex);
@@ -130,6 +143,7 @@ async function afterAuthorization() {
         indexFileId = await saveIndex(saved.index, indexFileId);
       }
       renderLibrary(saved.index);
+      void removeOrphanCovers(saved.index).catch(() => {});
       ui.setStatus('Показан сохраненный индекс. При необходимости обновите библиотеку.');
       return;
     }

@@ -1,8 +1,9 @@
 import {
-  decodeFb2, detectEncoding, FB2_RANGES, Fb2Error, parseFb2Metadata, readFb2Description,
+  decodeFb2, detectEncoding, extractFb2Metadata, FB2_RANGES, Fb2Error, parseFb2Metadata, parseFullFb2, readFb2Description,
 } from '../js/fb2.js';
 import { migrateIndex } from '../js/library-index.js';
-import { classifyLibraryItem, preserveBookMetadata } from '../js/library-tree.js';
+import { classifyLibraryItem, preserveBookMetadata, staleCoverFileIds } from '../js/library-tree.js';
+import { removeCovers, removeOrphanCovers, storeCover } from '../js/cover-cache.js';
 import { buildLibraryLookups, folderHasLibraryChildren } from '../js/library-view-model.js';
 import { indexPendingBooks } from '../js/metadata-indexer.js';
 import { extractZipFb2, findEocd, parseCentralDirectory, ZipError } from '../js/zip.js';
@@ -77,13 +78,14 @@ async function makeZip(entries, comment = '') {
     const plain = entry.bytes || new Uint8Array();
     const method = entry.method ?? 0;
     const compressed = method === 8 ? await deflateRaw(plain) : plain;
+    const flags = entry.flags ?? 0x0800;
     const local = Uint8Array.from([
-      ...le32(0x04034b50), ...le16(20), ...le16(0x0800), ...le16(method), ...le16(0), ...le16(0),
+      ...le32(0x04034b50), ...le16(20), ...le16(flags), ...le16(method), ...le16(0), ...le16(0),
       ...le32(0), ...le32(compressed.length), ...le32(plain.length), ...le16(name.length), ...le16(0),
       ...name, ...compressed,
     ]);
     const central = Uint8Array.from([
-      ...le32(0x02014b50), ...le16(20), ...le16(20), ...le16(0x0800), ...le16(method), ...le16(0), ...le16(0),
+      ...le32(0x02014b50), ...le16(20), ...le16(20), ...le16(flags), ...le16(method), ...le16(0), ...le16(0),
       ...le32(0), ...le32(compressed.length), ...le32(plain.length), ...le16(name.length), ...le16(0), ...le16(0),
       ...le16(0), ...le16(0), ...le32(0), ...le32(localOffset), ...name,
     ]);
@@ -116,8 +118,9 @@ await test('UTF-8, one author, numbered series and paragraphs', () => {
     <genre>prose</genre><author><first-name>Лев</first-name><middle-name>Николаевич</middle-name><last-name>Толстой</last-name></author>
     <book-title>Война и мир</book-title><annotation><p>Первый <strong>абзац</strong>.</p><empty-line/><p>Второй абзац.</p></annotation>
     <sequence name="Классика" number="3"/>`));
-  equal(metadata, {
-    title: 'Война и мир', authors: ['Лев Николаевич Толстой'], series: 'Классика',
+  equal({ title: metadata.title, authors: metadata.authors, genres: metadata.genres, series: metadata.series,
+    seriesNumber: metadata.seriesNumber, annotation: metadata.annotation }, {
+    title: 'Война и мир', authors: ['Лев Николаевич Толстой'], genres: ['prose'], series: 'Классика',
     seriesNumber: 3, annotation: 'Первый абзац.\n\nВторой абзац.',
   }, 'parsed metadata');
 });
@@ -128,6 +131,34 @@ await test('multiple authors, nickname, series without number, no annotation', (
     <author><nickname>Борис Стругацкий</nickname></author><book-title>Тест</book-title><sequence name="Мир"/>`));
   equal(metadata.authors, ['Аркадий Стругацкий', 'Борис Стругацкий'], 'authors');
   equal([metadata.series, metadata.seriesNumber, metadata.annotation], ['Мир', null, null], 'optional fields');
+});
+
+await test('full namespaced FB2 parses genres, language and embedded cover', () => {
+  const source = `${xml(`
+    <genre>history</genre><genre>history</genre><genre>prose</genre>
+    <author><first-name>Ada</first-name><last-name>King</last-name></author>
+    <book-title>Complete</book-title><lang>ru</lang>
+    <coverpage><image xlink:href="#cover-image"/></coverpage>`)}</FictionBook>`
+    .replace('</FictionBook>', '<binary id="cover-image" content-type="image/png">AQID</binary></FictionBook>');
+  const metadata = parseFullFb2(new TextEncoder().encode(source));
+  equal([metadata.title, metadata.language, metadata.genres], ['Complete', 'ru', ['history', 'prose']], 'full metadata');
+  equal([metadata.cover.mimeType, [...metadata.cover.bytes]], ['image/png', [1, 2, 3]], 'embedded cover');
+});
+
+await test('standalone FB2 downloads the full source only when cover binary is referenced', async () => {
+  const covered = `${xml('<book-title>Covered</book-title><coverpage><image xlink:href="#c"/></coverpage>')}</FictionBook>`
+    .replace('</FictionBook>', '<binary id="c" content-type="image/png">AQID</binary></FictionBook>');
+  let downloads = 0;
+  const metadata = await extractFb2Metadata({ id: 'covered' }, {
+    fetchRange: rangeFetcher(new TextEncoder().encode(covered)).fetchRange,
+    downloadFile: async () => { downloads += 1; return new Blob([covered]); },
+  });
+  equal([metadata.title, downloads], ['Covered', 1], 'cover requires one full source read');
+  await extractFb2Metadata({ id: 'plain' }, {
+    fetchRange: rangeFetcher(new TextEncoder().encode(xml('<book-title>Plain</book-title>'))).fetchRange,
+    downloadFile: async () => { downloads += 1; return new Blob(); },
+  });
+  equal(downloads, 1, 'coverless FB2 stays on partial ranges');
 });
 
 await test('Windows-1251 declaration and decoding', () => {
@@ -218,7 +249,7 @@ await test('batch continues after a book error and checkpoints', async () => {
 
 await test('Stage 1 migration and processing reset', () => {
   const result = migrateIndex({ version: 1, books: [{ id: 'a' }, { id: 'b', metadataStatus: 'processing' }] });
-  equal(result.index.version, 3, 'version');
+  equal(result.index.version, 4, 'version');
   equal(result.index.books.map((book) => book.metadataStatus), ['pending', 'pending'], 'statuses');
   assert(result.migrated, 'migration flag');
 });
@@ -251,9 +282,9 @@ await test('Drive scan classification includes ZIP case-insensitively and ignore
   equal(classifyLibraryItem({ name: 'nested', mimeType: 'application/vnd.google-apps.folder' }), 'folder', 'folder unaffected');
 });
 
-const zipFb2 = new TextEncoder().encode(xml(`
+const zipFb2 = new TextEncoder().encode(`${xml(`
   <author><first-name>Zip</first-name><last-name>Author</last-name></author>
-  <book-title>Archive Book</book-title><annotation><p>From ZIP.</p></annotation>`));
+  <book-title>Archive Book</book-title><annotation><p>From ZIP.</p></annotation>`)}</FictionBook>`);
 
 await test('ZIP EOCD with comment and central directory', async () => {
   const bytes = await makeZip([{ name: 'book.fb2', bytes: zipFb2 }], 'variable comment');
@@ -315,6 +346,12 @@ await test('unsupported compression method is isolated', async () => {
   } catch (error) { equal(error.code, 'unsupported_compression', 'error code'); }
 });
 
+await test('encrypted ZIP is reported without stopping other work', async () => {
+  const bytes = await makeZip([{ name: 'book.fb2', bytes: zipFb2, flags: 0x0801 }]);
+  try { await extractZipFb2({ id: 'zip', size: bytes.length }, { fetchRange: zipFetcher(bytes) }); assert(false, 'encryption error expected'); }
+  catch (error) { equal(error.code, 'encrypted_zip', 'encrypted error code'); }
+});
+
 await test('ZIP64 markers are detected as unsupported', async () => {
   const bytes = await makeZip([{ name: 'book.fb2', bytes: zipFb2 }]);
   const eocdOffset = bytes.length - 22;
@@ -346,18 +383,38 @@ await test('ZIP Range operation supports abort', async () => {
 
 await test('ZIP source metadata survives rescan and changed ZIP resets', () => {
   const previous = { createdAt: 'old', books: [{
-    id: 'zip', fileName: 'book.zip', sourceType: 'zip', md5Checksum: 'a', metadataStatus: 'ready',
-    entryPath: 'folder/book.fb2', title: 'Kept', authors: ['A'],
+    id: 'zip', fileName: 'book.zip', sourceType: 'zip', modifiedTime: 'one', size: 100, metadataVersion: 1, metadataStatus: 'ready',
+    entryPath: 'folder/book.fb2', title: 'Kept', authors: ['A'], coverFileId: 'cover-old',
   }] };
-  const unchanged = { books: [{ id: 'zip', fileName: 'book.zip', sourceType: 'zip', md5Checksum: 'a', metadataStatus: 'pending', entryPath: null }] };
+  const unchanged = { books: [{ id: 'zip', fileName: 'book.zip', sourceType: 'zip', modifiedTime: 'one', size: 100, metadataStatus: 'pending', entryPath: null }] };
   preserveBookMetadata(unchanged, previous);
   equal([unchanged.books[0].metadataStatus, unchanged.books[0].entryPath], ['ready', 'folder/book.fb2'], 'ZIP metadata preserved');
-  const changed = { books: [{ id: 'zip', fileName: 'book.zip', sourceType: 'zip', md5Checksum: 'b', metadataStatus: 'pending', entryPath: null }] };
+  const changed = { books: [{ id: 'zip', fileName: 'book.zip', sourceType: 'zip', modifiedTime: 'two', size: 100, metadataStatus: 'pending', entryPath: null }] };
   preserveBookMetadata(changed, previous);
   equal([changed.books[0].metadataStatus, changed.books[0].entryPath], ['pending', null], 'changed ZIP reset');
   const removed = { books: [] };
   preserveBookMetadata(removed, previous);
   equal(removed.books.length, 0, 'deleted ZIP remains absent');
+  equal(staleCoverFileIds(changed, previous), ['cover-old'], 'changed source invalidates cover');
+  equal(staleCoverFileIds(removed, previous), ['cover-old'], 'deleted source invalidates cover');
+});
+
+await test('cover cache stores resized blob separately and removes stale files', async () => {
+  let storedName = '';
+  const result = await storeCover({ id: 'drive-id' }, { bytes: new Uint8Array([1]), mimeType: 'image/png' }, {
+    resize: async () => new Blob(['small'], { type: 'image/webp' }),
+    create: async (name) => { storedName = name; return { id: 'cover-file' }; },
+  });
+  equal(result, { coverFileId: 'cover-file', coverMimeType: 'image/webp' }, 'cover index reference');
+  assert(storedName.includes('drive-id') && storedName.endsWith('.webp'), 'separate cover filename');
+  const removed = [];
+  await removeCovers(['a', 'a', 'b'], async (id) => { removed.push(id); });
+  equal(removed, ['a', 'b'], 'stale covers removed once');
+  const orphaned = [];
+  await removeOrphanCovers({ books: [{ coverFileId: 'keep' }] }, async () => [
+    { id: 'keep', name: 'secret-library-cover-keep.webp' }, { id: 'old', name: 'secret-library-cover-old.webp' },
+  ], async (id) => { orphaned.push(id); });
+  equal(orphaned, ['old'], 'unreferenced cover is removed');
 });
 
 await test('one broken ZIP does not stop a mixed metadata batch', async () => {
@@ -470,7 +527,7 @@ await test('book card uses ready metadata and placeholder fields', () => {
   }, 'ready card');
   const pending = bookCardView({ metadataStatus: 'pending', fileName: 'pending.zip' });
   equal(pending, {
-    author: 'Автор не указан', title: 'pending.zip', genreLine: 'Жанр не указан', annotation: 'Аннотация пока не загружена',
+    author: 'Автор не указан', title: 'pending', genreLine: 'Жанр не указан', annotation: 'Аннотация отсутствует',
   }, 'pending card');
 });
 
@@ -487,6 +544,18 @@ await test('book card is not a tree branch and download receives original source
     assert(selected === book, `${sourceType} original selected`);
     card.remove();
   }
+});
+
+await test('book card replaces placeholder with cached cover lazily', async () => {
+  const card = createBookCard(
+    { id: 'covered', coverFileId: 'cover-cache-id', metadataStatus: 'ready', fileName: 'covered.fb2', title: 'Covered' },
+    async () => {}, document,
+    { loadCover: async () => 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==' },
+  );
+  document.body.append(card);
+  await new Promise((resolve) => setTimeout(resolve));
+  assert(card.querySelector('.book-cover-image') && !card.querySelector('.book-cover-placeholder'), 'cached cover displayed');
+  card.remove();
 });
 
 await test('Drive download requests the original file ID', async () => {
@@ -640,11 +709,11 @@ await test('production controls keep stop in status panel and menu actions out o
 });
 
 await test('Drive refresh preserves unchanged metadata and resets changed books', () => {
-  const ready = { id: 'same', md5Checksum: 'one', modifiedTime: 'x', size: 10, metadataStatus: 'ready', title: 'Kept', authors: ['A'] };
+  const ready = { id: 'same', md5Checksum: 'one', modifiedTime: 'x', size: 10, metadataVersion: 1, metadataStatus: 'ready', title: 'Kept', authors: ['A'] };
   const previous = { createdAt: 'old', books: [ready, { ...ready, id: 'changed', title: 'Old' }] };
   const current = { createdAt: 'new', books: [
-    { id: 'same', md5Checksum: 'one', modifiedTime: 'y', size: 20, metadataStatus: 'pending' },
-    { id: 'changed', md5Checksum: 'two', modifiedTime: 'x', size: 10, metadataStatus: 'pending' },
+    { id: 'same', md5Checksum: 'one', modifiedTime: 'x', size: 10, metadataStatus: 'pending' },
+    { id: 'changed', md5Checksum: 'two', modifiedTime: 'y', size: 10, metadataStatus: 'pending' },
   ] };
   preserveBookMetadata(current, previous);
   equal([current.createdAt, current.books[0].title, current.books[0].metadataStatus], ['old', 'Kept', 'ready'], 'preserved');

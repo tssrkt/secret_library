@@ -3,6 +3,13 @@ import { buildLibraryLookups, folderHasLibraryChildren } from './library-view-mo
 import { accountIdentity, createAvatarController } from './avatar.js';
 import { createBookCard } from './book-card.js';
 import { createAnnotationModalController } from './annotation-modal.js';
+import { loadCover } from './cover-cache.js';
+
+const coverUrls = new Set();
+function clearCoverUrls() {
+  for (const url of coverUrls) URL.revokeObjectURL(url);
+  coverUrls.clear();
+}
 
 const elements = {
   signIn: document.querySelector('#sign-in-button'),
@@ -127,6 +134,7 @@ export function showError(message, { canRebuild = false } = {}) {
 export function clearError() { elements.errorPanel.hidden = true; }
 
 export function renderLibrary(index, onDownload = async () => {}) {
+  clearCoverUrls();
   elements.tree.replaceChildren();
   elements.libraryPanel.hidden = false;
   const root = index.folders.find((folder) => folder.id === index.rootFolderId);
@@ -169,6 +177,15 @@ export function renderLibrary(index, onDownload = async () => {}) {
       for (const book of books) {
         grid.append(createBookCard(book, onDownload, document, {
           onAnnotation: (book, trigger) => annotationModal.open(book, trigger),
+          loadCover: async ({ coverFileId }) => {
+            const url = URL.createObjectURL(await loadCover(coverFileId));
+            coverUrls.add(url);
+            return url;
+          },
+          releaseCoverUrl: (url) => {
+            URL.revokeObjectURL(url);
+            coverUrls.delete(url);
+          },
         }));
       }
       item.append(grid);
@@ -192,6 +209,7 @@ export function renderLibrary(index, onDownload = async () => {}) {
 }
 
 export function resetUi() {
+  clearCoverUrls();
   elements.libraryPanel.hidden = true;
   elements.stats.hidden = true;
   elements.tree.replaceChildren();

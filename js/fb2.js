@@ -1,4 +1,4 @@
-import { downloadFileRange } from './drive.js';
+import { downloadDriveFile, downloadFileRange } from './drive.js';
 
 export const FB2_RANGES = Object.freeze([
   [0, 65_535],
@@ -85,6 +85,7 @@ export async function readFb2Description(fileId, { signal, fetchRange = download
 }
 
 function directChild(element, localName) {
+  if (!element) return null;
   return [...element.children].find((child) => child.localName === localName) || null;
 }
 
@@ -102,6 +103,36 @@ function annotationText(annotation) {
   return annotation.textContent.replace(/\s+/g, ' ').trim() || null;
 }
 
+function titleInfoMetadata(titleInfo) {
+  const authors = [...titleInfo.children]
+    .filter((element) => element.localName === 'author')
+    .map((author) => [
+      childText(author, 'first-name'), childText(author, 'middle-name'),
+      childText(author, 'last-name'), childText(author, 'nickname'),
+    ].filter(Boolean).join(' '))
+    .filter(Boolean);
+  const genres = [...new Set([...titleInfo.children]
+    .filter((element) => element.localName === 'genre')
+    .map((element) => element.textContent.replace(/\s+/g, ' ').trim())
+    .filter(Boolean))];
+  const sequence = [...titleInfo.children].find((element) => element.localName === 'sequence');
+  const sequenceNumber = sequence?.getAttribute('number');
+  const parsedNumber = sequenceNumber == null || sequenceNumber.trim() === '' ? null : Number(sequenceNumber);
+  const coverImage = directChild(directChild(titleInfo, 'coverpage'), 'image');
+  const coverHref = coverImage?.getAttributeNS('http://www.w3.org/1999/xlink', 'href')
+    || coverImage?.getAttribute('xlink:href') || coverImage?.getAttribute('href') || null;
+  return {
+    title: childText(titleInfo, 'book-title') || null,
+    authors,
+    genres,
+    series: sequence?.getAttribute('name')?.trim() || null,
+    seriesNumber: Number.isFinite(parsedNumber) ? parsedNumber : null,
+    annotation: annotationText(directChild(titleInfo, 'annotation')),
+    language: childText(titleInfo, 'lang') || null,
+    coverId: coverHref?.replace(/^#/, '') || null,
+  };
+}
+
 export function parseFb2Metadata(descriptionPrefix, Parser = globalThis.DOMParser) {
   if (!Parser) throw new Fb2Error('parse_failed', 'DOMParser is unavailable.');
   const rootMatch = /<([\w.-]+:)?FictionBook\b[^>]*>/i.exec(descriptionPrefix);
@@ -115,24 +146,34 @@ export function parseFb2Metadata(descriptionPrefix, Parser = globalThis.DOMParse
   const titleInfo = description && directChild(description, 'title-info');
   if (!titleInfo) throw new Fb2Error('parse_failed', 'FB2 title-info is missing.');
 
-  const authors = [...titleInfo.children]
-    .filter((element) => element.localName === 'author')
-    .map((author) => [
-      childText(author, 'first-name'), childText(author, 'middle-name'),
-      childText(author, 'last-name'), childText(author, 'nickname'),
-    ].filter(Boolean).join(' '))
-    .filter(Boolean);
-  const sequence = [...titleInfo.children].find((element) => element.localName === 'sequence');
-  const sequenceNumber = sequence?.getAttribute('number');
-  const parsedNumber = sequenceNumber == null || sequenceNumber.trim() === '' ? null : Number(sequenceNumber);
+  return titleInfoMetadata(titleInfo);
+}
 
-  return {
-    title: childText(titleInfo, 'book-title') || null,
-    authors,
-    series: sequence?.getAttribute('name')?.trim() || null,
-    seriesNumber: Number.isFinite(parsedNumber) ? parsedNumber : null,
-    annotation: annotationText(directChild(titleInfo, 'annotation')),
-  };
+function decodeBase64(text) {
+  try {
+    const binary = atob(text.replace(/\s+/g, ''));
+    return Uint8Array.from(binary, (character) => character.charCodeAt(0));
+  } catch {
+    throw new Fb2Error('invalid_xml', 'FB2 cover contains invalid base64 data.');
+  }
+}
+
+export function parseFullFb2(bytes, Parser = globalThis.DOMParser) {
+  if (!Parser) throw new Fb2Error('parse_failed', 'DOMParser is unavailable.');
+  const document = new Parser().parseFromString(decodeFb2(bytes), 'application/xml');
+  if (document.querySelector('parsererror')) throw new Fb2Error('invalid_xml', 'FB2 document is malformed XML.');
+  const titleInfo = [...document.getElementsByTagNameNS('*', 'title-info')][0];
+  if (!titleInfo) throw new Fb2Error('parse_failed', 'FB2 title-info is missing.');
+  const metadata = titleInfoMetadata(titleInfo);
+  if (!metadata.coverId) return metadata;
+  const binary = [...document.getElementsByTagNameNS('*', 'binary')]
+    .find((element) => element.getAttribute('id') === metadata.coverId);
+  if (!binary) return metadata;
+  const mimeType = binary.getAttribute('content-type')?.toLowerCase() || '';
+  if (!['image/jpeg', 'image/png', 'image/webp', 'image/gif'].includes(mimeType)) {
+    return { ...metadata, metadataWarning: 'unsupported_cover_format' };
+  }
+  return { ...metadata, cover: { mimeType, bytes: decodeBase64(binary.textContent) } };
 }
 
 export function parseFb2Bytes(bytes, Parser = globalThis.DOMParser) {
@@ -144,7 +185,10 @@ export function parseFb2Bytes(bytes, Parser = globalThis.DOMParser) {
 
 export async function extractFb2Metadata(book, options = {}) {
   try {
-    return parseFb2Metadata(await readFb2Description(book.id, options), options.Parser);
+    const metadata = parseFb2Metadata(await readFb2Description(book.id, options), options.Parser);
+    if (!metadata.coverId) return metadata;
+    const blob = await (options.downloadFile || downloadDriveFile)(book.id, options.signal);
+    return parseFullFb2(new Uint8Array(await blob.arrayBuffer()), options.Parser);
   } catch (error) {
     if (error instanceof Fb2Error || error?.name === 'AbortError' || error?.status === 401) throw error;
     throw new Fb2Error('download_failed', error?.message || 'FB2 download failed.');

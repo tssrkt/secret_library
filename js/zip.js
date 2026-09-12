@@ -1,11 +1,11 @@
 import {
   ZIP_MAX_CENTRAL_DIRECTORY_SIZE,
   ZIP_MAX_COMPRESSED_ENTRY_SIZE,
-  ZIP_MAX_DESCRIPTION_SIZE,
+  ZIP_MAX_FB2_ENTRY_SIZE,
   ZIP_TAIL_SIZE,
 } from './config.js';
 import { downloadFileRange } from './drive.js';
-import { decodeFb2, descriptionEnd, Fb2Error, parseFb2Bytes } from './fb2.js';
+import { Fb2Error, parseFullFb2 } from './fb2.js';
 
 const EOCD_SIGNATURE = 0x06054b50;
 const CENTRAL_SIGNATURE = 0x02014b50;
@@ -115,7 +115,7 @@ function suitableFb2Entries(entries) {
   });
 }
 
-async function inflateDescription(compressed, signal) {
+async function inflateFb2(compressed, signal) {
   if (typeof DecompressionStream !== 'function') throw new ZipError('unsupported_compression', 'Deflate is unsupported by this browser.');
   let stream;
   try { stream = new Blob([compressed]).stream().pipeThrough(new DecompressionStream('deflate-raw')); }
@@ -124,19 +124,12 @@ async function inflateDescription(compressed, signal) {
   const chunks = [];
   let length = 0;
   try {
-    while (length <= ZIP_MAX_DESCRIPTION_SIZE) {
+    while (length <= ZIP_MAX_FB2_ENTRY_SIZE) {
       if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
       const result = await reader.read();
       if (result.done) break;
       chunks.push(result.value);
       length += result.value.length;
-      const combined = new Uint8Array(length);
-      let cursor = 0;
-      for (const chunk of chunks) { combined.set(chunk, cursor); cursor += chunk.length; }
-      if (descriptionEnd(decodeFb2(combined)) >= 0) {
-        await reader.cancel();
-        return combined;
-      }
     }
   } catch (error) {
     if (error?.name === 'AbortError' || error instanceof Fb2Error) throw error;
@@ -144,7 +137,11 @@ async function inflateDescription(compressed, signal) {
   } finally {
     reader.releaseLock();
   }
-  throw new ZipError('description_not_found', 'FB2 description was not found in the first 1 MiB.');
+  if (length > ZIP_MAX_FB2_ENTRY_SIZE) throw new ZipError('zip_entry_too_large');
+  const combined = new Uint8Array(length);
+  let cursor = 0;
+  for (const chunk of chunks) { combined.set(chunk, cursor); cursor += chunk.length; }
+  return combined;
 }
 
 export async function extractZipFb2(book, {
@@ -163,9 +160,10 @@ export async function extractZipFb2(book, {
   const candidates = suitableFb2Entries(parseCentralDirectory(central, eocd.entryCount, fileSize));
   if (!candidates.length) throw new ZipError('zip_no_fb2', 'ZIP contains no FB2 entry.');
   const entry = candidates[0];
-  if (entry.flags & 1) throw new ZipError('unsupported_zip', 'Encrypted ZIP entries are unsupported.');
+  if (entry.flags & 1) throw new ZipError('encrypted_zip', 'Encrypted ZIP entries are unsupported.');
   if (![0, 8].includes(entry.method)) throw new ZipError('unsupported_compression');
   if (entry.compressedSize > ZIP_MAX_COMPRESSED_ENTRY_SIZE) throw new ZipError('zip_entry_too_large');
+  if (entry.uncompressedSize > ZIP_MAX_FB2_ENTRY_SIZE) throw new ZipError('zip_entry_too_large');
 
   const local = await ranges.read(entry.localHeaderOffset, entry.localHeaderOffset + 29, signal);
   if (u32(local, 0) !== LOCAL_SIGNATURE) throw new ZipError('malformed_zip');
@@ -174,14 +172,14 @@ export async function extractZipFb2(book, {
 
   let fb2Bytes;
   if (entry.method === 0) {
-    const end = dataOffset + Math.min(entry.compressedSize, ZIP_MAX_DESCRIPTION_SIZE) - 1;
+    const end = dataOffset + entry.compressedSize - 1;
     fb2Bytes = await ranges.read(dataOffset, end, signal);
   } else {
     const compressed = await ranges.read(dataOffset, dataOffset + entry.compressedSize - 1, signal);
-    fb2Bytes = await inflateDescription(compressed, signal);
+    fb2Bytes = await inflateFb2(compressed, signal);
   }
   return {
-    ...parseFb2Bytes(fb2Bytes, Parser),
+    ...parseFullFb2(fb2Bytes, Parser),
     entryPath: entry.name.replaceAll('\\', '/'),
     ...(candidates.length > 1 ? { metadataWarning: 'multiple_fb2_entries' } : {}),
   };

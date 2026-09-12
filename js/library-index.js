@@ -1,4 +1,4 @@
-import { INDEX_FILE_NAME, INDEX_VERSION } from './config.js';
+import { INDEX_FILE_NAME, INDEX_VERSION, METADATA_VERSION } from './config.js';
 import { createAppDataFile, downloadAppDataFile, listAppDataFiles, updateAppDataFile } from './drive.js';
 
 export class IndexError extends Error {
@@ -11,7 +11,7 @@ export class IndexError extends Error {
 }
 
 function validateIndex(index, rootFolderId) {
-  if (!index || ![1, 2, INDEX_VERSION].includes(index.version) || index.rootFolderId !== rootFolderId
+  if (!index || ![1, 2, 3, INDEX_VERSION].includes(index.version) || index.rootFolderId !== rootFolderId
       || !Array.isArray(index.folders) || !Array.isArray(index.books)) {
     throw new IndexError('Сохраненный индекс поврежден или имеет несовместимый формат.', 'invalid_index');
   }
@@ -33,6 +33,16 @@ export function migrateIndex(index) {
     }
     if (book.metadataStatus === 'ready' && !Array.isArray(book.authors)) {
       book.authors = [];
+      migrated = true;
+    }
+    if (!book.extension) {
+      book.extension = book.sourceType;
+      migrated = true;
+    }
+    if (['ready', 'error'].includes(book.metadataStatus) && book.metadataVersion !== METADATA_VERSION) {
+      book.metadataStatus = 'pending';
+      delete book.metadataError;
+      delete book.metadataErrorMessage;
       migrated = true;
     }
   }
