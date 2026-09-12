@@ -666,7 +666,8 @@ await test('one full-width card per row, with download directly below equal-widt
   card.querySelector('.book-cover-placeholder').replaceWith(image);
   const imageRect = image.getBoundingClientRect();
   assert(imageRect.width === coverFrame.width && imageRect.height === coverFrame.height, 'square or portrait image fills fixed container');
-  assert(getComputedStyle(image).objectFit === 'contain', 'different image ratios remain uncropped and undistorted');
+  assert(getComputedStyle(image).objectFit === 'cover', 'different image ratios fill the container without distortion');
+  assert(getComputedStyle(image).objectPosition === '50% 0%', 'cover cropping is centered at the top');
   equal([
     getComputedStyle(card.querySelector('.book-card-title')).fontSize,
     getComputedStyle(card.querySelector('.book-card-author')).fontSize,
@@ -676,8 +677,8 @@ await test('one full-width card per row, with download directly below equal-widt
   ], ['18px', '16px', '15px', '16px', '14px'], 'card typography sizes');
   const annotationTypography = getComputedStyle(card.querySelector('.book-card-annotation'));
   equal(
-    [annotationTypography.fontSize, annotationTypography.lineHeight],
-    ['16px', '24.8px'],
+    [annotationTypography.fontSize, annotationTypography.lineHeight, annotationTypography.color],
+    ['16px', '24.8px', 'rgb(0, 0, 0)'],
     'annotation has readable computed typography',
   );
   grid.style.width = '320px';
@@ -718,6 +719,7 @@ await test('Read more stays bottom-right while only overflowing annotation is tr
   assert(moreRect.top >= annotationRect.bottom, 'reserved row prevents overlap with annotation');
   assert(Math.abs(moreRect.bottom - (bodyRect.bottom - Number.parseFloat(getComputedStyle(longCard.querySelector('.book-card-body')).paddingBottom))) < 1, 'read-more link stays at text column bottom');
   assert(moreStyles.position === 'absolute' && moreStyles.textAlign === 'right', 'read-more is anchored at bottom-right');
+  assert(moreStyles.textDecorationLine === 'none', 'read-more has no underline');
   assert(moreRect.height === 24, 'read-more has a separate fixed-height row');
   assert(annotation.classList.contains('truncated') && annotationStyles.webkitLineClamp !== 'none', 'overflow uses line clamp with ellipsis');
   assert(annotationStyles.maskImage === 'none' && annotationStyles.backgroundImage === 'none', 'annotation has no masks, gradients or overlay lines');
@@ -756,7 +758,7 @@ await test('genre renders as exactly one current line', () => {
   const known = createBookCard({ metadataStatus: 'ready', fileName: 'book.fb2', genres: ['Историческая проза'] }, async () => {});
   const missing = createBookCard({ metadataStatus: 'ready', fileName: 'book.fb2' }, async () => {});
   equal(known.querySelectorAll('.book-card-genre').length, 1, 'known genre node count');
-  equal(known.querySelector('.book-card-genre').textContent, 'Жанр: Историческая проза', 'known genre');
+  equal(known.querySelector('.book-card-genre').textContent, 'Историческая проза', 'known genre has no prefix');
   equal(missing.querySelector('.book-card-genre').textContent, 'Жанр не указан', 'genre fallback');
 });
 
@@ -771,9 +773,9 @@ await test('book card translates known genre codes without mutating source order
     popular_business: 'О бизнесе популярно',
     religion_self: 'Самосовершенствование',
   });
-  equal(view.genreLine, 'Жанр: Биографии и мемуары, О бизнесе популярно, Самосовершенствование, unknown_code', 'translated genre line');
+  equal(view.genreLine, 'Биографии и мемуары, О бизнесе популярно, Самосовершенствование, unknown_code', 'translated genre line without prefix');
   equal(book.genres, originalGenres, 'source genre codes and order are unchanged');
-  equal(bookCardView(book, {}).genreLine, 'Жанр: nonf_biography, popular_business, religion_self, unknown_code', 'dictionary failure falls back to source codes');
+  equal(bookCardView(book, {}).genreLine, 'nonf_biography, popular_business, religion_self, unknown_code', 'dictionary failure falls back to source codes without prefix');
 });
 
 await test('genre dictionary translates only for display and preserves unknown codes', async () => {
@@ -815,7 +817,7 @@ await test('current 393-entry genre dictionary covers real canonical and extende
   equal(source, original, 'display translation does not mutate indexed genre codes');
   equal(
     bookCardView({ metadataStatus: 'ready', fileName: 'book.fb2', genres: source }, dictionary).genreLine,
-    `Жанр: ${expected}`,
+    expected,
     'book card uses the current dictionary and fallback',
   );
 });
@@ -1004,6 +1006,7 @@ await test('production controls keep stop in status panel and menu actions out o
     .flatMap((sheet) => [...sheet.cssRules])
     .find((rule) => rule.selectorText === '.book-annotation-more:not(:disabled):hover');
   assert(readMoreHoverRule?.style.color === 'rgb(0, 0, 0)', 'read-more hover is explicitly black');
+  assert(readMoreHoverRule?.style.textDecoration === 'none', 'read-more hover does not restore underline');
   assert(getComputedStyle(fixture.lastElementChild).display === 'none', 'hidden actions take no space');
   fixture.remove();
 });

@@ -12,7 +12,7 @@ export function bookCardView(book, genresRu = {}) {
     author: ready && book.authors?.length ? book.authors.join(', ') : 'Автор не указан',
     title: ready ? textOrFallback(book.title, fallbackTitle) : fallbackTitle,
     genreLine: ready && typeof genre === 'string' && genre.trim()
-      ? `Жанр: ${(book.genres || [genre]).map((code) => genresRu[code] || code).join(', ')}`
+      ? (book.genres || [genre]).map((code) => genresRu[code] || code).join(', ')
       : 'Жанр не указан',
     annotation: ready ? textOrFallback(book.annotation, 'Аннотация отсутствует') : 'Аннотация отсутствует',
   };
