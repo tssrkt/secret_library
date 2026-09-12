@@ -1,3 +1,5 @@
+import { seriesName, seriesLabel } from './book-series.js';
+
 function textOrFallback(value, fallback) {
   return typeof value === 'string' && value.trim() ? value.trim() : fallback;
 }
@@ -95,6 +97,18 @@ export function createBookCard(book, onDownload, documentRef = document, options
       genre.append(button);
     });
   } else genre.textContent = content.genreLine;
+  const cycle = seriesName(book);
+  if (cycle) {
+    genre.append(documentRef.createTextNode(', '));
+    const element = documentRef.createElement(options.onSeriesFilter ? 'button' : 'span');
+    element.textContent = seriesLabel(book);
+    if (options.onSeriesFilter) {
+      element.type = 'button';
+      element.className = 'book-metadata-link book-series-link';
+      element.addEventListener('click', () => options.onSeriesFilter(cycle));
+    }
+    genre.append(element);
+  }
   const annotationBlock = documentRef.createElement('div');
   annotationBlock.className = 'book-card-annotation-block';
   const annotation = documentRef.createElement('p');

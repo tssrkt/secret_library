@@ -17,6 +17,7 @@ let resetLibraryHome = () => {};
 let selectDirectFilter = () => {};
 const onAuthorFilter = (value) => selectDirectFilter({ type: 'author', value: value.trim() });
 const onGenreFilter = (value) => selectDirectFilter({ type: 'genre', value });
+const onSeriesFilter = (value) => selectDirectFilter({ type: 'series', value: value.trim() });
 
 function clearCoverUrls() {
   for (const url of coverUrls) URL.revokeObjectURL(url);
@@ -190,6 +191,7 @@ export function renderLibrary(index, onDownload = async () => {}) {
     genresRu,
     onAuthorFilter,
     onGenreFilter,
+    onSeriesFilter,
     loadCover: async ({ coverFileId }) => {
       const url = URL.createObjectURL(await loadCover(coverFileId));
       coverUrls.add(url);
@@ -303,7 +305,8 @@ export function renderLibrary(index, onDownload = async () => {}) {
     heading.className = 'direct-results-title';
     heading.tabIndex = -1;
     const { type, value } = resultsState.filter;
-    heading.textContent = type === 'genre' ? `Жанр: ${genresRu[value] || value}` : `Автор: ${value}`;
+    heading.textContent = type === 'genre' ? `Жанр: ${genresRu[value] || value}`
+      : type === 'series' ? `Цикл: ${value}` : `Автор: ${value}`;
     const count = document.createElement('p');
     count.textContent = `Найдено: ${russianBookCount(page.totalItems)}`;
     const grid = document.createElement('div');

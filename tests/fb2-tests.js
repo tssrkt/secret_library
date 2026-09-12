@@ -20,6 +20,7 @@ import { createAnnotationModalController, formatModalAuthors, modalCoverWidth } 
 import { genreLabels, loadGenreDictionary } from '../js/genre-labels.js';
 import { BOOKS_PER_PAGE, createPaginator, paginateItems, paginationTokens } from '../js/pagination.js';
 import { filterBooksByDirectValue, russianBookCount } from '../js/direct-filter.js';
+import { seriesLabel } from '../js/book-series.js';
 import {
   AUTH_SESSION_KEY, PREVIOUS_SIGN_IN_KEY, clearAccessToken, clearPersistedAuth,
   createAuthAttemptGuard, getAccessToken, persistAuthSession, recoverAuthSession, restoreAuthSession,
@@ -1309,6 +1310,74 @@ await test('Drive refresh preserves unchanged metadata and resets changed books'
   equal([current.books[1].title, current.books[1].metadataStatus], [undefined, 'pending'], 'changed');
 });
 
+await test('FB2 series metadata survives indexing, index serialization and Drive refresh', async () => {
+  for (const [sequence, expected] of [
+    ['<sequence name=" Боевые тушканчики " number="10"/>', ['Боевые тушканчики', 10]],
+    ['<sequence name="Боевые тушканчики"/>', ['Боевые тушканчики', null]],
+    ['<sequence name="Боевые тушканчики" number="invalid"/>', ['Боевые тушканчики', null]],
+    ['', [null, null]],
+  ]) {
+    const book = { id: 'series-book', fileName: 'series.fb2', sourceType: 'fb2', metadataStatus: 'pending', md5Checksum: 'same' };
+    const index = { books: [book] };
+    const stats = await indexPendingBooks(index, {
+      extract: async () => parseFb2Metadata(xml(`<book-title>Book</book-title>${sequence}`)),
+    });
+    assert(stats.succeeded === 1, 'FB2 indexing succeeds');
+    let serialized;
+    await saveBuildingIndex(index, null, { create: async (name, json) => { serialized = json; return { id: 'saved' }; } });
+    const saved = JSON.parse(serialized);
+    equal([saved.books[0].series, saved.books[0].seriesNumber], expected, 'separate persisted fields');
+    const refreshed = { books: [{ id: book.id, fileName: book.fileName, md5Checksum: 'same' }] };
+    preserveBookMetadata(refreshed, saved);
+    equal([refreshed.books[0].series, refreshed.books[0].seriesNumber], expected, 'refresh retains series');
+  }
+});
+
+await test('series filters use the name and numeric order with catalog order for unnumbered books', () => {
+  const books = [
+    { id: 'missing10', fileName: 'book10.fb2', series: 'Цикл' },
+    { id: 'ten', fileName: 'ten.fb2', series: 'Цикл', seriesNumber: '10' },
+    { id: 'missing2', fileName: 'book2.fb2', series: 'Цикл', seriesNumber: null },
+    { id: 'two', fileName: 'two.fb2', series: 'Цикл', seriesNumber: 2 },
+    { id: 'one', fileName: 'one.fb2', series: ' Цикл ', seriesNumber: 1 },
+    { id: 'other', fileName: 'other.fb2', series: 'Цикл продолжение', seriesNumber: 1 },
+    { id: 'none', fileName: 'none.fb2' },
+  ];
+  const before = JSON.stringify(books);
+  equal(filterBooksByDirectValue(books, { type: 'series', value: 'Цикл' }).map((book) => book.id),
+    ['one', 'two', 'ten', 'missing2', 'missing10'], 'numeric numbers first, unnumbered in normal catalog order');
+  equal(filterBooksByDirectValue(books, { type: 'series', value: 'Цикл (2)' }), [], 'number is not part of the filter name');
+  equal(filterBooksByDirectValue(books, { type: 'series', value: '' }), [], 'missing series is not searchable');
+  equal(JSON.stringify(books), before, 'filter and sorting do not modify the index');
+  const tied = [{ id: 'a', series: 'Цикл', fileName: 'same' }, { id: 'b', series: 'Цикл', fileName: 'same' }];
+  equal(filterBooksByDirectValue(tied, { type: 'series', value: 'Цикл' }), tied, 'equal catalog keys remain stable');
+  equal([null, undefined, '', ' ', 'bad', Infinity, 0, '10'].map((seriesNumber) => seriesLabel({ series: 'Цикл', seriesNumber })),
+    ['Цикл', 'Цикл', 'Цикл', 'Цикл', 'Цикл', 'Цикл', 'Цикл (0)', 'Цикл (10)'], 'missing and numeric labels');
+});
+
+await test('cards append a text-like interactive series after unchanged genres', () => {
+  const book = { fileName: 'book.fb2', metadataStatus: 'ready', genres: ['fantasy', 'adventure'], series: 'Боевые тушканчики', seriesNumber: 3 };
+  const selected = [];
+  let annotation = 0;
+  const options = {
+    genresRu: { fantasy: 'Фэнтези', adventure: 'Приключения' },
+    onGenreFilter: () => {}, onSeriesFilter: (name) => selected.push(name), onAnnotation: () => annotation++,
+    scheduleFrame: () => {}, observeResize: () => {},
+  };
+  const card = createBookCard(book, async () => {}, document, options);
+  equal(card.querySelector('.book-card-genre').textContent, 'Фэнтези, Приключения, Боевые тушканчики (3)', 'genre order and comma formatting');
+  const button = card.querySelector('.book-series-link');
+  assert(button.type === 'button' && button.tabIndex === 0 && button.classList.contains('book-metadata-link'), 'existing accessible text-link design');
+  button.click();
+  equal(selected, ['Боевые тушканчики'], 'click passes only cycle name');
+  assert(annotation === 0, 'series click does not open modal');
+  const unnumbered = createBookCard({ ...book, seriesNumber: null }, async () => {}, document, options);
+  equal(unnumbered.querySelector('.book-card-genre').textContent, 'Фэнтези, Приключения, Боевые тушканчики', 'no invented number');
+  const noSeries = createBookCard({ ...book, series: null }, async () => {}, document, options);
+  equal(noSeries.querySelector('.book-card-genre').textContent, 'Фэнтези, Приключения', 'no-series card unchanged');
+  assert(!noSeries.querySelector('.book-series-link'), 'no empty link');
+});
+
 await test('direct filters compare original genre codes and exact individual authors without mutation', () => {
   const books = [
     { genres: ['sci_psychology', 'other'], authors: [' Илья Ильф ', 'Евгений Петров'] },
@@ -1366,6 +1435,7 @@ await test('direct result navigation uses all folders, current-page DOM, home an
   const books = Array.from({ length: 51 }, (_, i) => ({
     id: String(i), parentId: i ? 'nested' : 'root', fileName: `${i}.fb2`, metadataStatus: 'ready',
     title: `Book ${i}`, authors: ['Лем', 'Соавтор'], genres: i < 50 ? ['sf', 'sci_psychology'] : ['sf'],
+    series: 'Боевые тушканчики', seriesNumber: 51 - i,
   }));
   const index = { rootFolderId: 'root', folders: [{ id: 'root', parentId: null }, { id: 'nested', parentId: 'root', name: 'Nested' }], books };
   ui.renderLibrary(index);
@@ -1400,6 +1470,17 @@ await test('direct result navigation uses all folders, current-page DOM, home an
   assert(tree.querySelector('.tree-list') && !tree.querySelector('.direct-results-title') && count() === 1, 'home restores collapsed own tree');
   click('.book-author-link');
   assert(count() === 50 && tree.querySelector('[aria-current="page"]').textContent === '1', 'new results after home start on page one');
+  pageTwo();
+  click('.book-series-link');
+  assert(tree.querySelector('h2').textContent === 'Цикл: Боевые тушканчики', 'series replaces previous filter');
+  assert(count() === 50 && tree.querySelector('[aria-current="page"]').textContent === '1', 'series starts with only 50 cards on page one');
+  assert(tree.querySelector('.book-card-title').textContent === 'Book 50', 'series sorted before pagination');
+  pageTwo();
+  assert(count() === 1 && tree.querySelector('.book-card-title').textContent === 'Book 0', 'last series page contains highest number');
+  fixture.querySelector('#library-home-link').click();
+  assert(tree.querySelector('.tree-list') && !tree.querySelector('.direct-results-title'), 'home resets series mode');
+  click('.book-series-link');
+  assert(tree.querySelector('[aria-current="page"]').textContent === '1', 'series starts anew after home');
   // Retain a rendered metadata button while its source disappears to exercise the safe empty state.
   const staleButton = tree.querySelector('.book-author-link');
   index.books = [];

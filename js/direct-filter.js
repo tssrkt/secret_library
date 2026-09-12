@@ -1,6 +1,20 @@
+import { seriesName, seriesNumber } from './book-series.js';
+import { compareCatalogBooks } from './library-view-model.js';
+
 export function filterBooksByDirectValue(books, filter) {
   const source = Array.isArray(books) ? books : [];
   if (!filter || typeof filter.value !== 'string') return [];
+  if (filter.type === 'series') {
+    const name = filter.value.trim();
+    if (!name) return [];
+    return source.filter((book) => seriesName(book) === name).sort((a, b) => {
+      const first = seriesNumber(a);
+      const second = seriesNumber(b);
+      if (first === null && second !== null) return 1;
+      if (first !== null && second === null) return -1;
+      return (first !== null && second !== null ? first - second : 0) || compareCatalogBooks(a, b);
+    });
+  }
   if (filter.type === 'genre') {
     return source.filter((book) => Array.isArray(book.genres) && book.genres.includes(filter.value));
   }

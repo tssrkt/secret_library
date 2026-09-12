@@ -1,5 +1,9 @@
 const collator = new Intl.Collator('ru', { sensitivity: 'base', numeric: true });
 
+export function compareCatalogBooks(a, b) {
+  return collator.compare(a.fileName, b.fileName);
+}
+
 export function buildLibraryLookups(index) {
   const foldersByParent = new Map();
   const booksByParent = new Map();
@@ -15,7 +19,7 @@ export function buildLibraryLookups(index) {
     booksByParent.set(book.parentId, siblings);
   }
   for (const siblings of foldersByParent.values()) siblings.sort((a, b) => collator.compare(a.name, b.name));
-  for (const siblings of booksByParent.values()) siblings.sort((a, b) => collator.compare(a.fileName, b.fileName));
+  for (const siblings of booksByParent.values()) siblings.sort(compareCatalogBooks);
   return { foldersByParent, booksByParent };
 }
 
