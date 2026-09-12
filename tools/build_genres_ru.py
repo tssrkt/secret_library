@@ -42,10 +42,23 @@ RU_SOURCES = (
     "https://lib.rus.ec/g",
 )
 
-USER_AGENT = "SecretLibraryGenreBuilder/3.0 (+FB2 metadata dictionary)"
+USER_AGENT = "SecretLibraryGenreBuilder/3.1 (+FB2 metadata dictionary)"
 XSD_NS = "http://www.w3.org/2001/XMLSchema"
 CODE_RE = r"[a-z][a-z0-9_]*"
 CODE_FULL_RE = re.compile(rf"^{CODE_RE}$")
+MAX_MAPPING_CODE_LENGTH = 128
+
+
+def is_valid_mapping_code(code: str) -> bool:
+    """Accept real-world genre keys while rejecting empty/control-character junk.
+
+    Canonical/source parsing still uses CODE_FULL_RE. Mapping files (seed, existing
+    output, overrides) may also contain historical aliases, hyphenated tags, spaces
+    and non-Latin labels observed in real FB2 collections.
+    """
+    if not code or len(code) > MAX_MAPPING_CODE_LENGTH:
+        return False
+    return not any(ord(ch) < 32 or ord(ch) == 127 for ch in code)
 
 
 @dataclass(frozen=True)
@@ -182,7 +195,7 @@ def load_mapping_file(path: Path, *, validate_codes: bool = True) -> dict[str, s
         label = normalize_label(str(raw_label))
         if not code or not label:
             continue
-        if validate_codes and not CODE_FULL_RE.fullmatch(code):
+        if validate_codes and not is_valid_mapping_code(code):
             raise ValueError(f"Invalid genre code in {path}: {code!r}")
         result[code] = label
     return result

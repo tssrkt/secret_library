@@ -656,6 +656,7 @@ await test('one full-width card per row, with download directly below equal-widt
   const secondDownload = second.querySelector('.book-download-button');
   assert(download.height === secondDownload.getBoundingClientRect().height, 'download buttons have equal height');
   assert(download.height === 34, 'download button has compact fixed height');
+  assert(coverFrame.height === 180 && coverFrame.width === 135, 'cover is twenty percent larger while preserving 3:4 proportions');
   assert(getComputedStyle(card.querySelector('.book-download-button')).whiteSpace === 'nowrap', 'download label does not wrap');
   assert(card.querySelector('.book-download-button').textContent === 'СКАЧАТЬ', 'download label is uppercase');
   assert(getComputedStyle(card.querySelector('.book-cover-frame')).aspectRatio === '3 / 4', 'cover container uses 3:4 ratio');
@@ -665,8 +666,7 @@ await test('one full-width card per row, with download directly below equal-widt
   card.querySelector('.book-cover-placeholder').replaceWith(image);
   const imageRect = image.getBoundingClientRect();
   assert(imageRect.width === coverFrame.width && imageRect.height === coverFrame.height, 'square or portrait image fills fixed container');
-  assert(getComputedStyle(image).objectFit === 'cover', 'different image ratios are cropped without distortion');
-  assert(getComputedStyle(image).objectPosition === '50% 0%', 'cover is positioned at center top');
+  assert(getComputedStyle(image).objectFit === 'contain', 'different image ratios remain uncropped and undistorted');
   equal([
     getComputedStyle(card.querySelector('.book-card-title')).fontSize,
     getComputedStyle(card.querySelector('.book-card-author')).fontSize,
@@ -680,10 +680,13 @@ await test('one full-width card per row, with download directly below equal-widt
     ['16px', '24.8px'],
     'annotation has readable computed typography',
   );
+  grid.style.width = '320px';
+  assert(card.getBoundingClientRect().width === 320, 'larger card remains within a narrow container');
+  assert(card.querySelector('.book-annotation-more').getBoundingClientRect().right <= card.getBoundingClientRect().right, 'read-more remains inside the card at narrow width');
   grid.remove();
 });
 
-await test('Read more is shown only for visually truncated annotation', async () => {
+await test('Read more stays bottom-right while only overflowing annotation is truncated', async () => {
   let openedBook = null;
   let updateShort = null;
   let updateLong = null;
@@ -698,9 +701,10 @@ await test('Read more is shown only for visually truncated annotation', async ()
   document.body.append(shortCard, longCard);
   updateShort();
   updateLong();
-  assert(shortCard.querySelector('.book-annotation-more').hidden, 'fitting annotation has no link');
+  assert(!shortCard.querySelector('.book-annotation-more').hidden, 'fitting annotation keeps the link at the bottom');
+  assert(!shortCard.querySelector('.book-card-annotation').classList.contains('truncated'), 'fitting annotation is not truncated');
   assert(!longCard.querySelector('.book-annotation-more').hidden, 'overflowing annotation has link');
-  assert(longCard.querySelector('.book-annotation-more').textContent === 'Читать далее', 'link has updated label');
+  assert(longCard.querySelector('.book-annotation-more').textContent === 'ЧИТАТЬ ДАЛЕЕ', 'link uses uppercase label');
   const annotation = longCard.querySelector('.book-card-annotation');
   const more = longCard.querySelector('.book-annotation-more');
   const annotationRect = annotation.getBoundingClientRect();
@@ -710,13 +714,14 @@ await test('Read more is shown only for visually truncated annotation', async ()
   const moreStyles = getComputedStyle(more);
   const lineHeight = Number.parseFloat(annotationStyles.lineHeight);
   assert(Math.abs((annotationRect.height / lineHeight) - Math.round(annotationRect.height / lineHeight)) < 0.02, 'annotation ends on a whole text line');
-  assert(moreRect.left === annotationRect.left, 'read-more link aligns with annotation left edge');
-  assert(moreRect.top >= annotationRect.bottom, 'read-more row does not overlap annotation');
+  assert(Math.abs(moreRect.right - (bodyRect.right - Number.parseFloat(getComputedStyle(longCard.querySelector('.book-card-body')).paddingRight))) < 1, 'read-more aligns with text column right edge');
+  assert(moreRect.top >= annotationRect.bottom, 'reserved row prevents overlap with annotation');
   assert(Math.abs(moreRect.bottom - (bodyRect.bottom - Number.parseFloat(getComputedStyle(longCard.querySelector('.book-card-body')).paddingBottom))) < 1, 'read-more link stays at text column bottom');
-  assert(moreStyles.textAlign === 'left' && moreStyles.alignSelf === 'flex-start', 'read-more link is left aligned');
+  assert(moreStyles.position === 'absolute' && moreStyles.textAlign === 'right', 'read-more is anchored at bottom-right');
   assert(moreRect.height === 24, 'read-more has a separate fixed-height row');
   assert(annotation.classList.contains('truncated') && annotationStyles.webkitLineClamp !== 'none', 'overflow uses line clamp with ellipsis');
   assert(annotationStyles.maskImage === 'none' && annotationStyles.backgroundImage === 'none', 'annotation has no masks, gradients or overlay lines');
+  assert(Number.parseInt(annotation.style.getPropertyValue('--annotation-lines'), 10) >= 2, 'taller card displays additional annotation lines');
   longCard.querySelector('.book-annotation-more').click();
   equal(openedBook, { annotation: 'Long '.repeat(100).trim(), title: 'Noah', author: 'Julia', authors: ['Julia'], genres: [], coverFileId: null }, 'link opens complete book annotation data');
   shortCard.remove();
@@ -737,7 +742,8 @@ await test('annotation overflow is recalculated after card width changes', async
   );
   document.body.append(card);
   scheduledUpdate();
-  assert(card.querySelector('.book-annotation-more').hidden, 'link initially hidden');
+  assert(!card.querySelector('.book-annotation-more').hidden, 'link remains anchored when annotation initially fits');
+  assert(!card.querySelector('.book-card-annotation').classList.contains('truncated'), 'fitting annotation is initially unclamped');
   overflowing = true;
   resizeCallback();
   scheduledUpdate();

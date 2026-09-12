@@ -53,8 +53,7 @@ export function createBookCard(book, onDownload, documentRef = document, options
   const more = documentRef.createElement('button');
   more.type = 'button';
   more.className = 'book-annotation-more';
-  more.textContent = 'Читать далее';
-  more.hidden = true;
+  more.textContent = 'ЧИТАТЬ ДАЛЕЕ';
   more.addEventListener('click', () => options.onAnnotation?.({
     annotation: content.annotation,
     title: content.title,
@@ -99,14 +98,13 @@ export function createBookCard(book, onDownload, documentRef = document, options
   }
 
   const updateMore = () => {
-    more.hidden = true;
+    more.hidden = false;
     annotation.classList.remove('truncated');
     annotation.style.removeProperty('--annotation-lines');
     annotation.style.removeProperty('--annotation-height');
     const overflowing = options.isAnnotationOverflowing
       ? options.isAnnotationOverflowing(annotation)
       : annotation.scrollHeight > annotation.clientHeight + 1;
-    more.hidden = !overflowing;
     if (overflowing) {
       const styles = documentRef.defaultView?.getComputedStyle(annotation);
       const lineHeight = Number.parseFloat(styles?.lineHeight) || 16;
