@@ -1,10 +1,23 @@
 #!/usr/bin/env python3
-"""Build a Russian FB2 genre dictionary from the canonical XSD + public mappings.
+"""Build a Russian FB2 genre dictionary safely.
+
+The output is intentionally broader than FictionBookGenres.xsd because real
+FB2 libraries contain historical/de-facto genre codes.
+
+Priority, from lowest to highest:
+  1. local seed (data/genres-seed.json);
+  2. existing output file, for already discovered extended codes;
+  3. public mapping sources, in configured order (first source wins);
+  4. manual overrides (data/genres-overrides.json).
+
+Important safety property:
+A temporary failure of an external source must never shrink a previously good
+dictionary. Existing local mappings are kept when a source cannot be read.
 
 Outputs:
-  genres-ru.json       code -> Russian label
-  genres-unmapped.txt  canonical XSD codes with no Russian label
-  genres-report.json   source/conflict statistics
+  data/genres-ru.json
+  data/genres-unmapped.txt
+  data/genres-report.json
 
 Uses only the Python standard library.
 """
@@ -18,21 +31,21 @@ import re
 import sys
 import urllib.request
 import xml.etree.ElementTree as ET
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from html.parser import HTMLParser
 from pathlib import Path
 
 XSD_URL = "https://raw.githubusercontent.com/gribuser/fb2/master/FictionBookGenres.xsd"
+
 RU_SOURCES = (
-    # Mirror of the old FictionBook 2.1 genre page; preserves code -> Russian label.
     "https://sysadminmosaic.ru/fictionbook/fictionbook",
-    # Broader list useful for codes that appeared after the old FB 2.1 page.
     "https://lib.rus.ec/g",
 )
 
-USER_AGENT = "SecretLibraryGenreBuilder/1.0 (+FB2 metadata dictionary)"
+USER_AGENT = "SecretLibraryGenreBuilder/3.0 (+FB2 metadata dictionary)"
 XSD_NS = "http://www.w3.org/2001/XMLSchema"
 CODE_RE = r"[a-z][a-z0-9_]*"
+CODE_FULL_RE = re.compile(rf"^{CODE_RE}$")
 
 
 @dataclass(frozen=True)
@@ -83,7 +96,6 @@ def fetch(url: str) -> bytes:
 
 
 def decode_html(raw: bytes) -> str:
-    # The sources we use are normally UTF-8, but keep a cp1251 fallback for old sites.
     for encoding in ("utf-8", "cp1251"):
         try:
             return raw.decode(encoding)
@@ -114,48 +126,66 @@ def html_to_text(source: str) -> str:
     parser = TextExtractor()
     parser.feed(source)
     text = parser.text().replace("\xa0", " ")
-    # Preserve real lines but collapse horizontal whitespace.
     lines = [re.sub(r"[ \t]+", " ", line).strip() for line in text.splitlines()]
     return "\n".join(line for line in lines if line)
 
 
 def parse_mapping_page(raw: bytes) -> dict[str, str]:
+    """Extract code -> label pairs from several common genre-list layouts."""
     text = html_to_text(decode_html(raw))
     result: dict[str, str] = {}
 
-    # FictionBook-style: sf_history - Альтернативная история
+    # sf_history - Альтернативная история
     p1 = re.compile(rf"^({CODE_RE})\s*[-–—]\s*(.+?)$", re.MULTILINE)
     for match in p1.finditer(text):
-        code = match.group(1)
+        code = match.group(1).strip()
         label = normalize_label(match.group(2))
-        if label:
+        if CODE_FULL_RE.fullmatch(code) and label:
             result.setdefault(code, label)
 
-    # Librusec-style: О бизнесе популярно (popular_business) - 2627
+    # Психология (sci_psychology) - 11231
     p2 = re.compile(
         rf"^(.+?)\s+\(({CODE_RE})\)(?:\s*[-–—]\s*[\d\s]+)?$",
         re.MULTILINE,
     )
     for match in p2.finditer(text):
         label = normalize_label(match.group(1))
-        code = match.group(2)
-        if label:
+        code = match.group(2).strip()
+        if CODE_FULL_RE.fullmatch(code) and label:
+            result.setdefault(code, label)
+
+    # 0.12.9 popular_business;О бизнесе популярно
+    p3 = re.compile(
+        rf"^(?:\d+\.)+\d+\s+({CODE_RE})\s*;\s*(.+?)$",
+        re.MULTILINE,
+    )
+    for match in p3.finditer(text):
+        code = match.group(1).strip()
+        label = normalize_label(match.group(2))
+        if CODE_FULL_RE.fullmatch(code) and label:
             result.setdefault(code, label)
 
     return result
 
 
-def load_overrides(path: Path) -> dict[str, str]:
+def load_mapping_file(path: Path, *, validate_codes: bool = True) -> dict[str, str]:
     if not path.exists():
         return {}
+
     data = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(data, dict):
         raise ValueError(f"{path} must contain a JSON object")
-    return {
-        str(code).strip(): normalize_label(str(label))
-        for code, label in data.items()
-        if str(code).strip() and normalize_label(str(label))
-    }
+
+    result: dict[str, str] = {}
+    for raw_code, raw_label in data.items():
+        code = str(raw_code).strip()
+        label = normalize_label(str(raw_label))
+        if not code or not label:
+            continue
+        if validate_codes and not CODE_FULL_RE.fullmatch(code):
+            raise ValueError(f"Invalid genre code in {path}: {code!r}")
+        result[code] = label
+    return result
 
 
 def write_json(path: Path, data) -> None:
@@ -171,92 +201,178 @@ def build(args: argparse.Namespace) -> int:
     xsd_codes = parse_xsd_codes(fetch(args.xsd_url))
     print(f"XSD codes: {len(xsd_codes)}")
 
-    merged: dict[str, str] = {}
-    source_stats: dict[str, int] = {}
-    conflicts: list[Conflict] = []
-    source_errors: dict[str, str] = {}
+    seed = load_mapping_file(args.seed)
+    existing = load_mapping_file(args.out) if args.out.exists() else {}
+    overrides = load_mapping_file(args.overrides)
 
+    # Local baseline. Existing output only supplements the seed so previously
+    # discovered extended codes survive temporary source failures.
+    local_baseline = dict(seed)
+    for code, label in existing.items():
+        local_baseline.setdefault(code, label)
+
+    merged = dict(local_baseline)
+
+    source_stats: dict[str, dict[str, int]] = {}
+    source_errors: dict[str, str] = {}
+    conflicts: list[Conflict] = []
+    source_mapping: dict[str, str] = {}
+
+    # Source priority: first successful source wins against later sources.
+    # Sources are allowed to refresh local baseline labels.
     for url in args.source:
         try:
             page_mapping = parse_mapping_page(fetch(url))
-        except Exception as exc:  # keep building from remaining sources
+        except Exception as exc:
             source_errors[url] = f"{type(exc).__name__}: {exc}"
             print(f"WARNING: failed to read {url}: {exc}", file=sys.stderr)
             continue
 
-        # Only canonical XSD codes are allowed into the generated dictionary.
-        page_mapping = {k: v for k, v in page_mapping.items() if k in xsd_codes}
-        source_stats[url] = len(page_mapping)
-        print(f"Mappings from {url}: {len(page_mapping)}")
+        canonical_here = set(page_mapping) & xsd_codes
+        extended_here = set(page_mapping) - xsd_codes
+        source_stats[url] = {
+            "total": len(page_mapping),
+            "canonical": len(canonical_here),
+            "noncanonical": len(extended_here),
+        }
+        print(
+            f"Mappings from {url}: {len(page_mapping)} "
+            f"({len(canonical_here)} canonical, {len(extended_here)} extended)"
+        )
 
         for code, label in page_mapping.items():
-            if code not in merged:
-                merged[code] = label
-            elif merged[code] != label:
-                conflicts.append(Conflict(code, merged[code], label, url))
+            if code not in source_mapping:
+                source_mapping[code] = label
+            elif source_mapping[code] != label:
+                conflicts.append(
+                    Conflict(code, source_mapping[code], label, url)
+                )
 
-    overrides = load_overrides(args.overrides)
-    unknown_override_codes = sorted(set(overrides) - xsd_codes)
-    for code, label in overrides.items():
-        if code in xsd_codes:
-            merged[code] = label
+    # Refresh/add anything learned from sources.
+    merged.update(source_mapping)
 
-    final_mapping = {code: merged[code] for code in sorted(xsd_codes) if code in merged}
-    missing = sorted(xsd_codes - final_mapping.keys())
+    # Highest priority.
+    merged.update(overrides)
+
+    final_mapping = dict(sorted(merged.items()))
+
+    missing_canonical = sorted(xsd_codes - final_mapping.keys())
+    noncanonical_codes = sorted(set(final_mapping) - xsd_codes)
+    source_extended = sorted(set(source_mapping) - xsd_codes)
+    cached_extended = sorted(
+        (set(existing) - xsd_codes) - set(source_mapping)
+    )
+
+    # Safety check: never silently shrink a pre-existing dictionary.
+    if existing and len(final_mapping) < len(existing):
+        raise RuntimeError(
+            f"Refusing to shrink dictionary from {len(existing)} "
+            f"to {len(final_mapping)} entries"
+        )
 
     write_json(args.out, final_mapping)
+
     args.unmapped.parent.mkdir(parents=True, exist_ok=True)
-    args.unmapped.write_text("\n".join(missing) + ("\n" if missing else ""), encoding="utf-8")
+    args.unmapped.write_text(
+        "\n".join(missing_canonical) + ("\n" if missing_canonical else ""),
+        encoding="utf-8",
+    )
 
     report = {
         "canonical_codes": len(xsd_codes),
+        "seed_codes": len(seed),
+        "existing_codes_loaded": len(existing),
+        "source_codes": len(source_mapping),
+        "source_extended_codes": len(source_extended),
+        "cached_extended_codes": len(cached_extended),
+        "overrides_loaded": len(overrides),
         "mapped_codes": len(final_mapping),
-        "unmapped_codes": missing,
+        "unmapped_canonical_codes": missing_canonical,
+        "noncanonical_mapped_codes": len(noncanonical_codes),
+        "noncanonical_codes": noncanonical_codes,
         "source_stats": source_stats,
         "source_errors": source_errors,
-        "conflicts": [c.__dict__ for c in conflicts],
-        "overrides_loaded": len(overrides),
-        "unknown_override_codes": unknown_override_codes,
+        "conflicts": [asdict(c) for c in conflicts],
     }
     write_json(args.report, report)
 
     print()
-    print(f"Mapped:   {len(final_mapping)} / {len(xsd_codes)}")
-    print(f"Unmapped: {len(missing)}")
-    print(f"Conflicts: {len(conflicts)}")
+    print(f"Seed: {len(seed)}")
+    print(f"Existing dictionary loaded: {len(existing)}")
+    print(f"Source mappings: {len(source_mapping)}")
+    print(f"Overrides: {len(overrides)}")
+    print(f"Mapped total: {len(final_mapping)}")
+    print(f"Unmapped canonical: {len(missing_canonical)}")
+    print(f"Noncanonical mapped: {len(noncanonical_codes)}")
+    print(f"Source errors: {len(source_errors)}")
     print(f"Dictionary: {args.out}")
     print(f"Unmapped:   {args.unmapped}")
     print(f"Report:     {args.report}")
 
-    if missing:
-        print("\nCodes still needing Russian labels:")
-        for code in missing:
+    if missing_canonical:
+        print("\nCanonical codes still needing Russian labels:")
+        for code in missing_canonical:
             print(f"  {code}")
 
-    if args.strict and (missing or source_errors):
+    if source_errors:
+        print(
+            "\nNOTE: one or more sources were unavailable, "
+            "but local seed/cache mappings were preserved."
+        )
+
+    if args.strict and missing_canonical:
         return 2
+
+    if args.require_sources and source_errors:
+        return 3
+
     return 0
 
 
 def make_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Build Russian labels for FB2 genre codes")
-    parser.add_argument("--xsd-url", default=XSD_URL, help="Canonical FictionBookGenres.xsd URL")
+    parser = argparse.ArgumentParser(
+        description="Build Russian labels for canonical and extended FB2 genre codes safely"
+    )
+    parser.add_argument("--xsd-url", default=XSD_URL)
     parser.add_argument(
         "--source",
         action="append",
         default=None,
-        help="Russian mapping page URL; may be repeated",
+        help="Russian mapping page URL; may be repeated; first source has priority",
+    )
+    parser.add_argument(
+        "--seed",
+        type=Path,
+        default=Path("data/genres-seed.json"),
+        help="Local baseline dictionary; protects against external source outages",
     )
     parser.add_argument("--out", type=Path, default=Path("data/genres-ru.json"))
-    parser.add_argument("--unmapped", type=Path, default=Path("data/genres-unmapped.txt"))
-    parser.add_argument("--report", type=Path, default=Path("data/genres-report.json"))
+    parser.add_argument(
+        "--unmapped",
+        type=Path,
+        default=Path("data/genres-unmapped.txt"),
+    )
+    parser.add_argument(
+        "--report",
+        type=Path,
+        default=Path("data/genres-report.json"),
+    )
     parser.add_argument(
         "--overrides",
         type=Path,
         default=Path("data/genres-overrides.json"),
-        help="Optional manual code -> Russian label JSON",
+        help="Manual code -> Russian label JSON; highest priority",
     )
-    parser.add_argument("--strict", action="store_true", help="Exit with code 2 if anything is unmapped")
+    parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="Exit with code 2 only if canonical XSD codes remain unmapped",
+    )
+    parser.add_argument(
+        "--require-sources",
+        action="store_true",
+        help="Also fail if any configured public source is unavailable",
+    )
     return parser
 
 
