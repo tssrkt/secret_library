@@ -59,6 +59,7 @@ export function createBookCard(book, onDownload, documentRef = document, options
     annotation: content.annotation,
     title: content.title,
     author: content.author,
+    authors: Array.isArray(book.authors) ? [...book.authors] : [],
     genres: Array.isArray(book.genres) ? book.genres : [],
     coverFileId: book.coverFileId || null,
   }, more));

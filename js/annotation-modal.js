@@ -9,6 +9,15 @@ export function modalCoverWidth(modalHeight, naturalWidth, naturalHeight, viewpo
   return Math.min(scaledWidth, viewportWidth * 0.38);
 }
 
+export function formatModalAuthors(book) {
+  const authors = Array.isArray(book.authors)
+    ? book.authors.filter((author) => typeof author === 'string' && author.trim()).map((author) => author.trim())
+    : [];
+  if (authors.length >= 3) return `${authors.slice(0, 2).join(', ')} и другие`;
+  if (authors.length) return authors.join(', ');
+  return typeof book.author === 'string' && book.author.trim() ? book.author.trim() : 'Автор не указан';
+}
+
 export function createAnnotationModalController(
   overlay, text, closeButton, title, genres, coverImage = null, coverPlaceholder = null,
   options = {}, documentRef = document,
@@ -46,7 +55,7 @@ export function createAnnotationModalController(
   const open = (book, trigger = null) => {
     const openVersion = ++version;
     returnFocus = trigger;
-    title.textContent = `«${book.title}» ${book.author}`;
+    title.textContent = `«${book.title}» ${formatModalAuthors(book)}`;
     genres.textContent = book.genres?.length ? book.genres.join(', ') : 'Жанр не указан';
     text.textContent = book.annotation;
     resetCover();

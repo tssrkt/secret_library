@@ -11,7 +11,7 @@ import { setupDropdown } from '../js/dropdown.js';
 import { accountIdentity, applyDriveAvatar, createAvatarController } from '../js/avatar.js';
 import { downloadDriveFile, getCurrentDriveUser } from '../js/drive.js';
 import { bookCardView, createBookCard } from '../js/book-card.js';
-import { createAnnotationModalController, modalCoverWidth } from '../js/annotation-modal.js';
+import { createAnnotationModalController, formatModalAuthors, modalCoverWidth } from '../js/annotation-modal.js';
 import { genreLabels } from '../js/genre-labels.js';
 import {
   AUTH_SESSION_KEY, PREVIOUS_SIGN_IN_KEY, clearAccessToken, clearPersistedAuth,
@@ -712,7 +712,7 @@ await test('Read more is shown only for visually truncated annotation', async ()
   assert(annotation.classList.contains('truncated') && annotationStyles.webkitLineClamp !== 'none', 'overflow uses line clamp with ellipsis');
   assert(annotationStyles.maskImage === 'none' && annotationStyles.backgroundImage === 'none', 'annotation has no masks, gradients or overlay lines');
   longCard.querySelector('.book-annotation-more').click();
-  equal(openedBook, { annotation: 'Long '.repeat(100).trim(), title: 'Noah', author: 'Julia', genres: [], coverFileId: null }, 'link opens complete book annotation data');
+  equal(openedBook, { annotation: 'Long '.repeat(100).trim(), title: 'Noah', author: 'Julia', authors: ['Julia'], genres: [], coverFileId: null }, 'link opens complete book annotation data');
   shortCard.remove();
   longCard.remove();
 });
@@ -786,11 +786,16 @@ await test('full annotation modal renders genres and closes normally', async () 
   const modal = createAnnotationModalController(overlay, text, closeButton, title, genres, null, null, {
     genreLabels: async () => 'Биографии и мемуары, Историческая проза',
   });
-  const book = { title: 'Ноев ковчег', author: 'Юлия Васильевна Артюхович', genres: ['biography', 'prose_history'], annotation: 'Full annotation' };
+  const book = {
+    title: 'Ноев ковчег',
+    author: 'Юлия Васильевна Артюхович, Анна Автор, Третий Автор',
+    authors: ['Юлия Васильевна Артюхович', 'Анна Автор', 'Третий Автор'],
+    genres: ['biography', 'prose_history'], annotation: 'Full annotation',
+  };
   modal.open(book);
   await Promise.resolve();
   assert(!overlay.hidden && text.textContent === 'Full annotation', 'modal opens');
-  assert(title.textContent === '«Ноев ковчег» Юлия Васильевна Артюхович', 'modal heading contains quoted title and author without dash');
+  assert(title.textContent === '«Ноев ковчег» Юлия Васильевна Артюхович, Анна Автор и другие', 'modal heading limits three or more authors');
   assert(genres.textContent === 'Биографии и мемуары, Историческая проза', 'translated genres have no prefix');
   assert(getComputedStyle(genres).color !== getComputedStyle(title).color, 'genre line is visually muted');
   closeButton.click();
@@ -802,6 +807,15 @@ await test('full annotation modal renders genres and closes normally', async () 
   document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   assert(overlay.hidden, 'Escape');
   overlay.remove();
+});
+
+await test('annotation modal limits only the displayed author list', () => {
+  equal(formatModalAuthors({ authors: ['First'] }), 'First', 'one author is displayed in full');
+  equal(formatModalAuthors({ authors: ['First', 'Second'] }), 'First, Second', 'two authors are displayed in full');
+  const authors = ['First', 'Second', 'Third', 'Fourth'];
+  equal(formatModalAuthors({ authors }), 'First, Second и другие', 'three or more authors are shortened without ellipsis');
+  equal(authors, ['First', 'Second', 'Third', 'Fourth'], 'formatting does not mutate complete author metadata');
+  equal(formatModalAuthors({ author: 'Legacy Author' }), 'Legacy Author', 'legacy display author remains supported');
 });
 
 await test('annotation modal cover uses full height and intrinsic proportions', () => {
@@ -879,7 +893,7 @@ await test('production controls keep stop in status panel and menu actions out o
   assert(!page.querySelector('.app-header #stop-button'), 'stop is absent from header');
   assert(page.querySelector('h1').textContent === 'Тайная Библиотека', 'header title');
   const fixture = document.createElement('div');
-  fixture.innerHTML = '<div class="user-controls" style="width:43px"><button class="avatar-button"></button><div class="avatar-menu"><button>Item</button></div></div><button hidden>Hidden</button>';
+  fixture.innerHTML = '<div class="user-controls" style="width:43px"><button class="avatar-button"></button><div class="avatar-menu"><button>Item</button></div></div><section id="library-panel"><article class="book-card"></article></section><button hidden>Hidden</button>';
   document.body.append(fixture);
   const menuStyles = getComputedStyle(fixture.querySelector('.avatar-menu'));
   assert(menuStyles.position === 'absolute', 'dropdown is outside layout flow');
@@ -887,10 +901,13 @@ await test('production controls keep stop in status panel and menu actions out o
   assert(menuStyles.width !== 'auto' && parseFloat(menuStyles.minWidth) >= 360, 'desktop dropdown accommodates long actions');
   assert(getComputedStyle(fixture.querySelector('.avatar-menu button')).whiteSpace === 'nowrap', 'desktop menu actions stay on one line');
   const rootStyles = getComputedStyle(document.documentElement);
-  assert(rootStyles.getPropertyValue('--bg').trim() === '#f0ecf4', 'lilac page palette is centralized');
-  assert(rootStyles.getPropertyValue('--surface').trim() === '#f8f5fa', 'lilac surface palette is centralized');
-  assert(rootStyles.getPropertyValue('--accent').trim() === '#80669b', 'muted purple accent is centralized');
-  assert(rootStyles.getPropertyValue('--danger').trim() === '#9a4f68', 'muted berry danger color is centralized');
+  assert(rootStyles.getPropertyValue('--bg').trim() === '#ddd4e6', 'contrasting lilac page palette is centralized');
+  assert(rootStyles.getPropertyValue('--content-bg').trim() === '#e8e0ee', 'library content level is centralized');
+  assert(rootStyles.getPropertyValue('--surface').trim() === '#f5f1f7', 'light card surface is centralized');
+  assert(rootStyles.getPropertyValue('--surface-hover').trim() === '#e2d8e9', 'surface hover is centralized');
+  assert(rootStyles.getPropertyValue('--accent').trim() === '#684b83', 'dark muted purple accent is centralized');
+  assert(rootStyles.getPropertyValue('--danger').trim() === '#88445f', 'muted berry danger color is centralized');
+  assert(getComputedStyle(fixture.querySelector('#library-panel')).backgroundColor !== getComputedStyle(fixture.querySelector('.book-card')).backgroundColor, 'library container and cards use distinct surface levels');
   assert(getComputedStyle(fixture.lastElementChild).display === 'none', 'hidden actions take no space');
   fixture.remove();
 });
