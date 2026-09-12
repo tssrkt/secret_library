@@ -34,7 +34,8 @@ async function driveFetch(path, options = {}, retry = 0, apiRoot = API_ROOT) {
       ...options,
       headers: { Authorization: `Bearer ${token}`, ...resourceKeyHeaders(), ...options.headers },
     });
-  } catch {
+  } catch (error) {
+    if (options.signal?.aborted || error?.name === 'AbortError') throw error;
     if (retry < MAX_RETRIES) {
       await delay(500 * (2 ** retry) + Math.random() * 250);
       return driveFetch(path, options, retry + 1, apiRoot);
@@ -113,6 +114,23 @@ export async function listAppDataFiles(name) {
 export async function downloadAppDataFile(fileId) {
   const params = new URLSearchParams({ alt: 'media' });
   return driveFetch(`/files/${encodeURIComponent(fileId)}?${params}`);
+}
+
+export async function downloadFileRange(fileId, start, end, signal) {
+  const params = new URLSearchParams({ alt: 'media', supportsAllDrives: 'true' });
+  const response = await driveFetch(`/files/${encodeURIComponent(fileId)}?${params}`, {
+    headers: { Range: `bytes=${start}-${end}` },
+    signal,
+  });
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  const contentRange = response.headers.get('Content-Range')?.match(/bytes\s+(\d+)-(\d+)\/(\d+|\*)/i);
+  const reachedEnd = bytes.length < end - start + 1
+    || (contentRange?.[3] !== '*' && Number(contentRange?.[2]) + 1 >= Number(contentRange?.[3]));
+  return {
+    bytes,
+    isComplete: response.status === 200 || reachedEnd,
+    status: response.status,
+  };
 }
 
 export async function createAppDataFile(name, jsonText) {

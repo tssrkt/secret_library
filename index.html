@@ -16,6 +16,9 @@
       <div class="actions">
         <button id="sign-in-button" type="button">Войти через Google</button>
         <button id="refresh-button" type="button" hidden>Обновить библиотеку</button>
+        <button id="metadata-button" type="button" hidden>Проиндексировать книги</button>
+        <button id="retry-metadata-button" class="secondary" type="button" hidden>Повторить ошибки</button>
+        <button id="stop-button" class="danger" type="button" hidden>Остановить</button>
         <button id="sign-out-button" class="secondary" type="button" hidden>Выйти</button>
       </div>
     </header>
@@ -36,6 +39,20 @@
     <section id="library-panel" aria-label="Структура библиотеки" hidden>
       <div id="library-tree" class="library-tree"></div>
     </section>
+
+    <aside id="book-details" class="book-details" aria-labelledby="details-title" hidden>
+      <div class="details-header">
+        <h2 id="details-title">Сведения о книге</h2>
+        <button id="close-details-button" class="secondary compact" type="button" aria-label="Закрыть">×</button>
+      </div>
+      <dl class="details-list">
+        <div><dt>Название</dt><dd id="details-book-title"></dd></div>
+        <div><dt>Автор</dt><dd id="details-authors"></dd></div>
+        <div><dt>Серия</dt><dd id="details-series"></dd></div>
+        <div><dt>Имя файла</dt><dd id="details-file-name"></dd></div>
+        <div class="annotation"><dt>Аннотация</dt><dd id="details-annotation"></dd></div>
+      </dl>
+    </aside>
   </main>
   <script type="module" src="./js/app.js"></script>
 </body>

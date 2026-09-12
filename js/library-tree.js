@@ -34,6 +34,7 @@ export async function scanLibrary(rootFolderId, onProgress = () => {}) {
               size: item.size == null ? null : Number(item.size),
               modifiedTime: item.modifiedTime || null,
               md5Checksum: item.md5Checksum || null,
+              metadataStatus: 'pending',
             });
           }
         }
@@ -46,4 +47,28 @@ export async function scanLibrary(rootFolderId, onProgress = () => {}) {
 
   const now = new Date().toISOString();
   return { version: INDEX_VERSION, rootFolderId, createdAt: now, updatedAt: now, folders, books };
+}
+
+const METADATA_FIELDS = [
+  'metadataStatus', 'title', 'authors', 'series', 'seriesNumber', 'annotation', 'metadataError',
+];
+
+function isUnchanged(current, previous) {
+  if (current.md5Checksum && previous.md5Checksum) return current.md5Checksum === previous.md5Checksum;
+  return current.modifiedTime === previous.modifiedTime && current.size === previous.size;
+}
+
+export function preserveBookMetadata(currentIndex, previousIndex) {
+  if (!previousIndex) return currentIndex;
+  const previousBooks = new Map(previousIndex.books.map((book) => [book.id, book]));
+  for (const book of currentIndex.books) {
+    const previous = previousBooks.get(book.id);
+    if (!previous || !isUnchanged(book, previous)) continue;
+    for (const field of METADATA_FIELDS) {
+      if (Object.hasOwn(previous, field)) book[field] = previous[field];
+    }
+    if (book.metadataStatus === 'processing') book.metadataStatus = 'pending';
+  }
+  currentIndex.createdAt = previousIndex.createdAt || currentIndex.createdAt;
+  return currentIndex;
 }

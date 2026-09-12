@@ -39,6 +39,8 @@ button {
 }
 
 button.secondary { color: #4f3825; background: #e4d7c5; }
+button.danger { background: #9a342d; }
+button.compact { padding: .2rem .55rem; font-size: 1.25rem; }
 button:disabled { cursor: wait; opacity: .6; }
 
 .status-panel, .error-panel, #library-panel {
@@ -74,9 +76,36 @@ dd { margin: 0; font-weight: 750; font-variant-numeric: tabular-nums; }
 .folder-toggle::before { content: "▸"; display: inline-block; width: 1.2rem; color: #8a623b; }
 .folder-toggle[aria-expanded="true"]::before { content: "▾"; }
 .folder-toggle.empty::before { content: "·"; }
-.book { padding-left: 1.55rem; color: #3d3934; }
-.book::before { content: "📄"; margin-right: .45rem; font-size: .85rem; }
+.book-button {
+  padding: .25rem .35rem .25rem 1.55rem;
+  color: #3d3934;
+  background: transparent;
+  font-weight: 400;
+  text-align: left;
+}
+.book-button::before { content: "📄"; margin-right: .45rem; font-size: .85rem; }
+.book-button:hover, .folder-toggle:hover { background: #f4eee5; }
 .empty-library { color: #746b60; }
+
+.book-details {
+  position: fixed;
+  right: 1rem;
+  bottom: 1rem;
+  width: min(440px, calc(100% - 2rem));
+  max-height: min(70vh, 650px);
+  overflow: auto;
+  border: 1px solid #cdbda9;
+  border-radius: .7rem;
+  padding: 1rem 1.15rem;
+  background: #fffdf9;
+  box-shadow: 0 8px 35px rgb(45 32 20 / 22%);
+}
+.details-header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+.details-header h2 { margin: 0; font-family: Georgia, serif; }
+.details-list { display: block; margin-top: 1rem; }
+.details-list div { margin-top: .75rem; text-align: left; }
+.details-list dd { margin-top: .15rem; font-weight: 400; overflow-wrap: anywhere; }
+.details-list .annotation dd { white-space: pre-wrap; line-height: 1.5; }
 
 [hidden] { display: none !important; }
 

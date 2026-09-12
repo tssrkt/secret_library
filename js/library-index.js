@@ -11,11 +11,27 @@ export class IndexError extends Error {
 }
 
 function validateIndex(index, rootFolderId) {
-  if (!index || index.version !== INDEX_VERSION || index.rootFolderId !== rootFolderId
+  if (!index || ![1, INDEX_VERSION].includes(index.version) || index.rootFolderId !== rootFolderId
       || !Array.isArray(index.folders) || !Array.isArray(index.books)) {
     throw new IndexError('Сохраненный индекс поврежден или имеет несовместимый формат.', 'invalid_index');
   }
   return index;
+}
+
+export function migrateIndex(index) {
+  let migrated = index.version !== INDEX_VERSION;
+  index.version = INDEX_VERSION;
+  for (const book of index.books) {
+    if (!book.metadataStatus || book.metadataStatus === 'processing') {
+      book.metadataStatus = 'pending';
+      migrated = true;
+    }
+    if (book.metadataStatus === 'ready' && !Array.isArray(book.authors)) {
+      book.authors = [];
+      migrated = true;
+    }
+  }
+  return { index, migrated };
 }
 
 export async function loadIndex(rootFolderId) {
@@ -26,8 +42,8 @@ export async function loadIndex(rootFolderId) {
 
   try {
     const response = await downloadAppDataFile(files[0].id);
-    const index = validateIndex(await response.json(), rootFolderId);
-    return { index, fileId: files[0].id };
+    const result = migrateIndex(validateIndex(await response.json(), rootFolderId));
+    return { ...result, fileId: files[0].id };
   } catch (error) {
     if (error instanceof IndexError) {
       error.fileId = files[0].id;
@@ -45,6 +61,9 @@ export async function saveIndex(index, fileId = null) {
       : await createAppDataFile(INDEX_FILE_NAME, json);
     return saved.id;
   } catch (error) {
-    throw new IndexError(`Библиотека отсканирована, но сохранить индекс не удалось: ${error.message}`, 'index_write_failed');
+    const wrapped = new IndexError(`Библиотека отсканирована, но сохранить индекс не удалось: ${error.message}`, 'index_write_failed');
+    wrapped.status = error.status;
+    if (error.code === 'unauthorized') wrapped.code = 'unauthorized';
+    throw wrapped;
   }
 }
