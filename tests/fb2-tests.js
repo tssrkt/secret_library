@@ -674,6 +674,12 @@ await test('one full-width card per row, with download directly below equal-widt
     getComputedStyle(card.querySelector('.book-card-annotation')).fontSize,
     getComputedStyle(card.querySelector('.book-annotation-more')).fontSize,
   ], ['16px', '15px', '14px', '14px', '14px'], 'card typography sizes');
+  const annotationTypography = getComputedStyle(card.querySelector('.book-card-annotation'));
+  equal(
+    [annotationTypography.fontSize, annotationTypography.lineHeight],
+    ['14px', '20.3px'],
+    'annotation has readable computed typography',
+  );
   grid.remove();
 });
 

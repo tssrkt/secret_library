@@ -225,7 +225,7 @@ dd { margin: 0; font-weight: 750; font-variant-numeric: tabular-nums; }
   flex: 1;
   overflow: hidden;
   font-size: 14px;
-  line-height: 1.4;
+  line-height: 1.45;
   white-space: pre-line;
 }
 .book-card-annotation.truncated {
