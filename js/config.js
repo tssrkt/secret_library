@@ -4,6 +4,7 @@ export const ROOT_FOLDER_ID = '1Zx4Og7OR0_ERmYFzrWVDlyWBQ2cscN4f';
 export const ROOT_FOLDER_RESOURCE_KEY = '';
 
 export const INDEX_FILE_NAME = 'secret-library-index.json';
+export const BUILDING_INDEX_FILE_NAME = 'secret-library-index-building.json';
 export const INDEX_VERSION = 4;
 export const METADATA_VERSION = 2;
 export const COVER_CACHE_PREFIX = 'secret-library-cover-';

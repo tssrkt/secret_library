@@ -6,22 +6,32 @@ import { ROOT_FOLDER_ID } from './config.js';
 import { downloadDriveFile, getCurrentDriveUser } from './drive.js';
 import { applyDriveAvatar } from './avatar.js';
 import { removeCovers, removeOrphanCovers, storeCover } from './cover-cache.js';
-import { IndexError, loadIndex, saveIndex } from './library-index.js';
+import {
+  deleteBuildingIndex, IndexError, loadBuildingIndex, loadIndex, readIndexFile,
+  saveBuildingIndex, saveIndex,
+} from './library-index.js';
 import { preserveBookMetadata, scanLibrary, staleCoverFileIds } from './library-tree.js';
-import { indexPendingBooks, resetProcessingBooks, retryMetadataErrors } from './metadata-indexer.js';
+import { indexPendingBooks, resetProcessingBooks } from './metadata-indexer.js';
+import {
+  canResumeBuildingIndex, prepareBuildingIndex, updateBuildProgress, validateCompletedIndex,
+} from './index-build.js';
 import * as ui from './ui.js';
 
 let indexFileId = null;
 let currentIndex = null;
+let buildingIndex = null;
+let buildingIndexFileId = null;
 let metadataController = null;
 let avatarRequestId = 0;
 const authAttempts = createAuthAttemptGuard();
 
-async function cacheBookCover(book, cover) {
-  const previousCover = book.coverFileId;
-  const fields = cover ? await storeCover(book, cover) : { coverFileId: null, coverMimeType: null };
-  if (previousCover && previousCover !== fields.coverFileId) await removeCovers([previousCover]);
-  return fields;
+async function cacheBuildingCover(book, cover) {
+  return cover ? storeCover(book, cover) : { coverFileId: null, coverMimeType: null };
+}
+
+function staleActiveCoverIds(activeIndex, nextIndex) {
+  const nextCoverIds = new Set(nextIndex.books.map((book) => book.coverFileId).filter(Boolean));
+  return activeIndex.books.map((book) => book.coverFileId).filter((id) => id && !nextCoverIds.has(id));
 }
 
 function readableError(error) {
@@ -79,47 +89,79 @@ async function rebuildIndex() {
 
 async function runMetadataIndexing({ retryErrors = false } = {}) {
   if (!currentIndex || metadataController) return;
-  if (retryErrors) retryMetadataErrors(currentIndex);
-  const pendingCount = currentIndex.books.filter((book) => book.metadataStatus === 'pending').length;
-  if (!pendingCount) return;
-  const cachedCount = currentIndex.books.length - pendingCount;
+  const activeIndex = currentIndex;
+  const resumable = canResumeBuildingIndex(buildingIndex, activeIndex, { retryErrors });
+  if (!resumable) buildingIndex = prepareBuildingIndex(activeIndex, { retryErrors });
+  if (!buildingIndex.buildState.total) return;
+  const cachedCount = activeIndex.books.length - buildingIndex.buildState.total;
+  const previousProgress = { ...buildingIndex.buildState.progress };
+  const overallProgress = (progress) => ({
+    ...progress,
+    total: buildingIndex.buildState.total,
+    processed: (previousProgress.processed || 0) + progress.processed,
+    succeeded: (previousProgress.succeeded || 0) + progress.succeeded,
+    failed: (previousProgress.failed || 0) + progress.failed,
+    skipped: cachedCount,
+  });
 
   metadataController = new AbortController();
   ui.clearError();
   ui.setMetadataRunning(true);
-  ui.setStatus(`Индексирование FB2… Обработано: 0 / ${pendingCount.toLocaleString('ru-RU')}. Из кеша: ${cachedCount.toLocaleString('ru-RU')}.`);
-  let stats = { total: pendingCount, processed: 0, succeeded: 0, skipped: cachedCount, failed: 0 };
+  ui.setStatus(`Индексирование FB2… Обработано: ${(previousProgress.processed || 0).toLocaleString('ru-RU')} / ${buildingIndex.buildState.total.toLocaleString('ru-RU')}. Из кеша: ${cachedCount.toLocaleString('ru-RU')}.`);
+  let stats = {
+    total: buildingIndex.buildState.total,
+    processed: previousProgress.processed || 0,
+    succeeded: previousProgress.succeeded || 0,
+    skipped: cachedCount,
+    failed: previousProgress.failed || 0,
+  };
   try {
-    stats = await indexPendingBooks(currentIndex, {
+    const runStats = await indexPendingBooks(buildingIndex, {
       signal: metadataController.signal,
       onProgress: (progress) => {
-        stats = progress;
-        ui.setStatus(`Индексирование FB2… Обработано: ${progress.processed.toLocaleString('ru-RU')} / ${progress.total.toLocaleString('ru-RU')}. Успешно: ${progress.succeeded.toLocaleString('ru-RU')}. Из кеша: ${progress.skipped.toLocaleString('ru-RU')}. Ошибок: ${progress.failed.toLocaleString('ru-RU')}.`);
+        stats = overallProgress(progress);
+        updateBuildProgress(buildingIndex, stats);
+        ui.setStatus(`Индексирование FB2… Обработано: ${stats.processed.toLocaleString('ru-RU')} / ${stats.total.toLocaleString('ru-RU')}. Успешно: ${stats.succeeded.toLocaleString('ru-RU')}. Из кеша: ${stats.skipped.toLocaleString('ru-RU')}. Ошибок: ${stats.failed.toLocaleString('ru-RU')}.`);
       },
-      onCover: cacheBookCover,
-      onCheckpoint: async (index) => {
-        indexFileId = await saveIndex(index, indexFileId);
+      onCover: cacheBuildingCover,
+      onCheckpoint: async (index, progress) => {
+        updateBuildProgress(index, overallProgress(progress));
+        buildingIndexFileId = await saveBuildingIndex(index, buildingIndexFileId);
       },
     });
-    currentIndex.updatedAt = new Date().toISOString();
-    indexFileId = await saveIndex(currentIndex, indexFileId);
+    stats = overallProgress(runStats);
+    updateBuildProgress(buildingIndex, stats);
+    buildingIndex.updatedAt = new Date().toISOString();
+    buildingIndexFileId = await saveBuildingIndex(buildingIndex, buildingIndexFileId);
     if (metadataController.signal.aborted) {
       ui.setStatus(`Индексирование остановлено. Сохранено результатов: ${stats.processed.toLocaleString('ru-RU')}.`);
     } else {
+      const completed = validateCompletedIndex(buildingIndex, activeIndex);
+      completed.updatedAt = new Date().toISOString();
+      indexFileId = await saveIndex(completed, indexFileId);
+      const verified = validateCompletedIndex(await readIndexFile(indexFileId, ROOT_FOLDER_ID), activeIndex);
+      currentIndex = verified;
+      renderLibrary(currentIndex);
+      const obsoleteCovers = staleActiveCoverIds(activeIndex, currentIndex);
+      const completedBuildingFileId = buildingIndexFileId;
+      buildingIndex = null;
+      buildingIndexFileId = null;
+      try { await deleteBuildingIndex(completedBuildingFileId); } catch { /* Active index is already safely committed. */ }
+      try { await removeCovers(obsoleteCovers); } catch { /* Orphan cleanup can be retried on the next load. */ }
       ui.setStatus(`Обработано ${stats.processed.toLocaleString('ru-RU')} книг. Успешно: ${stats.succeeded.toLocaleString('ru-RU')}. Из кеша: ${stats.skipped.toLocaleString('ru-RU')}. Ошибок: ${stats.failed.toLocaleString('ru-RU')}.`);
     }
   } catch (error) {
-    resetProcessingBooks(currentIndex);
+    resetProcessingBooks(buildingIndex);
     try {
-      currentIndex.updatedAt = new Date().toISOString();
-      indexFileId = await saveIndex(currentIndex, indexFileId);
+      buildingIndex.updatedAt = new Date().toISOString();
+      buildingIndexFileId = await saveBuildingIndex(buildingIndex, buildingIndexFileId);
     } catch { /* The original error is more useful, commonly an expired token. */ }
     ui.showError(readableError(error));
-    ui.setStatus('Индексирование FB2 прервано. Уже сохраненные checkpoints не потеряны.');
+    ui.setStatus('Индексирование FB2 прервано. Рабочая библиотека не изменена, checkpoints черновика сохранены.');
   } finally {
     metadataController = null;
     ui.setMetadataRunning(false);
-    renderLibrary(currentIndex);
+    ui.updateMetadataActions(currentIndex);
   }
 }
 
@@ -156,8 +198,20 @@ async function afterAuthorization({ restoredUser = null } = {}) {
         saved.index.updatedAt = new Date().toISOString();
         indexFileId = await saveIndex(saved.index, indexFileId);
       }
-      renderLibrary(saved.index);
-      void removeOrphanCovers(saved.index).catch(() => {});
+      try {
+        const draft = await loadBuildingIndex(ROOT_FOLDER_ID);
+        buildingIndexFileId = draft.fileId;
+        const retryErrors = Boolean(draft.index?.buildState?.retryErrors);
+        buildingIndex = canResumeBuildingIndex(draft.index, currentIndex, { retryErrors }) ? draft.index : null;
+      } catch {
+        buildingIndex = null;
+        buildingIndexFileId = null;
+      }
+      renderLibrary(currentIndex);
+      const coverIndex = buildingIndex
+        ? { books: [...currentIndex.books, ...buildingIndex.books] }
+        : currentIndex;
+      void removeOrphanCovers(coverIndex).catch(() => {});
       ui.setStatus('Показан сохраненный индекс. При необходимости обновите библиотеку.');
       return;
     }
@@ -199,6 +253,8 @@ function signOut() {
   clearAccessToken({ revoke: true });
   indexFileId = null;
   currentIndex = null;
+  buildingIndex = null;
+  buildingIndexFileId = null;
   ui.setAuthorized(false);
   ui.resetUi();
   ui.setStatus('Вы вышли. Для доступа к библиотеке войдите через Google.');

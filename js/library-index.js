@@ -1,5 +1,7 @@
-import { INDEX_FILE_NAME, INDEX_VERSION, METADATA_VERSION } from './config.js';
-import { createAppDataFile, downloadAppDataFile, listAppDataFiles, updateAppDataFile } from './drive.js';
+import { BUILDING_INDEX_FILE_NAME, INDEX_FILE_NAME, INDEX_VERSION } from './config.js';
+import {
+  createAppDataFile, deleteAppDataFile, downloadAppDataFile, listAppDataFiles, updateAppDataFile,
+} from './drive.js';
 
 export class IndexError extends Error {
   constructor(message, code = 'index_error', fileId = null) {
@@ -10,7 +12,7 @@ export class IndexError extends Error {
   }
 }
 
-function validateIndex(index, rootFolderId) {
+export function validateIndex(index, rootFolderId) {
   if (!index || ![1, 2, 3, INDEX_VERSION].includes(index.version) || index.rootFolderId !== rootFolderId
       || !Array.isArray(index.folders) || !Array.isArray(index.books)) {
     throw new IndexError('Сохраненный индекс поврежден или имеет несовместимый формат.', 'invalid_index');
@@ -37,12 +39,6 @@ export function migrateIndex(index) {
     }
     if (!book.extension) {
       book.extension = book.sourceType;
-      migrated = true;
-    }
-    if (['ready', 'error'].includes(book.metadataStatus) && book.metadataVersion !== METADATA_VERSION) {
-      book.metadataStatus = 'pending';
-      delete book.metadataError;
-      delete book.metadataErrorMessage;
       migrated = true;
     }
   }
@@ -81,4 +77,38 @@ export async function saveIndex(index, fileId = null) {
     if (error.code === 'unauthorized') wrapped.code = 'unauthorized';
     throw wrapped;
   }
+}
+
+export async function loadBuildingIndex(rootFolderId) {
+  const files = await listAppDataFiles(BUILDING_INDEX_FILE_NAME);
+  if (!files.length) return { index: null, fileId: null };
+  try {
+    const response = await downloadAppDataFile(files[0].id);
+    const result = migrateIndex(validateIndex(await response.json(), rootFolderId));
+    return { ...result, fileId: files[0].id };
+  } catch {
+    return { index: null, fileId: files[0].id };
+  }
+}
+
+export async function saveBuildingIndex(index, fileId = null, {
+  create = createAppDataFile,
+  update = updateAppDataFile,
+} = {}) {
+  const json = JSON.stringify(index);
+  const saved = fileId
+    ? await update(fileId, json)
+    : await create(BUILDING_INDEX_FILE_NAME, json);
+  return saved.id;
+}
+
+export async function deleteBuildingIndex(fileId) {
+  if (!fileId) return;
+  try { await deleteAppDataFile(fileId); }
+  catch (error) { if (error?.status !== 404) throw error; }
+}
+
+export async function readIndexFile(fileId, rootFolderId, download = downloadAppDataFile) {
+  const response = await download(fileId);
+  return validateIndex(await response.json(), rootFolderId);
 }

@@ -1,4 +1,4 @@
-import { FOLDER_MIME_TYPE, INDEX_VERSION, METADATA_VERSION, SCAN_CONCURRENCY } from './config.js';
+import { FOLDER_MIME_TYPE, INDEX_VERSION, SCAN_CONCURRENCY } from './config.js';
 import { getFolder, listFolderChildren } from './drive.js';
 
 export function classifyLibraryItem(file) {
@@ -79,7 +79,6 @@ export function preserveBookMetadata(currentIndex, previousIndex) {
       if (Object.hasOwn(previous, field)) book[field] = previous[field];
     }
     if (book.metadataStatus === 'processing') book.metadataStatus = 'pending';
-    if (book.metadataVersion !== METADATA_VERSION) book.metadataStatus = 'pending';
   }
   currentIndex.createdAt = previousIndex.createdAt || currentIndex.createdAt;
   return currentIndex;

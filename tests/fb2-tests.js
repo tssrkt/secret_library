@@ -2,8 +2,11 @@ import {
   decodeFb2, detectEncoding, extractBodyPreview, extractFb2Metadata, FB2_RANGES, Fb2Error,
   parseFb2Metadata, parseFullFb2, readFb2Description,
 } from '../js/fb2.js';
-import { METADATA_VERSION } from '../js/config.js';
-import { migrateIndex } from '../js/library-index.js';
+import { BUILDING_INDEX_FILE_NAME, INDEX_FILE_NAME, METADATA_VERSION } from '../js/config.js';
+import { migrateIndex, readIndexFile, saveBuildingIndex } from '../js/library-index.js';
+import {
+  canResumeBuildingIndex, prepareBuildingIndex, updateBuildProgress, validateCompletedIndex,
+} from '../js/index-build.js';
 import { classifyLibraryItem, preserveBookMetadata, staleCoverFileIds } from '../js/library-tree.js';
 import { removeCovers, removeOrphanCovers, storeCover } from '../js/cover-cache.js';
 import { buildLibraryLookups, folderHasLibraryChildren } from '../js/library-view-model.js';
@@ -388,13 +391,90 @@ await test('Stage 1 migration and processing reset', () => {
   assert(result.migrated, 'migration flag');
 });
 
-await test('metadata version upgrade schedules every old book for preview extraction', () => {
+await test('metadata version upgrade keeps old metadata active until a separate build starts', () => {
   const result = migrateIndex({ version: 4, books: [
-    { id: 'ready', metadataStatus: 'ready', metadataVersion: METADATA_VERSION - 1, annotation: null },
-    { id: 'error', metadataStatus: 'error', metadataVersion: METADATA_VERSION - 1, metadataError: 'invalid_xml' },
+    { id: 'ready', fileName: 'ready.fb2', sourceType: 'fb2', extension: 'fb2', metadataStatus: 'ready', metadataVersion: METADATA_VERSION - 1, title: 'Visible title', authors: ['Visible author'], annotation: 'Visible annotation' },
+    { id: 'error', fileName: 'error.fb2', sourceType: 'fb2', extension: 'fb2', metadataStatus: 'error', metadataVersion: METADATA_VERSION - 1, metadataError: 'invalid_xml' },
   ] });
-  equal(result.index.books.map((book) => book.metadataStatus), ['pending', 'pending'], 'all stale metadata is reprocessed');
-  assert(result.migrated, 'metadata migration is persisted');
+  equal(result.index.books.map((book) => book.metadataStatus), ['ready', 'error'], 'active statuses remain displayable');
+  equal(result.index.books[0].title, 'Visible title', 'active metadata remains intact');
+  assert(!result.migrated, 'metadata version alone does not rewrite the active index');
+  const building = prepareBuildingIndex(result.index, { now: () => 'start' });
+  equal(building.books.map((book) => book.metadataStatus), ['pending', 'pending'], 'stale records are pending only in building index');
+  equal(result.index.books.map((book) => book.metadataStatus), ['ready', 'error'], 'building preparation does not mutate active index');
+});
+
+await test('safe build validates completely before an atomic active-index switch', () => {
+  const active = {
+    version: 4, rootFolderId: 'root', updatedAt: 'old', folders: [{ id: 'root', parentId: null }],
+    books: [
+      { id: 'a', parentId: 'root', fileName: 'a.fb2', sourceType: 'fb2', metadataStatus: 'ready', metadataVersion: METADATA_VERSION - 1, title: 'Old A', authors: ['Old'], genres: ['old'], annotation: 'Old annotation' },
+      { id: 'b', parentId: 'root', fileName: 'b.fb2', sourceType: 'fb2', metadataStatus: 'ready', metadataVersion: METADATA_VERSION - 1, title: 'Old B', authors: ['Old'], genres: ['old'], annotation: null },
+    ],
+  };
+  const building = prepareBuildingIndex(active, { now: () => 'start' });
+  building.books[0] = { ...building.books[0], metadataStatus: 'ready', metadataVersion: METADATA_VERSION, title: 'New A', preview: null };
+  updateBuildProgress(building, { processed: 1, succeeded: 1, failed: 0, currentFileName: 'a.fb2' });
+  equal([active.books[0].title, active.books[1].title], ['Old A', 'Old B'], '10–50% progress cannot alter visible metadata');
+  assert(canResumeBuildingIndex(building, active), 'compatible checkpoint can resume after reload');
+  try {
+    validateCompletedIndex(building, active);
+    assert(false, 'partial index must be rejected');
+  } catch (error) { assert(error.message.includes('not complete'), 'partial validation error'); }
+  equal(active.books.map((book) => book.title), ['Old A', 'Old B'], 'failed validation leaves active index untouched');
+  building.books[1] = { ...building.books[1], metadataStatus: 'ready', metadataVersion: METADATA_VERSION, title: 'New B', preview: 'Opening text' };
+  const completed = validateCompletedIndex(building, active);
+  equal(completed.books.map((book) => book.title), ['New A', 'New B'], 'complete index is ready for one-step replacement');
+  assert(!Object.hasOwn(completed, 'buildState'), 'private build progress is not published');
+  equal(active.books.map((book) => book.title), ['Old A', 'Old B'], 'validation itself never mixes active and building records');
+});
+
+await test('preview remains optional in active index validation', () => {
+  const active = { version: 4, rootFolderId: 'root', updatedAt: 'old', folders: [], books: [
+    { id: 'a', parentId: 'root', fileName: 'a.fb2', sourceType: 'fb2', metadataStatus: 'ready', metadataVersion: METADATA_VERSION, title: null, authors: [], genres: [], annotation: null },
+  ] };
+  const completed = validateCompletedIndex(structuredClone(active), active);
+  assert(!Object.hasOwn(completed.books[0], 'preview'), 'missing optional preview is accepted');
+});
+
+await test('building checkpoints use a separate appData file and can be read back', async () => {
+  const building = {
+    version: 4, rootFolderId: 'root', folders: [], books: [],
+    buildState: { status: 'building', processed: 10, total: 100 },
+  };
+  let storedName = '';
+  let storedJson = '';
+  const fileId = await saveBuildingIndex(building, null, {
+    create: async (name, json) => { storedName = name; storedJson = json; return { id: 'draft-id' }; },
+  });
+  equal([fileId, storedName], ['draft-id', BUILDING_INDEX_FILE_NAME], 'checkpoint targets draft file');
+  assert(storedName !== INDEX_FILE_NAME, 'checkpoint never targets active index name');
+  const readBack = await readIndexFile('draft-id', 'root', async () => ({ json: async () => JSON.parse(storedJson) }));
+  equal(readBack.buildState.status, 'building', 'serialized checkpoint reads back intact');
+});
+
+await test('fatal interruption mutates only the building copy and leaves active metadata intact', async () => {
+  const active = {
+    version: 4, rootFolderId: 'root', updatedAt: 'active', folders: [], books: [
+      { id: 'a', parentId: 'root', fileName: 'a.fb2', sourceType: 'fb2', metadataStatus: 'ready', metadataVersion: METADATA_VERSION - 1, title: 'Old A', authors: ['Author'], genres: [], annotation: 'Old A annotation' },
+      { id: 'b', parentId: 'root', fileName: 'b.fb2', sourceType: 'fb2', metadataStatus: 'ready', metadataVersion: METADATA_VERSION - 1, title: 'Old B', authors: ['Author'], genres: [], annotation: 'Old B annotation' },
+    ],
+  };
+  const snapshot = JSON.stringify(active);
+  const building = prepareBuildingIndex(active);
+  try {
+    await indexPendingBooks(building, {
+      concurrency: 1,
+      extract: async (book) => {
+        if (book.id === 'b') throw Object.assign(new Error('session expired'), { status: 401 });
+        return { title: 'New A', authors: ['New'], genres: [], annotation: 'New annotation', preview: null };
+      },
+    });
+    assert(false, 'fatal interruption expected');
+  } catch (error) { equal(error.status, 401, 'fatal error propagated'); }
+  equal(JSON.stringify(active), snapshot, 'active index remains byte-for-byte unchanged');
+  equal(active.books.map((book) => book.title), ['Old A', 'Old B'], 'old catalog remains fully displayable');
+  assert(building.books[0].title === 'New A', 'partial result exists only in private building copy');
 });
 
 await test('folders are expandable from indexed children, independently of files', () => {

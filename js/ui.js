@@ -6,6 +6,7 @@ import { createAnnotationModalController } from './annotation-modal.js';
 import { loadCover } from './cover-cache.js';
 import { loadGenreDictionary } from './genre-labels.js';
 import { createPaginator, paginateItems } from './pagination.js';
+import { METADATA_VERSION } from './config.js';
 
 const genresRu = await loadGenreDictionary().catch(() => ({}));
 
@@ -132,7 +133,7 @@ export function setBusy(busy) {
 }
 
 export function updateMetadataActions(index) {
-  const pending = index.books.filter((book) => book.metadataStatus === 'pending').length;
+  const pending = index.books.filter((book) => book.metadataStatus === 'pending' || book.metadataVersion !== METADATA_VERSION).length;
   const failed = index.books.filter((book) => book.metadataStatus === 'error').length;
   elements.metadata.hidden = pending === 0;
   elements.metadata.textContent = pending ? `Проиндексировать книги (${pending.toLocaleString('ru-RU')})` : 'Проиндексировать книги';
