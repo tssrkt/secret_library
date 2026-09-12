@@ -5,7 +5,7 @@ export const ROOT_FOLDER_RESOURCE_KEY = '';
 
 export const INDEX_FILE_NAME = 'secret-library-index.json';
 export const INDEX_VERSION = 4;
-export const METADATA_VERSION = 1;
+export const METADATA_VERSION = 2;
 export const COVER_CACHE_PREFIX = 'secret-library-cover-';
 export const COVER_MAX_WIDTH = 240;
 export const COVER_MAX_HEIGHT = 320;

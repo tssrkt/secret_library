@@ -1,6 +1,8 @@
 import {
-  decodeFb2, detectEncoding, extractFb2Metadata, FB2_RANGES, Fb2Error, parseFb2Metadata, parseFullFb2, readFb2Description,
+  decodeFb2, detectEncoding, extractBodyPreview, extractFb2Metadata, FB2_RANGES, Fb2Error,
+  parseFb2Metadata, parseFullFb2, readFb2Description,
 } from '../js/fb2.js';
+import { METADATA_VERSION } from '../js/config.js';
 import { migrateIndex } from '../js/library-index.js';
 import { classifyLibraryItem, preserveBookMetadata, staleCoverFileIds } from '../js/library-tree.js';
 import { removeCovers, removeOrphanCovers, storeCover } from '../js/cover-cache.js';
@@ -212,7 +214,44 @@ await test('full namespaced FB2 parses genres, language and embedded cover', () 
   equal([metadata.cover.mimeType, [...metadata.cover.bytes]], ['image/png', [1, 2, 3]], 'embedded cover');
 });
 
-await test('standalone FB2 downloads the full source only when cover binary is referenced', async () => {
+await test('real annotation has priority over body preview', () => {
+  const source = `${xml('<book-title>Annotated</book-title><annotation><p>Publisher description.</p></annotation>')}
+    <body><section><p>Book body must not replace the annotation.</p></section></body></FictionBook>`;
+  const metadata = parseFullFb2(new TextEncoder().encode(source));
+  equal([metadata.annotation, metadata.preview], ['Publisher description.', null], 'annotation remains authoritative');
+});
+
+await test('missing or empty annotation gets meaningful body paragraphs as a separate preview', () => {
+  for (const annotation of ['', '<annotation> \n <empty-line/> </annotation>']) {
+    const source = `${xml(`<book-title>Preview</book-title>${annotation}`)}
+      <body><section>
+        <title><p>Chapter 1</p></title><image xlink:href="#illustration"/>
+        <p>It was a quiet morning.</p><p>The first substantial paragraph continues the story without technical markup.</p>
+      </section></body></FictionBook>`;
+    const metadata = parseFullFb2(new TextEncoder().encode(source));
+    equal(metadata.annotation, null, 'annotation stays null');
+    equal(metadata.preview, 'It was a quiet morning.\n\nThe first substantial paragraph continues the story without technical markup.', 'paragraph boundaries and readable text');
+    assert(!metadata.preview.includes('Chapter 1') && !metadata.preview.includes('illustration'), 'title and image are skipped');
+  }
+});
+
+await test('body preview accumulates short paragraphs, stays bounded and ignores technical-only bodies', () => {
+  const paragraphs = Array.from({ length: 100 }, (_, index) => `<p>Short paragraph ${index} with readable words.</p>`).join('');
+  const document = new DOMParser().parseFromString(`${xml('<book-title>Bounded</book-title>')}<body><section>${paragraphs}</section></body></FictionBook>`, 'application/xml');
+  const preview = extractBodyPreview(document);
+  assert(preview.length >= 800 && preview.length <= 1_200 && preview.includes('\n\n'), 'preview uses separated paragraphs in target range');
+  const empty = parseFullFb2(new TextEncoder().encode(`${xml('<book-title>Empty</book-title>')}<body><section><title><p>Only heading</p></title><image xlink:href="#x"/></section></body></FictionBook>`));
+  equal([empty.annotation, empty.preview], [null, null], 'technical-only body produces no preview');
+});
+
+await test('body preview ignores a notes body when the main body is named', () => {
+  const source = `${xml('<book-title>Named Body</book-title>')}
+    <body name="notes"><section><p>Technical footnote text must be ignored.</p></section></body>
+    <body name="main"><section><p>The actual book opens with this paragraph.</p></section></body></FictionBook>`;
+  equal(parseFullFb2(new TextEncoder().encode(source)).preview, 'The actual book opens with this paragraph.', 'main body selected');
+});
+
+await test('standalone FB2 downloads the full source only for a cover or missing annotation', async () => {
   const covered = `${xml('<book-title>Covered</book-title><coverpage><image xlink:href="#c"/></coverpage>')}</FictionBook>`
     .replace('</FictionBook>', '<binary id="c" content-type="image/png">AQID</binary></FictionBook>');
   let downloads = 0;
@@ -221,11 +260,18 @@ await test('standalone FB2 downloads the full source only when cover binary is r
     downloadFile: async () => { downloads += 1; return new Blob([covered]); },
   });
   equal([metadata.title, downloads], ['Covered', 1], 'cover requires one full source read');
+  const annotated = `${xml('<book-title>Plain</book-title><annotation><p>Ready.</p></annotation>')}<body><section><p>Body text.</p></section></body></FictionBook>`;
   await extractFb2Metadata({ id: 'plain' }, {
-    fetchRange: rangeFetcher(new TextEncoder().encode(xml('<book-title>Plain</book-title>'))).fetchRange,
-    downloadFile: async () => { downloads += 1; return new Blob(); },
+    fetchRange: rangeFetcher(new TextEncoder().encode(annotated)).fetchRange,
+    downloadFile: async () => { downloads += 1; return new Blob([annotated]); },
   });
-  equal(downloads, 1, 'coverless FB2 stays on partial ranges');
+  equal(downloads, 1, 'annotated coverless FB2 stays on partial ranges');
+  const missing = `${xml('<book-title>Missing</book-title>')}<body><section><p>Fallback text from the book body.</p></section></body></FictionBook>`;
+  const fallback = await extractFb2Metadata({ id: 'missing' }, {
+    fetchRange: rangeFetcher(new TextEncoder().encode(missing)).fetchRange,
+    downloadFile: async () => { downloads += 1; return new Blob([missing]); },
+  });
+  equal([downloads, fallback.annotation, fallback.preview], [2, null, 'Fallback text from the book body.'], 'missing annotation triggers one full read for preview');
 });
 
 await test('Windows-1251 declaration and decoding', () => {
@@ -321,6 +367,15 @@ await test('Stage 1 migration and processing reset', () => {
   assert(result.migrated, 'migration flag');
 });
 
+await test('metadata version upgrade schedules every old book for preview extraction', () => {
+  const result = migrateIndex({ version: 4, books: [
+    { id: 'ready', metadataStatus: 'ready', metadataVersion: METADATA_VERSION - 1, annotation: null },
+    { id: 'error', metadataStatus: 'error', metadataVersion: METADATA_VERSION - 1, metadataError: 'invalid_xml' },
+  ] });
+  equal(result.index.books.map((book) => book.metadataStatus), ['pending', 'pending'], 'all stale metadata is reprocessed');
+  assert(result.migrated, 'metadata migration is persisted');
+});
+
 await test('folders are expandable from indexed children, independently of files', () => {
   const index = {
     folders: [
@@ -369,6 +424,13 @@ await test('Stored FB2 in nested path with irrelevant entries', async () => {
   ], 'comment');
   const result = await extractZipFb2({ id: 'zip', size: bytes.length }, { fetchRange: zipFetcher(bytes) });
   equal([result.title, result.entryPath], ['Archive Book', 'folder/book.fb2'], 'stored metadata');
+});
+
+await test('ZIP FB2 without annotation stores a body preview', async () => {
+  const source = new TextEncoder().encode(`${xml('<book-title>Archive Preview</book-title>')}<body><section><title><p>Heading</p></title><p>Readable archive book opening paragraph.</p></section></body></FictionBook>`);
+  const bytes = await makeZip([{ name: 'preview.fb2', bytes: source }]);
+  const result = await extractZipFb2({ id: 'zip-preview', size: bytes.length }, { fetchRange: zipFetcher(bytes) });
+  equal([result.annotation, result.preview], [null, 'Readable archive book opening paragraph.'], 'ZIP preview remains separate from annotation');
 });
 
 await test('Deflate FB2 extraction', async () => {
@@ -450,7 +512,7 @@ await test('ZIP Range operation supports abort', async () => {
 
 await test('ZIP source metadata survives rescan and changed ZIP resets', () => {
   const previous = { createdAt: 'old', books: [{
-    id: 'zip', fileName: 'book.zip', sourceType: 'zip', modifiedTime: 'one', size: 100, metadataVersion: 1, metadataStatus: 'ready',
+    id: 'zip', fileName: 'book.zip', sourceType: 'zip', modifiedTime: 'one', size: 100, metadataVersion: METADATA_VERSION, metadataStatus: 'ready',
     entryPath: 'folder/book.fb2', title: 'Kept', authors: ['A'], coverFileId: 'cover-old',
   }] };
   const unchanged = { books: [{ id: 'zip', fileName: 'book.zip', sourceType: 'zip', modifiedTime: 'one', size: 100, metadataStatus: 'pending', entryPath: null }] };
@@ -596,6 +658,15 @@ await test('book card uses ready metadata and placeholder fields', () => {
   equal(pending, {
     author: 'Автор не указан', title: 'pending', genreLine: 'Жанр не указан', annotation: 'Аннотация отсутствует',
   }, 'pending card');
+});
+
+await test('book card displays preview only when the real annotation is absent', () => {
+  const fallback = bookCardView({ metadataStatus: 'ready', fileName: 'preview.fb2', annotation: null, preview: 'Opening paragraphs.' });
+  equal(fallback.annotation, 'Opening paragraphs.', 'preview is displayed without a label');
+  const annotated = bookCardView({ metadataStatus: 'ready', fileName: 'annotated.fb2', annotation: 'Real annotation.', preview: 'Opening paragraphs.' });
+  equal(annotated.annotation, 'Real annotation.', 'real annotation wins');
+  const empty = bookCardView({ metadataStatus: 'ready', fileName: 'empty.fb2', annotation: null, preview: null });
+  equal(empty.annotation, '', 'no technical placeholder is shown when both fields are empty');
 });
 
 await test('book card is not a tree branch and download receives original source', async () => {
@@ -1021,14 +1092,14 @@ await test('production controls keep stop in status panel and menu actions out o
 });
 
 await test('Drive refresh preserves unchanged metadata and resets changed books', () => {
-  const ready = { id: 'same', md5Checksum: 'one', modifiedTime: 'x', size: 10, metadataVersion: 1, metadataStatus: 'ready', title: 'Kept', authors: ['A'] };
+  const ready = { id: 'same', md5Checksum: 'one', modifiedTime: 'x', size: 10, metadataVersion: METADATA_VERSION, metadataStatus: 'ready', title: 'Kept', authors: ['A'], preview: 'Kept preview' };
   const previous = { createdAt: 'old', books: [ready, { ...ready, id: 'changed', title: 'Old' }] };
   const current = { createdAt: 'new', books: [
     { id: 'same', md5Checksum: 'one', modifiedTime: 'x', size: 10, metadataStatus: 'pending' },
     { id: 'changed', md5Checksum: 'two', modifiedTime: 'y', size: 10, metadataStatus: 'pending' },
   ] };
   preserveBookMetadata(current, previous);
-  equal([current.createdAt, current.books[0].title, current.books[0].metadataStatus], ['old', 'Kept', 'ready'], 'preserved');
+  equal([current.createdAt, current.books[0].title, current.books[0].preview, current.books[0].metadataStatus], ['old', 'Kept', 'Kept preview', 'ready'], 'preserved');
   equal([current.books[1].title, current.books[1].metadataStatus], [undefined, 'pending'], 'changed');
 });
 

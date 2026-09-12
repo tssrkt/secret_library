@@ -14,7 +14,7 @@ export function bookCardView(book, genresRu = {}) {
     genreLine: ready && typeof genre === 'string' && genre.trim()
       ? (book.genres || [genre]).map((code) => genresRu[code] || code).join(', ')
       : 'Жанр не указан',
-    annotation: ready ? textOrFallback(book.annotation, 'Аннотация отсутствует') : 'Аннотация отсутствует',
+    annotation: ready ? textOrFallback(book.annotation, textOrFallback(book.preview, '')) : 'Аннотация отсутствует',
   };
 }
 

@@ -59,7 +59,7 @@ export async function scanLibrary(rootFolderId, onProgress = () => {}) {
 }
 
 const METADATA_FIELDS = [
-  'metadataStatus', 'title', 'authors', 'series', 'seriesNumber', 'annotation', 'metadataError',
+  'metadataStatus', 'title', 'authors', 'series', 'seriesNumber', 'annotation', 'preview', 'metadataError',
   'metadataErrorMessage', 'entryPath', 'metadataWarning', 'genres', 'language', 'metadataVersion',
   'coverFileId', 'coverMimeType',
 ];

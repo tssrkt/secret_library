@@ -103,6 +103,64 @@ function annotationText(annotation) {
   return annotation.textContent.replace(/\s+/g, ' ').trim() || null;
 }
 
+const PREVIEW_TARGET_LENGTH = 800;
+const PREVIEW_MAX_LENGTH = 1_200;
+const PREVIEW_EXCLUDED_ANCESTORS = new Set([
+  'annotation', 'cite', 'epigraph', 'history', 'poem', 'subtitle', 'title',
+]);
+
+function normalizedBlockText(element) {
+  return element.textContent.replace(/\s+/g, ' ').trim();
+}
+
+function isMainTextParagraph(paragraph, body) {
+  let parent = paragraph.parentElement;
+  while (parent && parent !== body) {
+    if (PREVIEW_EXCLUDED_ANCESTORS.has(parent.localName)) return false;
+    parent = parent.parentElement;
+  }
+  const text = normalizedBlockText(paragraph);
+  return (text.match(/[\p{L}\p{N}]+/gu) || []).length >= 2;
+}
+
+function truncateAtWord(text, limit) {
+  if (text.length <= limit) return text;
+  const candidate = text.slice(0, limit + 1);
+  const boundary = Math.max(candidate.lastIndexOf(' '), candidate.lastIndexOf('\u00a0'));
+  return (boundary > 0 ? candidate.slice(0, boundary) : text.slice(0, limit)).trim();
+}
+
+export function extractBodyPreview(document) {
+  const bodies = [...document.getElementsByTagNameNS('*', 'body')];
+  const body = bodies.find((element) => !element.getAttribute('name')?.trim())
+    || bodies.find((element) => !/^(notes?|comments?|footnotes?)$/i.test(element.getAttribute('name')?.trim() || ''))
+    || bodies[0];
+  if (!body) return null;
+
+  const blocks = [];
+  let length = 0;
+  for (const paragraph of body.getElementsByTagNameNS('*', 'p')) {
+    if (!isMainTextParagraph(paragraph, body)) continue;
+    const text = normalizedBlockText(paragraph);
+    const separatorLength = blocks.length ? 2 : 0;
+    if (blocks.length && length >= PREVIEW_TARGET_LENGTH && length + separatorLength + text.length > PREVIEW_MAX_LENGTH) break;
+    if (!blocks.length && text.length > PREVIEW_MAX_LENGTH) {
+      blocks.push(truncateAtWord(text, PREVIEW_MAX_LENGTH));
+      break;
+    }
+    if (blocks.length && length + separatorLength + text.length > PREVIEW_MAX_LENGTH) {
+      const remainder = PREVIEW_MAX_LENGTH - length - separatorLength;
+      const fragment = truncateAtWord(text, remainder);
+      if (fragment) blocks.push(fragment);
+      break;
+    }
+    blocks.push(text);
+    length += separatorLength + text.length;
+    if (length >= PREVIEW_TARGET_LENGTH) break;
+  }
+  return blocks.join('\n\n') || null;
+}
+
 function titleInfoMetadata(titleInfo) {
   const authors = [...titleInfo.children]
     .filter((element) => element.localName === 'author')
@@ -128,6 +186,7 @@ function titleInfoMetadata(titleInfo) {
     series: sequence?.getAttribute('name')?.trim() || null,
     seriesNumber: Number.isFinite(parsedNumber) ? parsedNumber : null,
     annotation: annotationText(directChild(titleInfo, 'annotation')),
+    preview: null,
     language: childText(titleInfo, 'lang') || null,
     coverId: coverHref?.replace(/^#/, '') || null,
   };
@@ -165,6 +224,7 @@ export function parseFullFb2(bytes, Parser = globalThis.DOMParser) {
   const titleInfo = [...document.getElementsByTagNameNS('*', 'title-info')][0];
   if (!titleInfo) throw new Fb2Error('parse_failed', 'FB2 title-info is missing.');
   const metadata = titleInfoMetadata(titleInfo);
+  if (!metadata.annotation) metadata.preview = extractBodyPreview(document);
   if (!metadata.coverId) return metadata;
   const binary = [...document.getElementsByTagNameNS('*', 'binary')]
     .find((element) => element.getAttribute('id') === metadata.coverId);
@@ -186,7 +246,7 @@ export function parseFb2Bytes(bytes, Parser = globalThis.DOMParser) {
 export async function extractFb2Metadata(book, options = {}) {
   try {
     const metadata = parseFb2Metadata(await readFb2Description(book.id, options), options.Parser);
-    if (!metadata.coverId) return metadata;
+    if (metadata.annotation && !metadata.coverId) return metadata;
     const blob = await (options.downloadFile || downloadDriveFile)(book.id, options.signal);
     return parseFullFb2(new Uint8Array(await blob.arrayBuffer()), options.Parser);
   } catch (error) {
