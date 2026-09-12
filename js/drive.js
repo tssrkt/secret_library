@@ -77,6 +77,12 @@ export async function getFolder(folderId) {
   return folder;
 }
 
+export async function getCurrentDriveUser(request = driveFetch) {
+  const params = new URLSearchParams({ fields: 'user(displayName,photoLink)' });
+  const response = await request(`/about?${params}`);
+  return (await response.json()).user || {};
+}
+
 export async function listFolderChildren(folderId) {
   const files = [];
   let pageToken = '';

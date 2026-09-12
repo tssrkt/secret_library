@@ -16,7 +16,10 @@
       <div class="account-actions">
         <button id="sign-in-button" type="button">Войти через Google</button>
         <div id="user-controls" class="user-controls" hidden>
-          <button id="avatar-button" class="avatar-button" type="button" aria-label="Открыть меню пользователя" aria-haspopup="menu" aria-expanded="false">☺</button>
+          <button id="avatar-button" class="avatar-button" type="button" aria-label="Открыть меню пользователя" aria-haspopup="menu" aria-expanded="false">
+            <span id="avatar-placeholder" aria-hidden="true">☺</span>
+            <img id="avatar-image" alt="" hidden>
+          </button>
           <div id="avatar-menu" class="avatar-menu" role="menu" hidden>
             <button type="button" role="menuitem" disabled title="Будет доступно позже">Мой профиль <small>Будет позже</small></button>
             <hr>

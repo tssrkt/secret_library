@@ -7,6 +7,8 @@ import { buildLibraryLookups, folderHasLibraryChildren } from '../js/library-vie
 import { indexPendingBooks } from '../js/metadata-indexer.js';
 import { extractZipFb2, findEocd, parseCentralDirectory, ZipError } from '../js/zip.js';
 import { setupDropdown } from '../js/dropdown.js';
+import { applyDriveAvatar, createAvatarController } from '../js/avatar.js';
+import { getCurrentDriveUser } from '../js/drive.js';
 
 const output = document.querySelector('#results');
 let passed = 0;
@@ -389,6 +391,61 @@ await test('avatar dropdown supports toggle, outside click and Escape', () => {
   document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   assert(menu.hidden && toggle.getAttribute('aria-expanded') === 'false', 'Escape closes');
   wrapper.remove();
+});
+
+function avatarFixture() {
+  const button = document.createElement('button');
+  button.className = 'avatar-button';
+  const placeholder = document.createElement('span');
+  placeholder.textContent = '☺';
+  const image = document.createElement('img');
+  image.hidden = true;
+  button.append(placeholder, image);
+  document.body.append(button);
+  return { button, placeholder, image, controller: createAvatarController(button, image, placeholder) };
+}
+
+await test('Drive about user returns displayName and photoLink without extra fields', async () => {
+  let requestedPath = '';
+  const user = await getCurrentDriveUser(async (path) => {
+    requestedPath = path;
+    return { json: async () => ({ user: { displayName: 'Test User', photoLink: 'photo' } }) };
+  });
+  equal(user, { displayName: 'Test User', photoLink: 'photo' }, 'Drive user');
+  assert(requestedPath.startsWith('/about?') && decodeURIComponent(requestedPath).includes('fields=user(displayName,photoLink)'), 'minimal about fields');
+});
+
+await test('avatar shows photo, uses cover, and keeps dropdown button', async () => {
+  const fixture = avatarFixture();
+  const svg = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="2" height="2"><rect width="2" height="2" fill="red"/></svg>');
+  assert(await fixture.controller.set({ displayName: 'Test User', photoLink: svg }), 'image loaded');
+  assert(!fixture.image.hidden && fixture.placeholder.hidden, 'photo visible');
+  assert(fixture.button.getAttribute('aria-label') === 'Профиль: Test User', 'profile label');
+  assert(getComputedStyle(fixture.image).objectFit === 'cover', 'object-fit cover');
+  fixture.button.remove();
+});
+
+await test('missing photo and image load error keep placeholder', async () => {
+  const fixture = avatarFixture();
+  assert(!(await fixture.controller.set({ displayName: 'No Photo' })), 'missing photo fallback');
+  assert(!fixture.placeholder.hidden && fixture.image.hidden, 'placeholder without photo');
+  assert(!(await fixture.controller.set({ displayName: 'Broken', photoLink: 'data:image/png;base64,broken' })), 'broken image fallback');
+  assert(!fixture.placeholder.hidden && fixture.image.hidden, 'placeholder after image error');
+  fixture.button.remove();
+});
+
+await test('about error is noncritical and logout resets avatar', async () => {
+  const fixture = avatarFixture();
+  const applied = await applyDriveAvatar(
+    async () => { throw new Error('about failed'); },
+    fixture.controller.set,
+  );
+  assert(!applied && !fixture.placeholder.hidden, 'about error fallback');
+  const svg = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>');
+  await fixture.controller.set({ photoLink: svg });
+  fixture.controller.reset();
+  assert(!fixture.placeholder.hidden && fixture.image.hidden && !fixture.image.hasAttribute('src'), 'logout reset');
+  fixture.button.remove();
 });
 
 await test('production controls keep stop in status panel and menu actions out of header flow', async () => {

@@ -1,5 +1,7 @@
 import { clearAccessToken, initializeAuth, requestAccessToken } from './auth.js';
 import { ROOT_FOLDER_ID } from './config.js';
+import { getCurrentDriveUser } from './drive.js';
+import { applyDriveAvatar } from './avatar.js';
 import { IndexError, loadIndex, saveIndex } from './library-index.js';
 import { preserveBookMetadata, scanLibrary } from './library-tree.js';
 import { indexPendingBooks, resetProcessingBooks, retryMetadataErrors } from './metadata-indexer.js';
@@ -8,6 +10,7 @@ import * as ui from './ui.js';
 let indexFileId = null;
 let currentIndex = null;
 let metadataController = null;
+let avatarRequestId = 0;
 
 function readableError(error) {
   if (error?.status === 401 || error?.code === 'unauthorized') {
@@ -98,6 +101,11 @@ function stopMetadataIndexing() {
 
 async function afterAuthorization() {
   ui.setAuthorized(true);
+  const requestId = ++avatarRequestId;
+  void applyDriveAvatar(
+    async () => (requestId === avatarRequestId ? getCurrentDriveUser() : null),
+    (user) => (requestId === avatarRequestId ? ui.setUserAvatar(user) : false),
+  );
   ui.clearError();
   ui.setStatus('Проверяем сохраненный индекс…');
   try {
@@ -138,6 +146,7 @@ async function signIn() {
 }
 
 function signOut() {
+  avatarRequestId += 1;
   clearAccessToken({ revoke: true });
   indexFileId = null;
   currentIndex = null;

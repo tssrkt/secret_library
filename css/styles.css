@@ -34,7 +34,9 @@ h1 { margin: 0; font: 750 clamp(2rem, 5vw, 3rem)/1.05 system-ui, sans-serif; whi
   padding: 0;
   font-size: 1.35rem;
   line-height: 1;
+  overflow: hidden;
 }
+.avatar-button img { width: 100%; height: 100%; object-fit: cover; }
 .avatar-menu {
   position: absolute;
   z-index: 20;

@@ -1,5 +1,6 @@
 import { setupDropdown } from './dropdown.js';
 import { bookDisplayLabel, buildLibraryLookups, folderHasLibraryChildren } from './library-view-model.js';
+import { createAvatarController } from './avatar.js';
 
 const elements = {
   signIn: document.querySelector('#sign-in-button'),
@@ -10,6 +11,8 @@ const elements = {
   signOut: document.querySelector('#sign-out-button'),
   userControls: document.querySelector('#user-controls'),
   avatar: document.querySelector('#avatar-button'),
+  avatarImage: document.querySelector('#avatar-image'),
+  avatarPlaceholder: document.querySelector('#avatar-placeholder'),
   avatarMenu: document.querySelector('#avatar-menu'),
   status: document.querySelector('#status-text'),
   stats: document.querySelector('#stats'),
@@ -30,6 +33,10 @@ const elements = {
 };
 
 const dropdown = setupDropdown(elements.avatar, elements.avatarMenu);
+const avatar = createAvatarController(elements.avatar, elements.avatarImage, elements.avatarPlaceholder);
+
+export function setUserAvatar(user) { return avatar.set(user); }
+export function resetUserAvatar() { avatar.reset(); }
 
 export function bindActions(actions) {
   elements.signIn.addEventListener('click', actions.signIn);
@@ -48,6 +55,7 @@ export function setAuthorized(authorized) {
   elements.signOut.hidden = !authorized;
   if (!authorized) {
     dropdown.close();
+    resetUserAvatar();
     elements.metadata.hidden = true;
     elements.retryMetadata.hidden = true;
     elements.stop.hidden = true;
