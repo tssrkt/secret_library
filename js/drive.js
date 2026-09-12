@@ -1,0 +1,139 @@
+import { FOLDER_MIME_TYPE, ROOT_FOLDER_ID, ROOT_FOLDER_RESOURCE_KEY } from './config.js';
+import { getAccessToken } from './auth.js';
+
+const API_ROOT = 'https://www.googleapis.com/drive/v3';
+const UPLOAD_ROOT = 'https://www.googleapis.com/upload/drive/v3';
+const RETRYABLE_STATUSES = new Set([429, 500, 502, 503, 504]);
+const MAX_RETRIES = 3;
+
+export class DriveError extends Error {
+  constructor(message, { status = 0, code = 'drive_error', retryable = false } = {}) {
+    super(message);
+    this.name = 'DriveError';
+    this.status = status;
+    this.code = code;
+    this.retryable = retryable;
+  }
+}
+
+const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+
+function resourceKeyHeaders() {
+  return ROOT_FOLDER_RESOURCE_KEY
+    ? { 'X-Goog-Drive-Resource-Keys': `${ROOT_FOLDER_ID}/${ROOT_FOLDER_RESOURCE_KEY}` }
+    : {};
+}
+
+async function driveFetch(path, options = {}, retry = 0, apiRoot = API_ROOT) {
+  const token = getAccessToken();
+  if (!token) throw new DriveError('Сеанс Google истек. Войдите снова.', { status: 401, code: 'unauthorized' });
+
+  let response;
+  try {
+    response = await fetch(`${apiRoot}${path}`, {
+      ...options,
+      headers: { Authorization: `Bearer ${token}`, ...resourceKeyHeaders(), ...options.headers },
+    });
+  } catch {
+    if (retry < MAX_RETRIES) {
+      await delay(500 * (2 ** retry) + Math.random() * 250);
+      return driveFetch(path, options, retry + 1, apiRoot);
+    }
+    throw new DriveError('Не удалось связаться с Google Drive. Проверьте подключение к интернету.', { retryable: true });
+  }
+
+  if (response.ok) return response;
+  let errorBody = null;
+  try { errorBody = await response.clone().json(); } catch { /* response has no JSON body */ }
+  const reason = errorBody?.error?.errors?.[0]?.reason || '';
+  const retryable = RETRYABLE_STATUSES.has(response.status)
+    || (response.status === 403 && ['rateLimitExceeded', 'userRateLimitExceeded'].includes(reason));
+  if (retryable && retry < MAX_RETRIES) {
+    const retryAfter = Number(response.headers.get('Retry-After')) * 1000;
+    await delay(retryAfter || (700 * (2 ** retry) + Math.random() * 300));
+    return driveFetch(path, options, retry + 1, apiRoot);
+  }
+
+  const apiMessage = errorBody?.error?.message || '';
+  const messages = {
+    401: 'Сеанс Google истек. Войдите снова.',
+    403: retryable ? 'Google Drive временно ограничил число запросов. Повторите позже.' : 'Нет доступа к запрошенным данным Google Drive.',
+    404: 'Корневая папка Google Drive не существует или недоступна.',
+    429: 'Google Drive временно ограничил число запросов. Повторите позже.',
+  };
+  throw new DriveError(messages[response.status] || apiMessage || 'Google Drive вернул ошибку.', {
+    status: response.status,
+    code: response.status === 401 ? 'unauthorized' : 'drive_error',
+    retryable,
+  });
+}
+
+export async function getFolder(folderId) {
+  const params = new URLSearchParams({ fields: 'id,name,mimeType,parents', supportsAllDrives: 'true' });
+  const response = await driveFetch(`/files/${encodeURIComponent(folderId)}?${params}`);
+  const folder = await response.json();
+  if (folder.mimeType !== FOLDER_MIME_TYPE) throw new DriveError('Настроенный rootFolderId не является папкой Google Drive.', { code: 'not_folder' });
+  return folder;
+}
+
+export async function listFolderChildren(folderId) {
+  const files = [];
+  let pageToken = '';
+  do {
+    const params = new URLSearchParams({
+      q: `'${folderId.replaceAll("'", "\\'")}' in parents and trashed = false`,
+      fields: 'nextPageToken,files(id,name,mimeType,parents,size,modifiedTime,md5Checksum,resourceKey)',
+      pageSize: '1000',
+      spaces: 'drive',
+      supportsAllDrives: 'true',
+      includeItemsFromAllDrives: 'true',
+    });
+    if (pageToken) params.set('pageToken', pageToken);
+    const response = await driveFetch(`/files?${params}`);
+    const page = await response.json();
+    files.push(...(page.files || []));
+    pageToken = page.nextPageToken || '';
+  } while (pageToken);
+  return files;
+}
+
+export async function listAppDataFiles(name) {
+  const safeName = name.replaceAll('\\', '\\\\').replaceAll("'", "\\'");
+  const params = new URLSearchParams({
+    spaces: 'appDataFolder',
+    q: `name = '${safeName}' and trashed = false`,
+    fields: 'files(id,name,modifiedTime)',
+    pageSize: '100',
+    orderBy: 'modifiedTime desc',
+  });
+  const response = await driveFetch(`/files?${params}`);
+  return (await response.json()).files || [];
+}
+
+export async function downloadAppDataFile(fileId) {
+  const params = new URLSearchParams({ alt: 'media' });
+  return driveFetch(`/files/${encodeURIComponent(fileId)}?${params}`);
+}
+
+export async function createAppDataFile(name, jsonText) {
+  const boundary = `secret_library_${crypto.randomUUID()}`;
+  const metadata = JSON.stringify({ name, parents: ['appDataFolder'], mimeType: 'application/json' });
+  const body = `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${metadata}\r\n--${boundary}\r\nContent-Type: application/json\r\n\r\n${jsonText}\r\n--${boundary}--`;
+  const params = new URLSearchParams({ uploadType: 'multipart', fields: 'id' });
+  const response = await driveFetch(`/files?${params}`, {
+    method: 'POST',
+    headers: { 'Content-Type': `multipart/related; boundary=${boundary}` },
+    body,
+  }, 0, UPLOAD_ROOT);
+  return response.json();
+}
+
+export async function updateAppDataFile(fileId, jsonText) {
+  const params = new URLSearchParams({ uploadType: 'media', fields: 'id' });
+  const response = await driveFetch(`/files/${encodeURIComponent(fileId)}?${params}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: jsonText,
+  }, 0, UPLOAD_ROOT);
+  return response.json();
+}

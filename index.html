@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Тайная библиотека</title>
+  <link rel="stylesheet" href="./css/styles.css">
+</head>
+<body>
+  <main class="app-shell">
+    <header>
+      <div>
+        <h1>Тайная библиотека</h1>
+        <p class="subtitle">Личная библиотека из Google Drive</p>
+      </div>
+      <div class="actions">
+        <button id="sign-in-button" type="button">Войти через Google</button>
+        <button id="refresh-button" type="button" hidden>Обновить библиотеку</button>
+        <button id="sign-out-button" class="secondary" type="button" hidden>Выйти</button>
+      </div>
+    </header>
+
+    <section id="status-panel" class="status-panel" aria-live="polite">
+      <p id="status-text">Для доступа к библиотеке войдите через Google.</p>
+      <dl id="stats" hidden>
+        <div><dt>Папок</dt><dd id="folder-count">0</dd></div>
+        <div><dt>Книг</dt><dd id="book-count">0</dd></div>
+      </dl>
+    </section>
+
+    <section id="error-panel" class="error-panel" role="alert" hidden>
+      <p id="error-text"></p>
+      <button id="retry-button" type="button" hidden>Построить индекс заново</button>
+    </section>
+
+    <section id="library-panel" aria-label="Структура библиотеки" hidden>
+      <div id="library-tree" class="library-tree"></div>
+    </section>
+  </main>
+  <script type="module" src="./js/app.js"></script>
+</body>
+</html>
