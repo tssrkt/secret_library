@@ -12,7 +12,7 @@ import { accountIdentity, applyDriveAvatar, createAvatarController } from '../js
 import { downloadDriveFile, getCurrentDriveUser } from '../js/drive.js';
 import { bookCardView, createBookCard } from '../js/book-card.js';
 import { createAnnotationModalController, formatModalAuthors, modalCoverWidth } from '../js/annotation-modal.js';
-import { genreLabels } from '../js/genre-labels.js';
+import { genreLabels, loadGenreDictionary } from '../js/genre-labels.js';
 import {
   AUTH_SESSION_KEY, PREVIOUS_SIGN_IN_KEY, clearAccessToken, clearPersistedAuth,
   createAuthAttemptGuard, getAccessToken, persistAuthSession, recoverAuthSession, restoreAuthSession,
@@ -781,6 +781,43 @@ await test('genre dictionary translates only for display and preserves unknown c
   const labels = await genreLabels(source, async () => ({ biography: 'Биографии и мемуары' }));
   equal(labels, 'Биографии и мемуары, unknown_code', 'display labels');
   equal(source, ['biography', 'unknown_code'], 'source genre codes remain unchanged');
+});
+
+await test('current 393-entry genre dictionary covers real canonical and extended codes', async () => {
+  const dictionary = await loadGenreDictionary();
+  assert(Object.keys(dictionary).length === 393, 'current dictionary entry count');
+  const source = [
+    'prose_contemporary',
+    'sci_psychology',
+    'sci_popular',
+    'popular_business',
+    'biznes-literatura',
+    'young adult',
+    'буддизм',
+    'urban-fantasy',
+    'sci-fi',
+    'unknown_custom_code',
+  ];
+  const original = [...source];
+  const expected = [
+    'Современная проза',
+    'Психология',
+    'Научпоп',
+    'О бизнесе популярно',
+    'Бизнес-литература',
+    'Молодёжная литература',
+    'Буддизм',
+    'Городское фэнтези',
+    'Научная фантастика',
+    'unknown_custom_code',
+  ].join(', ');
+  equal(await genreLabels(source), expected, 'real codes translate independently in source order with fallback');
+  equal(source, original, 'display translation does not mutate indexed genre codes');
+  equal(
+    bookCardView({ metadataStatus: 'ready', fileName: 'book.fb2', genres: source }, dictionary).genreLine,
+    `Жанр: ${expected}`,
+    'book card uses the current dictionary and fallback',
+  );
 });
 
 await test('full annotation modal renders genres and closes normally', async () => {
