@@ -164,12 +164,35 @@ dd { margin: 0; font-weight: 750; font-variant-numeric: tabular-nums; }
   min-width: 2rem;
   min-height: 2rem;
   padding: .3rem .5rem;
+  font-size: .8rem;
+  line-height: 1;
   color: #4f3825;
   background: transparent;
 }
-.book-pagination-button:not(:disabled):not([aria-current="page"]):hover { background: #f4eee5; }
-.book-pagination-button[aria-current="page"] { color: #fff; background: #684629; cursor: default; }
-.book-pagination-button:disabled { cursor: default; opacity: .4; }
+.book-pagination-button:not(:disabled):hover,
+.book-pagination-button:not(:disabled):focus-visible,
+.book-pagination-button:not(:disabled):active {
+  color: var(--download-text);
+  background: var(--download-hover);
+}
+.book-pagination-button:not(:disabled):focus-visible {
+  outline: 3px solid var(--download-accent);
+  outline-offset: 2px;
+}
+.book-pagination-button[aria-current="page"] {
+  color: var(--download-text);
+  background: var(--download-accent);
+  cursor: default;
+}
+.book-pagination-button[aria-current="page"]:hover,
+.book-pagination-button[aria-current="page"]:focus-visible,
+.book-pagination-button[aria-current="page"]:active { background: var(--download-hover); }
+.book-pagination-button:disabled {
+  color: #746b60;
+  background: transparent;
+  cursor: default;
+  opacity: .6;
+}
 .book-pagination-ellipsis { min-width: 1.5rem; color: #746b60; text-align: center; }
 .book-card {
   --book-cover-height: 180px;

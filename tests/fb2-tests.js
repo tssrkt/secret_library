@@ -131,6 +131,34 @@ await test('compact paginator handles small and large page counts', () => {
   assert(createPaginator({ totalPages: 1, currentPage: 1, onPageChange: () => {}, documentRef: document }) === null, 'single page has no paginator');
 });
 
+await test('paginator reuses the download button visual standard', async () => {
+  const fixture = document.createElement('div');
+  fixture.className = 'book-card';
+  fixture.innerHTML = '<button class="book-download-button">СКАЧАТЬ</button>';
+  const paginator = createPaginator({ totalPages: 3, currentPage: 2, onPageChange: () => {}, documentRef: document });
+  fixture.append(paginator);
+  document.body.append(fixture);
+
+  const downloadStyles = getComputedStyle(fixture.querySelector('.book-download-button'));
+  const currentStyles = getComputedStyle(paginator.querySelector('[aria-current="page"]'));
+  const inactiveStyles = getComputedStyle(paginator.querySelector('[aria-label="Страница 1"]'));
+  const disabledArrow = paginator.querySelector('[aria-label="Предыдущая страница"]');
+  disabledArrow.disabled = true;
+  const disabledStyles = getComputedStyle(disabledArrow);
+  assert(currentStyles.backgroundColor === downloadStyles.backgroundColor, 'current page uses the download accent');
+  assert(currentStyles.color === downloadStyles.color, 'current page uses the download text color');
+  assert(currentStyles.borderRadius === downloadStyles.borderRadius, 'pagination and download buttons share their shape');
+  assert(currentStyles.fontSize === downloadStyles.fontSize, 'pagination and download buttons share typography');
+  assert(inactiveStyles.backgroundColor === 'rgba(0, 0, 0, 0)', 'inactive page remains neutral');
+  assert(disabledStyles.cursor === 'default' && Number(disabledStyles.opacity) < 1, 'disabled arrow is visibly inactive');
+
+  const css = await (await fetch('../css/styles.css')).text();
+  assert(css.includes('background: var(--download-hover);'), 'pagination states reuse the download hover token');
+  assert(css.includes('outline: 3px solid var(--download-accent);'), 'pagination has a visible token-based keyboard focus');
+  assert(css.includes('.book-pagination-button:not(:disabled):active'), 'pagination has an active press state');
+  fixture.remove();
+});
+
 function encodeWindows1251(text) {
   return Uint8Array.from([...text].map((character) => {
     const code = character.charCodeAt(0);
