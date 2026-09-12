@@ -673,8 +673,7 @@ await test('one full-width card per row, with download directly below equal-widt
     getComputedStyle(card.querySelector('.book-card-author')).fontSize,
     getComputedStyle(card.querySelector('.book-card-genre')).fontSize,
     getComputedStyle(card.querySelector('.book-card-annotation')).fontSize,
-    getComputedStyle(card.querySelector('.book-annotation-more')).fontSize,
-  ], ['18px', '16px', '15px', '16px', '14px'], 'card typography sizes');
+  ], ['18px', '16px', '15px', '16px'], 'card typography sizes');
   const annotationTypography = getComputedStyle(card.querySelector('.book-card-annotation'));
   equal(
     [annotationTypography.fontSize, annotationTypography.lineHeight, annotationTypography.color],
@@ -683,53 +682,48 @@ await test('one full-width card per row, with download directly below equal-widt
   );
   grid.style.width = '320px';
   assert(card.getBoundingClientRect().width === 320, 'larger card remains within a narrow container');
-  assert(card.querySelector('.book-annotation-more').getBoundingClientRect().right <= card.getBoundingClientRect().right, 'read-more remains inside the card at narrow width');
+  assert(card.tabIndex === 0 && card.getAttribute('role') === 'button', 'card is keyboard focusable');
+  assert(getComputedStyle(card).cursor === 'pointer', 'clickable card uses pointer cursor');
   grid.remove();
 });
 
-await test('Read more stays bottom-right while only overflowing annotation is truncated', async () => {
-  let openedBook = null;
+await test('whole card opens annotation while download remains an independent action', async () => {
+  const opened = [];
+  let downloads = 0;
   let updateShort = null;
   let updateLong = null;
   const shortCard = createBookCard(
-    { metadataStatus: 'ready', fileName: 'short.fb2', annotation: 'Short' }, async () => {}, document,
-    { scheduleFrame: (callback) => { updateShort = callback; } },
+    { metadataStatus: 'ready', fileName: 'short.fb2', annotation: 'Short' },
+    async () => { downloads += 1; }, document,
+    { scheduleFrame: (callback) => { updateShort = callback; }, onAnnotation: (book, trigger) => opened.push({ book, trigger }) },
   );
   const longCard = createBookCard(
-    { metadataStatus: 'ready', fileName: 'long.fb2', title: 'Noah', authors: ['Julia'], annotation: 'Long '.repeat(100) }, async () => {}, document,
-    { scheduleFrame: (callback) => { updateLong = callback; }, onAnnotation: (book) => { openedBook = book; } },
+    { metadataStatus: 'ready', fileName: 'long.fb2', title: 'Noah', authors: ['Julia'], annotation: 'Long '.repeat(500) },
+    async () => { downloads += 1; }, document,
+    { scheduleFrame: (callback) => { updateLong = callback; }, onAnnotation: (book, trigger) => opened.push({ book, trigger }) },
   );
   document.body.append(shortCard, longCard);
   updateShort();
   updateLong();
-  assert(!shortCard.querySelector('.book-annotation-more').hidden, 'fitting annotation keeps the link at the bottom');
+  assert(!shortCard.querySelector('.book-annotation-more') && !longCard.querySelector('.book-annotation-more'), 'read-more control is completely removed');
   assert(!shortCard.querySelector('.book-card-annotation').classList.contains('truncated'), 'fitting annotation is not truncated');
-  const shortMoreRect = shortCard.querySelector('.book-annotation-more').getBoundingClientRect();
-  const shortDownloadRect = shortCard.querySelector('.book-download-button').getBoundingClientRect();
-  assert(Math.abs((shortMoreRect.top + shortMoreRect.height / 2) - (shortDownloadRect.top + shortDownloadRect.height / 2)) < 1, 'short annotation does not move read-more away from download row');
-  assert(!longCard.querySelector('.book-annotation-more').hidden, 'overflowing annotation has link');
-  assert(longCard.querySelector('.book-annotation-more').textContent === 'ЧИТАТЬ ДАЛЕЕ', 'link uses uppercase label');
   const annotation = longCard.querySelector('.book-card-annotation');
-  const more = longCard.querySelector('.book-annotation-more');
-  const annotationRect = annotation.getBoundingClientRect();
-  const moreRect = more.getBoundingClientRect();
-  const bodyRect = longCard.querySelector('.book-card-body').getBoundingClientRect();
-  const downloadRect = longCard.querySelector('.book-download-button').getBoundingClientRect();
-  const annotationStyles = getComputedStyle(annotation);
-  const moreStyles = getComputedStyle(more);
-  const lineHeight = Number.parseFloat(annotationStyles.lineHeight);
-  assert(Math.abs((annotationRect.height / lineHeight) - Math.round(annotationRect.height / lineHeight)) < 0.02, 'annotation ends on a whole text line');
-  assert(Math.abs(moreRect.left - (bodyRect.left + Number.parseFloat(getComputedStyle(longCard.querySelector('.book-card-body')).paddingLeft))) < 1, 'read-more aligns with text column left edge');
-  assert(moreRect.top >= annotationRect.bottom, 'reserved row prevents overlap with annotation');
-  assert(Math.abs((moreRect.top + moreRect.height / 2) - (downloadRect.top + downloadRect.height / 2)) < 1, 'read-more and download have the same vertical center');
-  assert(moreStyles.position === 'absolute' && moreStyles.textAlign === 'left', 'read-more is anchored at bottom-left');
-  assert(moreStyles.textDecorationLine === 'none', 'read-more has no underline');
-  assert(moreRect.height === 24, 'read-more has a separate fixed-height row');
-  assert(annotation.classList.contains('truncated') && annotationStyles.webkitLineClamp !== 'none', 'overflow uses line clamp with ellipsis');
-  assert(annotationStyles.maskImage === 'none' && annotationStyles.backgroundImage === 'none', 'annotation has no masks, gradients or overlay lines');
-  assert(Number.parseInt(annotation.style.getPropertyValue('--annotation-lines'), 10) >= 2, 'taller card displays additional annotation lines');
-  longCard.querySelector('.book-annotation-more').click();
-  equal(openedBook, { annotation: 'Long '.repeat(100).trim(), title: 'Noah', author: 'Julia', authors: ['Julia'], genres: [], coverFileId: null }, 'link opens complete book annotation data');
+  assert(annotation.classList.contains('truncated'), 'overflowing annotation remains line-clamped');
+  assert(Number.parseInt(annotation.style.getPropertyValue('--annotation-lines'), 10) >= 3, 'removed control space provides additional annotation lines');
+  shortCard.querySelector('.book-cover-placeholder').click();
+  longCard.querySelector('.book-card-annotation').click();
+  assert(opened.length === 2 && opened.every(({ trigger }, index) => trigger === [shortCard, longCard][index]), 'cover and text open the existing annotation modal once');
+  const enterEvent = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true });
+  const spaceEvent = new KeyboardEvent('keydown', { key: ' ', bubbles: true, cancelable: true });
+  assert(!longCard.dispatchEvent(enterEvent) && !longCard.dispatchEvent(spaceEvent), 'Enter and Space prevent default card behavior');
+  assert(opened.length === 4, 'Enter and Space each open annotation exactly once');
+  const download = longCard.querySelector('.book-download-button');
+  download.click();
+  await Promise.resolve();
+  assert(downloads === 1 && opened.length === 4, 'download click downloads without opening annotation');
+  download.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+  assert(opened.length === 4, 'keyboard event from download does not activate card');
+  equal(opened[1].book, { annotation: 'Long '.repeat(500).trim(), title: 'Noah', author: 'Julia', authors: ['Julia'], genres: [], coverFileId: null }, 'card passes existing modal data unchanged');
   shortCard.remove();
   longCard.remove();
 });
@@ -748,12 +742,11 @@ await test('annotation overflow is recalculated after card width changes', async
   );
   document.body.append(card);
   scheduledUpdate();
-  assert(!card.querySelector('.book-annotation-more').hidden, 'link remains anchored when annotation initially fits');
   assert(!card.querySelector('.book-card-annotation').classList.contains('truncated'), 'fitting annotation is initially unclamped');
   overflowing = true;
   resizeCallback();
   scheduledUpdate();
-  assert(!card.querySelector('.book-annotation-more').hidden, 'link appears after narrower layout overflows');
+  assert(card.querySelector('.book-card-annotation').classList.contains('truncated'), 'annotation becomes clamped after narrower layout overflows');
   assert(card.classList.contains('book-card') && card.getBoundingClientRect().height > 0, 'annotation does not resize card');
   card.remove();
 });
@@ -890,6 +883,8 @@ await test('annotation modal keeps close action fixed and uses readable computed
   document.body.append(fixture);
   const modal = fixture.querySelector('.annotation-modal');
   const close = fixture.querySelector('#annotation-modal-close');
+  const header = fixture.querySelector('.modal-header');
+  const cover = fixture.querySelector('.annotation-modal-cover');
   const title = fixture.querySelector('.annotation-modal-book-title');
   const authors = fixture.querySelector('.annotation-modal-authors');
   const genres = fixture.querySelector('.annotation-modal-genres');
@@ -897,7 +892,7 @@ await test('annotation modal keeps close action fixed and uses readable computed
   const modalRect = modal.getBoundingClientRect();
   const closeRect = close.getBoundingClientRect();
   assert(getComputedStyle(modal).position === 'relative' && getComputedStyle(close).position === 'absolute', 'close button is positioned against modal');
-  assert(Math.abs(closeRect.top - modalRect.top - 12) < 1 && Math.abs(modalRect.right - closeRect.right - 14) < 1, 'close button remains at modal top-right');
+  assert(Math.abs(closeRect.top - modalRect.top - 14) < 1 && Math.abs(modalRect.right - closeRect.right - 16) < 1, 'close button remains at modal top-right');
   assert(Number.parseFloat(getComputedStyle(fixture.querySelector('.modal-header h2')).paddingRight) >= 40, 'heading reserves room for close button');
   equal([
     getComputedStyle(title).fontSize,
@@ -906,6 +901,22 @@ await test('annotation modal keeps close action fixed and uses readable computed
     getComputedStyle(annotation).fontSize,
     getComputedStyle(annotation).lineHeight,
   ], ['18px', '16px', '15px', '17px', '27.2px'], 'modal computed typography');
+  const contentStyles = getComputedStyle(fixture.querySelector('.annotation-modal-content'));
+  const annotationStyles = getComputedStyle(annotation);
+  assert(contentStyles.overflowY === 'hidden', 'right column does not scroll');
+  assert(annotationStyles.overflowY === 'auto', 'only annotation text can scroll');
+  assert(annotationStyles.borderTopWidth === '1px' && annotationStyles.borderTopStyle === 'solid', 'annotation has a subtle top separator');
+  assert(annotation.scrollHeight <= annotation.clientHeight, 'short annotation has no overflow scrollbar');
+  annotation.textContent = 'Long annotation paragraph. '.repeat(500);
+  assert(annotation.scrollHeight > annotation.clientHeight, 'long annotation overflows only its own area');
+  const fixedPositions = [header.getBoundingClientRect().top, close.getBoundingClientRect().top, cover.getBoundingClientRect().top];
+  annotation.scrollTop = 200;
+  assert(annotation.scrollTop > 0, 'long annotation is independently scrollable');
+  equal(
+    [header.getBoundingClientRect().top, close.getBoundingClientRect().top, cover.getBoundingClientRect().top],
+    fixedPositions,
+    'header, close action and cover remain fixed while annotation scrolls',
+  );
   fixture.remove();
 });
 
@@ -984,7 +995,7 @@ await test('production controls keep stop in status panel and menu actions out o
   assert(!page.querySelector('.app-header #stop-button'), 'stop is absent from header');
   assert(page.querySelector('h1').textContent === 'Тайная Библиотека', 'header title');
   const fixture = document.createElement('div');
-  fixture.innerHTML = '<div class="user-controls" style="width:43px"><button class="avatar-button"></button><div class="avatar-menu"><button>Item</button></div></div><section id="library-panel"><article class="book-card"><button class="book-download-button">СКАЧАТЬ</button><button class="book-annotation-more">Читать далее</button></article></section><button class="theme-button">Action</button><button hidden>Hidden</button>';
+  fixture.innerHTML = '<div class="user-controls" style="width:43px"><button class="avatar-button"></button><div class="avatar-menu"><button>Item</button></div></div><section id="library-panel"><article class="book-card"><button class="book-download-button">СКАЧАТЬ</button></article></section><button class="theme-button">Action</button><button hidden>Hidden</button>';
   document.body.append(fixture);
   const menuStyles = getComputedStyle(fixture.querySelector('.avatar-menu'));
   assert(menuStyles.position === 'absolute', 'dropdown is outside layout flow');
@@ -1004,13 +1015,7 @@ await test('production controls keep stop in status panel and menu actions out o
   assert(rootStyles.getPropertyValue('--download-accent').trim() === '#273142', 'current download accent is preserved');
   assert(rootStyles.getPropertyValue('--download-hover').trim() === '#11141a', 'current download hover is preserved');
   const downloadColor = getComputedStyle(fixture.querySelector('.book-download-button')).backgroundColor;
-  const readMoreColor = getComputedStyle(fixture.querySelector('.book-annotation-more')).color;
-  assert(downloadColor === 'rgb(39, 49, 66)' && readMoreColor === downloadColor, 'read-more text exactly matches download accent');
-  const readMoreHoverRule = [...document.styleSheets]
-    .flatMap((sheet) => [...sheet.cssRules])
-    .find((rule) => rule.selectorText === '.book-annotation-more:not(:disabled):hover');
-  assert(readMoreHoverRule?.style.color === 'rgb(0, 0, 0)', 'read-more hover is explicitly black');
-  assert(readMoreHoverRule?.style.textDecoration === 'none', 'read-more hover does not restore underline');
+  assert(downloadColor === 'rgb(39, 49, 66)', 'download keeps its dedicated accent');
   assert(getComputedStyle(fixture.lastElementChild).display === 'none', 'hidden actions take no space');
   fixture.remove();
 });

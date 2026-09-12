@@ -22,6 +22,30 @@ export function createBookCard(book, onDownload, documentRef = document, options
   const content = bookCardView(book, options.genresRu);
   const article = documentRef.createElement('article');
   article.className = 'book-card';
+  article.tabIndex = 0;
+  article.setAttribute('role', 'button');
+  article.setAttribute('aria-label', `Открыть сведения: ${content.title}`);
+
+  const annotationDetails = {
+    annotation: content.annotation,
+    title: content.title,
+    author: content.author,
+    authors: Array.isArray(book.authors) ? [...book.authors] : [],
+    genres: Array.isArray(book.genres) ? book.genres : [],
+    coverFileId: book.coverFileId || null,
+  };
+  const openAnnotation = () => options.onAnnotation?.(annotationDetails, article);
+  article.addEventListener('click', (event) => {
+    if (event.target.closest('button, a, input, select, textarea')) return;
+    const selection = documentRef.defaultView?.getSelection?.();
+    if (selection && !selection.isCollapsed && article.contains(selection.anchorNode)) return;
+    openAnnotation();
+  });
+  article.addEventListener('keydown', (event) => {
+    if (event.target !== article || !['Enter', ' '].includes(event.key)) return;
+    event.preventDefault();
+    openAnnotation();
+  });
 
   const media = documentRef.createElement('div');
   media.className = 'book-card-media';
@@ -50,24 +74,13 @@ export function createBookCard(book, onDownload, documentRef = document, options
   const annotation = documentRef.createElement('p');
   annotation.className = 'book-card-annotation';
   annotation.textContent = content.annotation;
-  const more = documentRef.createElement('button');
-  more.type = 'button';
-  more.className = 'book-annotation-more';
-  more.textContent = 'ЧИТАТЬ ДАЛЕЕ';
-  more.addEventListener('click', () => options.onAnnotation?.({
-    annotation: content.annotation,
-    title: content.title,
-    author: content.author,
-    authors: Array.isArray(book.authors) ? [...book.authors] : [],
-    genres: Array.isArray(book.genres) ? book.genres : [],
-    coverFileId: book.coverFileId || null,
-  }, more));
-  annotationBlock.append(annotation, more);
+  annotationBlock.append(annotation);
   const download = documentRef.createElement('button');
   download.type = 'button';
   download.className = 'book-download-button';
   download.textContent = 'СКАЧАТЬ';
-  download.addEventListener('click', async () => {
+  download.addEventListener('click', async (event) => {
+    event.stopPropagation();
     download.disabled = true;
     try { await onDownload(book); }
     finally { download.disabled = false; }
@@ -97,18 +110,17 @@ export function createBookCard(book, onDownload, documentRef = document, options
     }).catch(() => {});
   }
 
-  const updateMore = () => {
-    more.hidden = false;
+  const updateAnnotationClamp = () => {
     annotation.classList.remove('truncated');
     annotation.style.removeProperty('--annotation-lines');
     annotation.style.removeProperty('--annotation-height');
     const overflowing = options.isAnnotationOverflowing
       ? options.isAnnotationOverflowing(annotation)
-      : annotation.scrollHeight > annotation.clientHeight + 1;
+      : annotation.scrollHeight > annotationBlock.clientHeight + 1;
     if (overflowing) {
       const styles = documentRef.defaultView?.getComputedStyle(annotation);
       const lineHeight = Number.parseFloat(styles?.lineHeight) || 16;
-      const lines = Math.max(1, Math.floor(annotation.clientHeight / lineHeight));
+      const lines = Math.max(1, Math.floor(annotationBlock.clientHeight / lineHeight));
       annotation.style.setProperty('--annotation-lines', String(lines));
       annotation.style.setProperty('--annotation-height', `${lines * lineHeight}px`);
       annotation.classList.add('truncated');
@@ -116,11 +128,11 @@ export function createBookCard(book, onDownload, documentRef = document, options
   };
   const scheduleUpdate = () => {
     if (options.scheduleFrame) {
-      options.scheduleFrame(updateMore);
+      options.scheduleFrame(updateAnnotationClamp);
       return;
     }
     const frame = documentRef.defaultView?.requestAnimationFrame || globalThis.requestAnimationFrame;
-    frame(updateMore);
+    frame(updateAnnotationClamp);
   };
   scheduleUpdate();
   if (options.observeResize) options.observeResize(article, scheduleUpdate);

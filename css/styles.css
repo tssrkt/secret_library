@@ -160,7 +160,11 @@ dd { margin: 0; font-weight: 750; font-variant-numeric: tabular-nums; }
   border-radius: .6rem;
   overflow: hidden;
   background: #fffaf3;
+  cursor: pointer;
+  transition: border-color .15s ease, box-shadow .15s ease, background-color .15s ease;
 }
+.book-card:hover { border-color: #cdbbab; background: #fffdf9; box-shadow: 0 3px 12px rgb(70 52 31 / 10%); }
+.book-card:focus-visible { outline: 3px solid #8a623b; outline-offset: 2px; }
 .book-card-media { display: flex; width: var(--book-cover-width); min-height: 0; flex-direction: column; }
 .book-cover-frame {
   width: var(--book-cover-width);
@@ -203,7 +207,7 @@ dd { margin: 0; font-weight: 750; font-variant-numeric: tabular-nums; }
   line-clamp: 2;
 }
 .book-card-genre { font-size: 15px; }
-.book-card-annotation-block { display: flex; min-height: 0; margin-top: .55rem; padding-bottom: 20px; flex: 1; flex-direction: column; }
+.book-card-annotation-block { display: flex; height: 0; min-height: 0; margin-top: .55rem; flex: 1; overflow: hidden; flex-direction: column; }
 .book-card-annotation {
   display: block;
   margin: 0;
@@ -225,28 +229,6 @@ dd { margin: 0; font-weight: 750; font-variant-numeric: tabular-nums; }
   -webkit-line-clamp: var(--annotation-lines, 1);
   line-clamp: var(--annotation-lines, 1);
 }
-.book-annotation-more {
-  position: absolute;
-  right: auto;
-  bottom: calc((var(--book-download-height) - 24px) / 2);
-  left: 1rem;
-  width: auto;
-  height: 24px;
-  min-height: 24px;
-  max-height: 24px;
-  margin: 0;
-  padding: 4px 0 0;
-  color: var(--download-accent);
-  background: transparent;
-  font-size: 14px;
-  line-height: 20px;
-  text-align: left;
-  text-decoration: none;
-  white-space: nowrap;
-  mask-image: none;
-}
-.book-annotation-more:not(:disabled):hover { color: #000000; background: transparent; text-decoration: none; }
-.book-annotation-more:focus { text-decoration: none; }
 .book-download-button {
   width: var(--book-cover-width);
   height: var(--book-download-height);
@@ -313,18 +295,32 @@ dd { margin: 0; font-weight: 750; font-variant-numeric: tabular-nums; }
   text-align: center;
 }
 .annotation-modal-content {
+  display: flex;
   min-width: 0;
+  min-height: 0;
   max-height: min(80vh, 720px);
-  overflow: auto;
+  overflow: hidden;
   padding: 1.1rem 1.2rem;
+  flex-direction: column;
 }
-.modal-header { display: block; }
-.modal-header h2 { margin: 0; padding-right: 3rem; font-size: 18px; font-weight: 400; overflow-wrap: anywhere; }
+.modal-header { display: block; flex: 0 0 auto; }
+.modal-header h2 { margin: 0; padding-right: 3.25rem; font-size: 18px; font-weight: 400; overflow-wrap: anywhere; }
 .annotation-modal-book-title { font-size: 18px; font-weight: 600; }
 .annotation-modal-authors { font-size: 16px; font-weight: 400; }
-#annotation-modal-close { position: absolute; z-index: 2; top: 12px; right: 14px; }
-.annotation-modal-genres { margin: .45rem 0 0; color: #756b60; font-size: 15px; }
-.annotation-modal-content > #annotation-modal-text { margin: .7rem 0 0; font-size: 17px; line-height: 1.6; white-space: pre-wrap; }
+#annotation-modal-close { position: absolute; z-index: 2; top: 14px; right: 16px; }
+.annotation-modal-genres { margin: .45rem 0 0; flex: 0 0 auto; color: #756b60; font-size: 15px; }
+.annotation-modal-content > #annotation-modal-text {
+  min-height: 0;
+  margin: .7rem 0 0;
+  padding: .7rem .35rem 0 0;
+  flex: 1 1 auto;
+  overflow-x: hidden;
+  overflow-y: auto;
+  border-top: 1px solid #ded5c8;
+  font-size: 17px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
 
 [hidden] { display: none !important; }
 
