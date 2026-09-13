@@ -8,7 +8,8 @@ export function classifyLibraryItem(file) {
   return 'other';
 }
 
-export async function scanLibrary(rootFolderId, onProgress = () => {}) {
+export async function scanLibrary(rootFolderId, onProgress = () => {}, { signal } = {}) {
+  signal?.throwIfAborted();
   const root = await getFolder(rootFolderId);
   const folders = [{ id: root.id, parentId: null, name: root.name }];
   const books = [];
@@ -16,9 +17,11 @@ export async function scanLibrary(rootFolderId, onProgress = () => {}) {
   let processedFolders = 0;
 
   while (pending.length) {
+    signal?.throwIfAborted();
     const level = pending;
     pending = [];
     for (let offset = 0; offset < level.length; offset += SCAN_CONCURRENCY) {
+      signal?.throwIfAborted();
       const batch = level.slice(offset, offset + SCAN_CONCURRENCY);
       const results = await Promise.all(batch.map(async (folderId) => ({
         folderId,
@@ -55,7 +58,9 @@ export async function scanLibrary(rootFolderId, onProgress = () => {}) {
   }
 
   const now = new Date().toISOString();
-  return { version: INDEX_VERSION, rootFolderId, createdAt: now, updatedAt: now, folders, books };
+  signal?.throwIfAborted();
+  return { version: INDEX_VERSION, rootFolderId, createdAt: now, updatedAt: now, folders, books,
+    lastFullScan: { scannedAt: now, totalEligible: books.length } };
 }
 
 const METADATA_FIELDS = [

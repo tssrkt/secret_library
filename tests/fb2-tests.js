@@ -25,6 +25,8 @@ import { runSearchTests } from './search-tests.js';
 import { runUserSettingsTests } from './user-settings-tests.js';
 import { runIndexingErrorTests } from './indexing-errors-tests.js';
 import { runBinaryRecoveryTests } from './fb2-binary-recovery-tests.js';
+import { runIndexingRunTests } from './indexing-run-tests.js';
+import { runIndexerResilienceTests } from './indexer-resilience-tests.js';
 import { runSocialUiTests } from './social-ui-tests.js';
 import {
   AUTH_SESSION_KEY, PREVIOUS_SIGN_IN_KEY, clearAccessToken, clearPersistedAuth,
@@ -349,7 +351,7 @@ await test('UTF-16 BOM and decoding', () => {
 
 await test('unsupported encoding', () => {
   try {
-    detectEncoding(new TextEncoder().encode('<?xml version="1.0" encoding="KOI8-R"?><FictionBook>'));
+    detectEncoding(new TextEncoder().encode('<?xml version="1.0" encoding="not-a-real-encoding"?><FictionBook>'));
     assert(false, 'error expected');
   } catch (error) { equal(error.code, 'unsupported_encoding', 'error code'); }
 });
@@ -393,14 +395,14 @@ await test('200 full response prevents further range requests', async () => {
   equal(mock.calls.length, 1, 'request count');
 });
 
-await test('missing description stops at 1 MiB', async () => {
+await test('missing description is reported only after reading the complete document', async () => {
   const bytes = new TextEncoder().encode(`<?xml version="1.0"?><FictionBook>${'x'.repeat(1_100_000)}`);
   const mock = rangeFetcher(bytes);
   try {
     await readFb2Description('missing', mock);
     assert(false, 'error expected');
-  } catch (error) { equal(error.code, 'description_not_found', 'error code'); }
-  equal(mock.calls, FB2_RANGES, 'bounded ranges');
+  } catch (error) { equal(error.code, 'description_missing', 'error code'); }
+  equal(mock.calls, FB2_RANGES.slice(0, 4), 'geometric ranges stop at EOF');
 });
 
 await test('batch continues after a book error and checkpoints', async () => {
@@ -1500,6 +1502,8 @@ await runSearchTests(test, assert, equal);
 await runUserSettingsTests(test, assert, equal);
 await runIndexingErrorTests(test, assert, equal, makeZip);
 await runBinaryRecoveryTests(test, assert, equal);
+await runIndexingRunTests(test, assert, equal);
+await runIndexerResilienceTests(test, assert, equal, makeZip);
 await runSocialUiTests(test, assert, equal);
 
 output.textContent = failures.length

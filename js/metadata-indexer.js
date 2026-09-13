@@ -2,9 +2,12 @@ import { METADATA_CHECKPOINT_SIZE, METADATA_CONCURRENCY, METADATA_VERSION } from
 import { extractBookMetadata } from './book-metadata.js';
 import { Fb2Error } from './fb2.js';
 import { errorDetails, recordIndexingError } from './indexing-errors.js';
+import { previousRecord } from './index-build.js';
 
 export function resetProcessingBooks(index) {
+  const selected = index.buildState?.mode === 'retry' ? new Set(index.buildState.selectedIds) : null;
   for (const book of index.books) {
+    if (selected && !selected.has(book.id)) continue;
     if (book.metadataStatus === 'processing') book.metadataStatus = 'pending';
   }
 }
@@ -29,18 +32,29 @@ export async function indexPendingBooks(index, {
   onCover = async () => ({}),
   previousIndex = null,
   onErrors = () => {},
+  checkEligibility = async () => true,
 } = {}) {
-  const pending = index.books.filter((book) => book.metadataStatus === 'pending');
-  const stats = { total: pending.length, processed: 0, succeeded: 0, recovered: 0, skipped: index.books.length - pending.length, failed: 0 };
+  const retry = index.buildState?.mode === 'retry';
+  const selected = retry ? new Set(index.buildState.selectedIds) : null;
+  const pending = index.books.filter((book) => book.metadataStatus === 'pending' && (!selected || selected.has(book.id)));
+  const stats = { total: pending.length, processed: 0, succeeded: 0, recovered: 0, skipped: index.books.length - pending.length, failed: 0, excluded: 0 };
   const previousBooks = new Map((previousIndex?.books || []).filter((book) => book.metadataStatus === 'ready').map((book) => [book.id, book]));
   index.indexingErrors ||= [];
+  const sources = new Map((index.buildState?.sourceBooks || []).map((book) => [book.id, book]));
 
   const processBook = async (book) => {
     if (signal?.aborted) return;
     book.metadataStatus = 'processing';
     const issues = new Map();
-    const onIssue = (error) => issues.set(error, errorDetails(error));
+    let reportChanged = false;
+    const clearReport = () => {
+      const oldCount = index.indexingErrors.length;
+      index.indexingErrors = index.indexingErrors.filter((entry) => entry.fileId !== book.id || entry.stage === 'index-write');
+      reportChanged ||= oldCount !== index.indexingErrors.length;
+    };
+    const onIssue = (error) => issues.set(error, errorDetails(error, { runId: index.buildState?.runId || null }));
     try {
+      if (retry && !await checkEligibility(book)) throw Object.assign(new Error('Файл удалён или больше не входит в доступную библиотеку.'), { code: 'no_longer_eligible', stage: 'metadata' });
       const metadata = await extract(book, { signal, onIssue });
       if (signal?.aborted) {
         book.metadataStatus = 'pending';
@@ -67,6 +81,7 @@ export async function indexPendingBooks(index, {
       delete book.metadataError;
       delete book.metadataErrorMessage;
       if (!Object.hasOwn(metadata, 'metadataWarning')) delete book.metadataWarning;
+      clearReport();
       if (recovery) {
         stats.recovered += 1;
         onIssue({ ...recovery, metadataIndexed: true, coverRecovered: !recovery.coverDamaged && Boolean(coverFields.coverFileId),
@@ -91,20 +106,28 @@ export async function indexPendingBooks(index, {
       }
       onIssue(error);
       const previous = previousBooks.get(book.id);
-      if (previous) {
-        for (const key of Object.keys(book)) delete book[key];
-        Object.assign(book, structuredClone(previous));
+      if (retry && (error.code === 'no_longer_eligible' || (error.status === 404 && (!error.stage || error.stage === 'download' || error.stage === 'metadata')))) {
+        index.books = index.books.filter((item) => item.id !== book.id);
+        index.buildState.removedBookIds.push(book.id);
+        clearReport();
+        recordIndexingError(index, book, [...issues.values()], { outcome: 'excluded' });
+        stats.excluded += 1;
       } else {
-        book.metadataStatus = 'error';
-        book.metadataError = error?.status === 403 ? 'insufficient_permissions'
-          : error instanceof Fb2Error ? error.code : error.code || 'download_failed';
-        book.metadataErrorMessage = String(error?.message || book.metadataError).slice(0, 240);
+        if (previous) {
+          for (const key of Object.keys(book)) delete book[key];
+          Object.assign(book, previousRecord(previous, sources.get(previous.id)));
+        } else {
+          book.metadataStatus = 'error';
+          book.metadataError = error?.status === 403 ? 'insufficient_permissions'
+            : error instanceof Fb2Error ? error.code : error.code || 'download_failed';
+          book.metadataErrorMessage = String(error?.message || book.metadataError).slice(0, 240);
+        }
+        recordIndexingError(index, book, [...issues.values()], { preserved: Boolean(previous) });
+        stats.failed += 1;
       }
-      recordIndexingError(index, book, [...issues.values()], { preserved: Boolean(previous) });
-      stats.failed += 1;
     }
     stats.processed += 1;
-    if (issues.size) onErrors(index.indexingErrors);
+    if (issues.size || reportChanged) onErrors(index.indexingErrors);
     onProgress({ ...stats, currentFileName: book.fileName });
   };
 

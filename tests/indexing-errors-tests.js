@@ -128,7 +128,7 @@ export async function runIndexingErrorTests(test, assert, equal, makeZip) {
     equal(requests, [0, 65536], 'exact boundary triggers next request without total size');
     requests.length = 0;
     try { await readFb2Description('boundary', { fetchRange, size: 65536 }); assert(false, 'invalid XML rejected'); }
-    catch (error) { equal(error.code, 'description_not_found', 'metadata error instead of illegal range'); }
+    catch (error) { equal(error.code, 'description_missing', 'metadata error instead of illegal range'); }
     equal(requests, [0], 'no request beyond known EOF');
   });
   await test('wrong Content-Range is rejected and 200 full response replaces earlier chunks', async () => {

@@ -95,6 +95,11 @@ export async function getFolder(folderId) {
   return folder;
 }
 
+export async function getLibraryFile(fileId, signal) {
+  const params = new URLSearchParams({ fields: 'id,name,mimeType,parents,size,modifiedTime,md5Checksum,trashed', supportsAllDrives: 'true' });
+  return (await driveFetch(`/files/${encodeURIComponent(fileId)}?${params}`, { signal, diagnostics: { stage: 'metadata', fileId } })).json();
+}
+
 export async function getCurrentDriveUser(request = driveFetch) {
   const params = new URLSearchParams({ fields: 'user(displayName,emailAddress,photoLink)' });
   const response = await request(`/about?${params}`);

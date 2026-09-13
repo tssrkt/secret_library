@@ -3,6 +3,11 @@ import { extractZipFb2 } from './zip.js';
 import { downloadDriveFile, downloadFileRange } from './drive.js';
 
 export async function extractBookMetadata(book, options = {}) {
+  try { return await extractWithRangeFallback(book, options); }
+  catch (error) { error.containerType = book.sourceType === 'zip' ? 'ZIP' : 'raw FB2'; throw error; }
+}
+
+async function extractWithRangeFallback(book, options) {
   const diagnostics = { ...options.diagnostics, onIssue: options.onIssue, stage: 'download' };
   const download = options.downloadFile || ((id, signal, extra = {}) => downloadDriveFile(id, signal, undefined, { ...diagnostics, ...extra }));
   const extractOptions = {

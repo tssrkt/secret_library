@@ -11,6 +11,10 @@ export function errorDetails(error, extra = {}) {
     range: error.range || null,
     contentRange: error.contentRange || null,
     retryResult: error.retryResult || 'not-retried',
+    ...(error.encoding ? { encoding: error.encoding } : {}),
+    ...(error.containerType ? { containerType: error.containerType } : {}),
+    ...(error.format ? { format: error.format } : {}),
+    ...(error.binaryRecoveryAttempt ? { binaryRecoveryAttempt: { ...error.binaryRecoveryAttempt } } : {}),
     ...(error.parserMessage ? { parserLine: error.parserLine, parserColumn: error.parserColumn, parserMessage: error.parserMessage } : {}),
     ...(error.code === 'binary_corruption_recovered' ? {
       binaries: error.binaries.map(({ id, contentType, reason, payloadLength }) => ({
@@ -40,11 +44,17 @@ export function recordIndexingError(index, book, events, { preserved = false, ou
 export function formatIndexingErrors(entries) {
   return entries.map((entry) => [
     `[${entry.timestamp}]`, `File: ${entry.fileName}`, `FileId: ${entry.fileId}`,
+    `Run: ${entry.runId || 'legacy'}`,
     `Outcome: ${entry.outcome}`, `Previous index entry preserved: ${entry.previousEntryPreserved ? 'yes' : 'no'}`,
     ...(entry.events || [entry]).flatMap((event) => [
       `At: ${event.timestamp}`, `Stage: ${event.stage}`, `HTTP: ${event.status ?? '-'}`, `Code: ${event.code}`,
       `Error: ${event.message}`, `Attempt: ${event.attempt}`, `Range: ${event.range || 'none'}`,
       `Content-Range: ${event.contentRange || 'unavailable'}`, `Retry: ${event.retryResult}`,
+      ...(event.encoding ? [`Encoding: ${event.encoding}`] : []),
+      ...(event.containerType ? [`Container: ${event.containerType}`] : []),
+      ...(event.format ? [`Signature: ${event.format.classification || 'XML/unknown'}`, `BOM: ${event.format.bom || 'none'}`, `XML declaration: ${event.format.xmlDeclaration ? 'yes' : 'no'}`] : []),
+      ...(event.binaryRecoveryAttempt ? [`Binary recovery attempted: yes`, `Candidate binaries found: ${event.binaryRecoveryAttempt.candidateBinaries}`,
+        `Recovery result: ${event.binaryRecoveryAttempt.result}`, `Reason: ${event.binaryRecoveryAttempt.reason}`] : []),
       ...(event.parserMessage ? [`Parser line: ${event.parserLine ?? 'unavailable'}`, `Parser column: ${event.parserColumn ?? 'unavailable'}`, `Parser error: ${event.parserMessage}`] : []),
       ...(event.binaries ? [
         `Damaged binaries: ${event.binaries.length}`,

@@ -13,9 +13,11 @@ const setup = `<script type="module">
     books: Array.from({ length: 51 }, (_, i) => ({ id: String(i), parentId: 'root', fileName: 'book' + i + '.fb2',
       title: 'Лем ' + i, authors: ['Станислав Лем'], metadataStatus: 'ready' })) });
   ui.setAuthorized(true);
+  window.testUi = ui;
+  window.indexActions = [];
   const noop = () => {};
-  ui.bindActions({ home: ui.showLibraryHome, signIn: noop, refresh: noop, indexMetadata: noop,
-    retryMetadata: noop, stopMetadata: noop, signOut: noop, rebuild: noop });
+  ui.bindActions({ home: ui.showLibraryHome, signIn: noop, refresh: noop, indexMetadata: () => window.indexActions.push('full'),
+    retryMetadata: () => window.indexActions.push('retry'), stopMetadata: noop, signOut: noop, rebuild: noop });
   window.testReady = true;
 </script>`;
 const server = createServer(async (request, response) => {
@@ -112,6 +114,15 @@ try {
     await key('Escape', 'Escape', 27);
   }
   console.log('Keyboard checks passed: native Enter, Escape, Tab, query transfer, automatic search and advanced submit.');
+  await evaluate(`window.testUi.updateMetadataActions({books: Array.from({length: 303}, (_, i) => ({id: String(i), metadataStatus: 'error'})), lastFullScan: {totalEligible: 9257}});
+    document.querySelector('#metadata-button').click(); document.querySelector('#retry-metadata-button').click();`);
+  assert.deepEqual(await evaluate('window.indexActions'), ['full', 'retry'], 'menu actions remain independent');
+  assert.equal(await evaluate("document.querySelector('#metadata-button').textContent"), `Переиндексировать книги (${(9257).toLocaleString('ru-RU')})`);
+  assert.equal(await evaluate("document.querySelector('#retry-metadata-button').textContent"), 'Повторить ошибки (303)');
+  await evaluate('window.testUi.updateMetadataActions({books: []})');
+  assert.equal(await evaluate("document.querySelector('#metadata-button').hidden"), false, 'full available without errors');
+  assert.equal(await evaluate("document.querySelector('#retry-metadata-button').hidden"), true, 'empty retry hidden');
+  console.log('Indexing menu checks passed: independent actions, 9257/303 counts, full available with zero errors.');
   await key('Tab', 'Tab', 9);
   await send('Page.navigate', { url: `http://127.0.0.1:${server.address().port}/tests/fb2-tests.html` });
   for (let i = 0; i < 600 && !await evaluate('Boolean(document.body?.dataset.testStatus)'); i++) await delay(50);

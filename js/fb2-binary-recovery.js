@@ -1,7 +1,9 @@
 // Only used after strict XML parsing failed. Ambiguous boundaries are never repaired.
 const NAME = '[A-Za-z_][A-Za-z0-9_.:-]*';
 const TAG = new RegExp(`^<(/?)(${NAME})(?=[\\s/>])(?:[^<>"']|"[^"]*"|'[^']*')*>`);
-const MARKUP = /^<\/?[\p{L}_:]/u;
+// A raw JPEG can contain '<A' followed by control bytes. Only a complete tag
+// is structural evidence; an arbitrary tag-like prefix is not a boundary.
+const MARKUP = /^<\/?[\p{L}_:][\p{L}\p{N}_.:-]*(?=[\s/>])(?:[^<>"'\u0000-\u0008\u000b\u000c\u000e-\u001f]|"[^"<>]*"|'[^'<>]*')*>/u;
 const XML_CONTROLS = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\ufffe\uffff]/;
 
 function payloadProblem(payload) {
@@ -13,30 +15,36 @@ function payloadProblem(payload) {
   return null;
 }
 
-function binaryEnd(text, start, name) {
+function binaryEnd(text, start, name, diagnostics) {
   const closing = new RegExp(`^</${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*>`);
   let position = start;
   while (position < text.length) {
     const next = text.indexOf('<', position);
-    if (next < 0) return null;
+    if (next < 0) { diagnostics.reason = 'closing-boundary-not-found'; return null; }
     const match = closing.exec(text.slice(next));
     if (match) return { start: next, end: next + match[0].length };
     const delimiter = text.startsWith('<!--', next) ? ['<!--', '-->']
       : text.startsWith('<![CDATA[', next) ? ['<![CDATA[', ']]>'] : null;
     if (delimiter) {
       const end = text.indexOf(delimiter[1], next + delimiter[0].length);
-      if (end < 0) return null;
-      position = end + delimiter[1].length;
-      continue;
+      if (end >= 0) {
+        position = end + delimiter[1].length;
+        continue;
+      }
+      // An unterminated comment/CDATA-like byte sequence can itself be raw
+      // attachment corruption. Keep looking, still rejecting complete tags.
     }
     // A missing closing tag must never swallow book structure or another attachment.
-    if (MARKUP.test(text.slice(next)) || text.startsWith('<!', next) || text.startsWith('<?', next)) return null;
+    if (MARKUP.test(text.slice(next)) || /^<![A-Za-z]+\s[^<>]*>/.test(text.slice(next))) {
+      diagnostics.reason = 'ambiguous-binary-boundaries'; return null;
+    }
     position = next + 1;
   }
+  diagnostics.reason = 'closing-boundary-not-found';
   return null;
 }
 
-function scanBinaryPayloads(text) {
+function scanBinaryPayloads(text, diagnostics) {
   const stack = [];
   const binaries = [];
   let rootSeen = false;
@@ -71,7 +79,8 @@ function scanBinaryPayloads(text) {
       const isBinary = stack.length === 1 && name.split(':').at(-1) === 'binary';
       const ordinal = isBinary ? binaryIndex++ : -1;
       if (isBinary && !selfClosing) {
-        const close = binaryEnd(text, end, name);
+        diagnostics.candidateBinaries += 1;
+        const close = binaryEnd(text, end, name, diagnostics);
         if (!close) return null;
         binaries.push({ start: end, end: close.start, ordinal, reason: payloadProblem(text.slice(end, close.start)) });
         position = close.end;
@@ -84,8 +93,9 @@ function scanBinaryPayloads(text) {
   return rootSeen && !stack.length ? binaries : null;
 }
 
-export function recoverBinaryXml(text, Parser) {
-  const ranges = scanBinaryPayloads(text);
+export function recoverBinaryXml(text, Parser, diagnostics = {}) {
+  Object.assign(diagnostics, { attempted: true, candidateBinaries: 0, result: 'rejected', reason: 'corruption-outside-binary' });
+  const ranges = scanBinaryPayloads(text, diagnostics);
   const damaged = ranges?.filter((range) => range.reason);
   if (!damaged?.length) return null;
   const chunks = [];
@@ -96,7 +106,7 @@ export function recoverBinaryXml(text, Parser) {
   }
   chunks.push(text.slice(previous));
   const document = new Parser().parseFromString(chunks.join(''), 'application/xml');
-  if (document.querySelector('parsererror')) return null;
+  if (document.querySelector('parsererror')) { diagnostics.reason = 'sanitized-xml-still-invalid'; return null; }
   const root = document.documentElement;
   if (root.localName !== 'FictionBook') return null;
   const allBinaries = [...root.children].filter((element) => element.localName === 'binary');
@@ -108,6 +118,7 @@ export function recoverBinaryXml(text, Parser) {
     result.push({ id: element.getAttribute('id') || '', contentType: element.getAttribute('content-type') || '',
       reason: range.reason, payloadLength: range.end - range.start });
   }
+  Object.assign(diagnostics, { result: 'recovered', reason: 'binary-payload-isolated' });
   return { document, binaries: result };
 }
 

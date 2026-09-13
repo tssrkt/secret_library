@@ -2,6 +2,8 @@ import {
   ZIP_MAX_CENTRAL_DIRECTORY_SIZE,
   ZIP_MAX_COMPRESSED_ENTRY_SIZE,
   ZIP_MAX_FB2_ENTRY_SIZE,
+  ZIP_MAX_TOTAL_UNCOMPRESSED_BYTES, ZIP_MAX_COMPRESSION_RATIO, ZIP_MAX_ENTRY_COUNT,
+  ZIP_PARALLEL_ENTRY_BUDGET,
   ZIP_TAIL_SIZE,
 } from './config.js';
 import { downloadFileRange } from './drive.js';
@@ -10,6 +12,17 @@ import { Fb2Error, parseFullFb2 } from './fb2.js';
 const EOCD_SIGNATURE = 0x06054b50;
 const CENTRAL_SIGNATURE = 0x02014b50;
 const LOCAL_SIGNATURE = 0x04034b50;
+let largeEntryTail = Promise.resolve();
+
+// Avoid three simultaneous large byte buffers + decoded strings + DOM trees.
+async function withEntryMemoryBudget(entry, signal, action) {
+  if (entry.uncompressedSize <= ZIP_PARALLEL_ENTRY_BUDGET && entry.compressedSize <= ZIP_PARALLEL_ENTRY_BUDGET) return action();
+  const previous = largeEntryTail;
+  let release;
+  largeEntryTail = new Promise((resolve) => { release = resolve; });
+  try { await previous; signal?.throwIfAborted(); return await action(); }
+  finally { release(); }
+}
 
 export class ZipError extends Fb2Error {}
 
@@ -41,7 +54,7 @@ class ZipRanges {
   async read(start, end, signal) {
     assertRange(start, end, this.fileSize);
     const cached = this.regions.find((region) => start >= region.start && end <= region.end);
-    if (cached) return cached.bytes.slice(start - cached.start, end - cached.start + 1);
+    if (cached) return cached.bytes.subarray(start - cached.start, end - cached.start + 1);
     const wholeFile = start === 0 && end === this.fileSize - 1;
     const response = await this.fetchRange(this.fileId, start, end, signal, { requirePartial: !wholeFile });
     const expected = end - start + 1;
@@ -67,6 +80,7 @@ export function findEocd(tail, tailStart, fileSize) {
     if (entryCount === 0xffff || centralSize === 0xffffffff || centralOffset === 0xffffffff) {
       throw new ZipError('unsupported_zip64', 'ZIP64 is not supported.');
     }
+    if (entryCount > ZIP_MAX_ENTRY_COUNT) throw new ZipError('zip_too_many_entries', 'ZIP exceeds the 4096-entry safety budget.');
     if (centralSize > ZIP_MAX_CENTRAL_DIRECTORY_SIZE) throw new ZipError('zip_central_directory_too_large');
     if (entryCount && !centralSize) throw new ZipError('malformed_zip');
     const eocdOffset = tailStart + offset;
@@ -79,6 +93,7 @@ export function findEocd(tail, tailStart, fileSize) {
 }
 
 export function parseCentralDirectory(bytes, expectedEntries, fileSize) {
+  if (expectedEntries > ZIP_MAX_ENTRY_COUNT) throw new ZipError('zip_too_many_entries');
   const entries = [];
   let offset = 0;
   for (let index = 0; index < expectedEntries; index += 1) {
@@ -105,6 +120,17 @@ export function parseCentralDirectory(bytes, expectedEntries, fileSize) {
   return entries;
 }
 
+export function validateZipBudgets(entries, entry, fileSize) {
+  const total = entries.reduce((sum, item) => sum + item.uncompressedSize, 0);
+  if (total > ZIP_MAX_TOTAL_UNCOMPRESSED_BYTES) throw new ZipError('zip_total_uncompressed_limit_exceeded', 'ZIP declares more than 512 MiB across its entries.');
+  if (entry.uncompressedSize / Math.max(1, entry.compressedSize) > ZIP_MAX_COMPRESSION_RATIO
+      || total / Math.max(1, fileSize) > ZIP_MAX_COMPRESSION_RATIO) {
+    throw new ZipError('zip_suspicious_compression_ratio', 'ZIP compression ratio exceeds 500:1.');
+  }
+  if (entry.compressedSize > ZIP_MAX_COMPRESSED_ENTRY_SIZE) throw new ZipError('zip_compressed_limit_exceeded', 'Selected ZIP entry exceeds the 64 MiB input budget.');
+  if (entry.uncompressedSize > ZIP_MAX_FB2_ENTRY_SIZE) throw new ZipError('zip_uncompressed_limit_exceeded', 'Selected FB2 exceeds the 128 MiB output budget.');
+}
+
 function suitableFb2Entries(entries) {
   return entries.filter(({ name }) => {
     const normalized = name.replaceAll('\\', '/');
@@ -115,32 +141,34 @@ function suitableFb2Entries(entries) {
   });
 }
 
-async function inflateFb2(compressed, signal) {
+async function inflateFb2(compressed, expectedSize, signal) {
   if (typeof DecompressionStream !== 'function') throw new ZipError('unsupported_compression', 'Deflate is unsupported by this browser.');
   let stream;
-  try { stream = new Blob([compressed]).stream().pipeThrough(new DecompressionStream('deflate-raw')); }
+  try {
+    stream = new ReadableStream({ start(controller) { controller.enqueue(compressed); controller.close(); } })
+      .pipeThrough(new DecompressionStream('deflate-raw'));
+  }
   catch { throw new ZipError('unsupported_compression', 'Raw Deflate is unsupported by this browser.'); }
   const reader = stream.getReader();
-  const chunks = [];
+  const combined = new Uint8Array(expectedSize);
   let length = 0;
   try {
-    while (length <= ZIP_MAX_FB2_ENTRY_SIZE) {
+    while (true) {
       if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
       const result = await reader.read();
       if (result.done) break;
-      chunks.push(result.value);
+      if (length + result.value.length > expectedSize) throw new ZipError('malformed_zip', 'Inflated output exceeds its declared size.');
+      combined.set(result.value, length);
       length += result.value.length;
     }
   } catch (error) {
     if (error?.name === 'AbortError' || error instanceof Fb2Error) throw error;
     throw new ZipError('malformed_zip', 'Deflate stream is damaged.');
   } finally {
+    await reader.cancel().catch(() => {});
     reader.releaseLock();
   }
-  if (length > ZIP_MAX_FB2_ENTRY_SIZE) throw new ZipError('zip_entry_too_large');
-  const combined = new Uint8Array(length);
-  let cursor = 0;
-  for (const chunk of chunks) { combined.set(chunk, cursor); cursor += chunk.length; }
+  if (length !== expectedSize) throw new ZipError('malformed_zip', 'Inflated output differs from its declared size.');
   return combined;
 }
 
@@ -157,30 +185,37 @@ export async function extractZipFb2(book, {
   const eocd = findEocd(tail, tailStart, fileSize);
   if (!eocd.entryCount) throw new ZipError('zip_no_fb2');
   const central = await ranges.read(eocd.centralOffset, eocd.centralOffset + eocd.centralSize - 1, signal);
-  const candidates = suitableFb2Entries(parseCentralDirectory(central, eocd.entryCount, fileSize));
+  const entries = parseCentralDirectory(central, eocd.entryCount, fileSize);
+  const candidates = suitableFb2Entries(entries);
   if (!candidates.length) throw new ZipError('zip_no_fb2', 'ZIP contains no FB2 entry.');
   const entry = candidates[0];
   if (entry.flags & 1) throw new ZipError('encrypted_zip', 'Encrypted ZIP entries are unsupported.');
   if (![0, 8].includes(entry.method)) throw new ZipError('unsupported_compression');
-  if (entry.compressedSize > ZIP_MAX_COMPRESSED_ENTRY_SIZE) throw new ZipError('zip_entry_too_large');
-  if (entry.uncompressedSize > ZIP_MAX_FB2_ENTRY_SIZE) throw new ZipError('zip_entry_too_large');
+  validateZipBudgets(entries, entry, fileSize);
 
-  const local = await ranges.read(entry.localHeaderOffset, entry.localHeaderOffset + 29, signal);
-  if (u32(local, 0) !== LOCAL_SIGNATURE) throw new ZipError('malformed_zip');
-  const dataOffset = entry.localHeaderOffset + 30 + u16(local, 26) + u16(local, 28);
-  if (!entry.compressedSize || dataOffset + entry.compressedSize > fileSize) throw new ZipError('malformed_zip');
+  return withEntryMemoryBudget(entry, signal, async () => {
+    const local = await ranges.read(entry.localHeaderOffset, entry.localHeaderOffset + 29, signal);
+    if (u32(local, 0) !== LOCAL_SIGNATURE) throw new ZipError('malformed_zip');
+    const dataOffset = entry.localHeaderOffset + 30 + u16(local, 26) + u16(local, 28);
+    if (!entry.compressedSize || dataOffset + entry.compressedSize > eocd.centralOffset) throw new ZipError('malformed_zip');
 
-  let fb2Bytes;
-  if (entry.method === 0) {
-    const end = dataOffset + entry.compressedSize - 1;
-    fb2Bytes = await ranges.read(dataOffset, end, signal);
-  } else {
-    const compressed = await ranges.read(dataOffset, dataOffset + entry.compressedSize - 1, signal);
-    fb2Bytes = await inflateFb2(compressed, signal);
-  }
-  return {
-    ...parseFullFb2(fb2Bytes, Parser),
-    entryPath: entry.name.replaceAll('\\', '/'),
-    ...(candidates.length > 1 ? { metadataWarning: 'multiple_fb2_entries' } : {}),
-  };
+    let fb2Bytes;
+    if (entry.method === 0) {
+      if (entry.compressedSize !== entry.uncompressedSize) throw new ZipError('malformed_zip', 'Stored entry size mismatch.');
+      const end = dataOffset + entry.compressedSize - 1;
+      fb2Bytes = await ranges.read(dataOffset, end, signal);
+    } else {
+      const compressed = await ranges.read(dataOffset, dataOffset + entry.compressedSize - 1, signal);
+      fb2Bytes = await inflateFb2(compressed, entry.uncompressedSize, signal);
+    }
+    let metadata;
+    try { metadata = parseFullFb2(fb2Bytes, Parser); }
+    catch (error) { error.containerType = 'ZIP'; throw error; }
+    if (metadata.binaryRecovery) metadata.binaryRecovery.containerType = 'ZIP';
+    return {
+      ...metadata,
+      entryPath: entry.name.replaceAll('\\', '/'),
+      ...(candidates.length > 1 ? { metadataWarning: 'multiple_fb2_entries' } : {}),
+    };
+  });
 }
