@@ -476,6 +476,26 @@ dd { margin: 0; font-weight: 750; font-variant-numeric: tabular-nums; }
   background: var(--download-accent);
 }
 .search-submit-button:not(:disabled):hover { background: var(--download-hover); }
+.sharing-folder-list { display: grid; gap: .65rem; margin: 1rem 0 1.25rem; }
+.sharing-folder-list label { display: flex; align-items: baseline; gap: .55rem; cursor: pointer; }
+.sharing-folder-list input { flex: none; accent-color: #8a623b; }
+.sharing-folder-list span { overflow-wrap: anywhere; min-width: 0; }
+.sharing-folder-list input:focus-visible, .settings-save-button:focus-visible {
+  outline: 2px solid #8a623b;
+  outline-offset: 2px;
+}
+.settings-save-button {
+  min-width: 135px;
+  height: 34px;
+  border: 0;
+  border-radius: 0;
+  padding: 0 .3rem;
+  font-size: .8rem;
+  line-height: 1;
+  color: var(--download-text);
+  background: var(--download-accent);
+}
+.settings-save-button:not(:disabled):hover { background: var(--download-hover); }
 @media (max-width: 1000px) {
   .app-header.quick-search-open { padding-bottom: 4.5rem; }
   .quick-search-form { right: 0; left: 0; top: auto; bottom: 0; width: auto; transform: translateY(-.3rem); }

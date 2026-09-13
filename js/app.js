@@ -279,6 +279,7 @@ function signOut() {
 }
 
 ui.bindActions({
+  settingsError: (error) => ui.showError(readableError(error)),
   home: () => ui.showLibraryHome(),
   signIn,
   refresh: rebuildIndex,

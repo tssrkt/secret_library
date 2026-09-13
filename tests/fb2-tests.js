@@ -22,6 +22,7 @@ import { BOOKS_PER_PAGE, createPaginator, paginateItems, paginationTokens } from
 import { filterBooksByDirectValue, russianBookCount } from '../js/direct-filter.js';
 import { seriesLabel } from '../js/book-series.js';
 import { runSearchTests } from './search-tests.js';
+import { runUserSettingsTests } from './user-settings-tests.js';
 import { runIndexingErrorTests } from './indexing-errors-tests.js';
 import {
   AUTH_SESSION_KEY, PREVIOUS_SIGN_IN_KEY, clearAccessToken, clearPersistedAuth,
@@ -1494,6 +1495,7 @@ await test('direct result navigation uses all folders, current-page DOM, home an
 });
 
 await runSearchTests(test, assert, equal);
+await runUserSettingsTests(test, assert, equal);
 await runIndexingErrorTests(test, assert, equal, makeZip);
 
 output.textContent = failures.length

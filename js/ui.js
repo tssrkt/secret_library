@@ -10,6 +10,7 @@ import { METADATA_VERSION } from './config.js';
 import { filterBooksByDirectValue, russianBookCount } from './direct-filter.js';
 import { createSearchController } from './search-ui.js';
 import { createIndexingErrorsController } from './indexing-errors-ui.js';
+import { createUserSettingsController } from './user-settings-ui.js';
 
 const genresRu = await loadGenreDictionary().catch(() => ({}));
 
@@ -18,6 +19,9 @@ const pageByFolderId = new Map();
 let resetLibraryHome = () => {};
 let selectDirectFilter = () => {};
 let searchController = null;
+let settingsController = null;
+let openSettings = () => {};
+let reportSettingsError = (error) => showError(error.message);
 const onAuthorFilter = (value) => selectDirectFilter({ type: 'author', value: value.trim() });
 const onGenreFilter = (value) => selectDirectFilter({ type: 'genre', value });
 const onSeriesFilter = (value) => selectDirectFilter({ type: 'series', value: value.trim() });
@@ -41,6 +45,7 @@ const elements = {
   retryMetadata: document.querySelector('#retry-metadata-button'),
   stop: document.querySelector('#stop-button'),
   signOut: document.querySelector('#sign-out-button'),
+  settings: document.querySelector('#settings-button'),
   userControls: document.querySelector('#user-controls'),
   accountDisplayName: document.querySelector('#account-display-name'),
   accountEmail: document.querySelector('#account-email'),
@@ -110,6 +115,8 @@ export function resetUserAvatar() {
 }
 
 export function bindActions(actions) {
+  reportSettingsError = actions.settingsError || reportSettingsError;
+  elements.settings?.addEventListener('click', () => openSettings());
   elements.home?.addEventListener('click', (event) => {
     event.preventDefault();
     actions.home?.();
@@ -124,6 +131,7 @@ export function bindActions(actions) {
 }
 
 export function setAuthorized(authorized) {
+  if (elements.settings) elements.settings.disabled = !authorized;
   elements.signIn.hidden = authorized;
   elements.userControls.hidden = !authorized;
   elements.signOut.hidden = !authorized;
@@ -187,6 +195,7 @@ export function clearError() { elements.errorPanel.hidden = true; }
 export function showLibraryHome() { resetLibraryHome(); }
 
 export function renderLibrary(index, onDownload = async () => {}) {
+  settingsController?.leave();
   searchController?.destroy();
   clearCoverUrls();
   disposeBookCards(elements.tree);
@@ -195,6 +204,20 @@ export function renderLibrary(index, onDownload = async () => {}) {
   const root = index.folders.find((folder) => folder.id === index.rootFolderId);
   const lookups = buildLibraryLookups(index);
   const resultsState = { filter: null, page: 1 };
+  settingsController = createUserSettingsController({
+    container: elements.tree, index, clearError,
+    onError: (error) => reportSettingsError(error),
+  });
+  openSettings = () => {
+    dropdown.close();
+    annotationModal.close();
+    searchController.reset();
+    resultsState.filter = null;
+    resultsState.page = 1;
+    disposeBookCards(elements.tree);
+    elements.libraryPanel.scrollTop = 0;
+    void settingsController.open();
+  };
 
   const createCard = (book) => createBookCard(book, onDownload, document, {
     onAnnotation: (details, trigger) => annotationModal.open(details, trigger),
@@ -222,6 +245,7 @@ export function renderLibrary(index, onDownload = async () => {}) {
     advancedButton: document.querySelector('#advanced-search-button'),
     books: index.books, genresRu, createCard, disposeCards: disposeBookCards,
     onOpen: () => {
+      settingsController.leave();
       annotationModal.close();
       resultsState.filter = null;
       resultsState.page = 1;
@@ -304,7 +328,8 @@ export function renderLibrary(index, onDownload = async () => {}) {
   }
   resetLibraryHome = () => {
     annotationModal.close();
-    const wasResults = Boolean(resultsState.filter) || searchController.active;
+    const wasResults = Boolean(resultsState.filter) || searchController.active || settingsController.active;
+    settingsController.leave();
     searchController.reset();
     if (wasResults) {
       resultsState.filter = null;
@@ -364,6 +389,7 @@ export function renderLibrary(index, onDownload = async () => {}) {
     heading.focus({ preventScroll: true });
   };
   selectDirectFilter = (filter) => {
+    settingsController.leave();
     searchController.leave();
     annotationModal.close();
     resultsState.filter = filter;
@@ -375,6 +401,9 @@ export function renderLibrary(index, onDownload = async () => {}) {
 }
 
 export function resetUi() {
+  settingsController?.leave();
+  settingsController = null;
+  openSettings = () => {};
   indexingErrors.reset();
   searchController?.destroy();
   searchController = null;
