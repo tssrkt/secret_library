@@ -1,4 +1,4 @@
-import { searchBooks, librarySearchOptions } from '../js/book-search.js';
+import { searchBooks, librarySearchOptions, normalizeSearchLanguage } from '../js/book-search.js';
 
 export async function runSearchTests(test, assert, equal) {
   for (const field of ['title', 'authors', 'series', 'annotation', 'fileName']) {
@@ -27,11 +27,11 @@ export async function runSearchTests(test, assert, equal) {
     equal(searchBooks([{ fileName: 'Солярис.fb2' }], { title: 'солярис' }), [], 'title has no filename fallback');
     equal(searchBooks([book], { series: '10' }), [], 'series number excluded');
   });
-  await test('advanced fields combine with AND and preserve exact genre/language values', () => {
+  await test('advanced fields combine with AND and preserve exact genre codes', () => {
     const book = { title: 'Дракон', authors: ['Иванов'], genres: ['fantasy'], language: 'ru' };
     const before = JSON.stringify(book);
     equal(searchBooks([book], { query: 'ДРАКОН', author: 'иван', genre: 'fantasy', language: 'ru' }), [book], 'all fields match');
-    for (const conditions of [{ genre: 'Фэнтези' }, { language: 'RU' }, { query: 'дракон', author: 'петров' }]) {
+    for (const conditions of [{ genre: 'Фэнтези' }, { language: 'en' }, { query: 'дракон', author: 'петров' }]) {
       equal(searchBooks([book], conditions), [], 'failed condition excludes book');
     }
     equal(JSON.stringify(book), before, 'source unchanged');
@@ -42,8 +42,34 @@ export async function runSearchTests(test, assert, equal) {
     ], { a: 'Одинаково', b: 'Одинаково', absent: 'Лишний' });
     equal(options.genres.map((option) => option.value).sort(), ['a', 'b', 'unknown'], 'source codes remain distinct');
     assert(options.genres.filter((option) => option.label === 'Одинаково').length === 2, 'equal translations do not merge');
-    equal(options.languages.map((option) => option.value).sort(), ['invalid_code', 'ru'], 'only present languages');
-    assert(options.languages.find((option) => option.value === 'invalid_code').label === 'invalid_code', 'safe invalid-language fallback');
+    equal(options.languages.map((option) => option.value).sort(), ['invalid-code', 'ru'], 'only present normalized languages');
+    assert(options.languages.find((option) => option.value === 'invalid-code').label === 'invalid-code', 'safe invalid-language fallback');
+  });
+
+  await test('equivalent language codes share one option and one filter without modifying the index', () => {
+    const groups = [['ru', 'rus', 'ru-RU', 'ru_RU', ' RU '], ['en', 'eng', 'en-US'], ['de', 'deu', 'ger', 'de-DE']];
+    const books = groups.flat().map((language) => ({ language }));
+    const before = JSON.stringify(books);
+    const options = librarySearchOptions(books).languages;
+    equal(options.length, 3, 'one option per actual language');
+    for (const variants of groups) {
+      const key = normalizeSearchLanguage(variants[0]).key;
+      const option = options.find((item) => normalizeSearchLanguage(item.value).key === key);
+      assert(option, 'group has a selectable option');
+      equal(searchBooks(books, { language: option.value }).map((book) => book.language), variants, 'selected option includes every equivalent variant');
+      for (const language of variants) equal(searchBooks(books, { language }).length, variants.length, 'normalization also applies to supplied conditions');
+    }
+    equal(JSON.stringify(books), before, 'saved language values remain byte-for-byte unchanged');
+    const unusual = [{ language: ' Strange_Value! ' }, { language: 'strange-value!' }, { language: null }, {}];
+    const fallback = librarySearchOptions(unusual).languages;
+    equal(fallback, [{ value: 'strange-value!', label: 'strange-value!' }], 'nonstandard values safely normalize and group');
+    equal(searchBooks(unusual, { language: fallback[0].value }).length, 2, 'fallback option filters consistently');
+    const names = Intl.DisplayNames;
+    try {
+      Intl.DisplayNames = class { constructor() { throw new Error('unavailable'); } };
+      assert(librarySearchOptions(unusual).languages.length === 1, 'Intl failure does not break the form');
+      assert(searchBooks(unusual, { language: fallback[0].value }).length === 2, 'Intl failure does not break filtering');
+    } finally { Intl.DisplayNames = names; }
   });
 
   await test('quick and advanced search share local state, pagination and direct navigation', async () => {
@@ -101,6 +127,18 @@ export async function runSearchTests(test, assert, equal) {
       const form = tree.querySelector('.book-search-form');
       assert(form && !tree.querySelector('.tree-list') && form.elements.query.value === 'ЛЕМ', 'quick query transferred to advanced form');
       assert(cards() === 50 && tree.querySelector('.search-result-count').textContent === 'Найдено 51 книга', 'quick submit executes immediately');
+      const checkCounter = () => {
+        const count = tree.querySelector('.search-result-count');
+        assert(count.getAttribute('role') === 'status' && !count.hasAttribute('tabindex'), 'counter retains status semantics without tabIndex');
+        assert(document.activeElement !== count && getComputedStyle(count).outlineStyle === 'none', 'counter is plain text without focus or outline');
+      };
+      checkCounter();
+      for (const field of form.querySelectorAll('input, select')) {
+        field.focus();
+        const styles = getComputedStyle(field);
+        assert(field.matches(':focus-visible') && styles.outlineColor === 'rgb(138, 98, 59)' && styles.outlineStyle === 'solid', 'all six fields have a visible warm focus');
+        assert(styles.boxShadow === 'none', 'focus has no heavy shadow');
+      }
       assert(tree.querySelectorAll('[aria-label^="Страница "]').length === 2, '51 results have two pages');
       pageTwo();
       assert(cards() === 1 && form === tree.querySelector('.book-search-form') && form.elements.query.value === 'ЛЕМ', 'page two retains form');
@@ -111,6 +149,7 @@ export async function runSearchTests(test, assert, equal) {
       setValue(form.elements.genre, 'sci_psychology');
       form.requestSubmit();
       assert(cards() === 50 && !tree.querySelector('.book-pagination'), '50 results omit paginator and new search resets page');
+      checkCounter();
       icon.click();
       assert(document.activeElement === form.elements.query && !header.classList.contains('quick-search-open'), 'icon focuses existing search');
       setValue(form.elements.query, 'нет совпадений');
@@ -157,7 +196,7 @@ export async function runSearchTests(test, assert, equal) {
     sourceHeader.querySelector('#user-controls').hidden = false;
     sourceHeader.querySelector('#book-search-button').hidden = false;
     sourceHeader.querySelector('#book-search-button').disabled = false;
-    for (const width of [320, 390, 480, 768, 1200]) {
+    for (const width of [320, 390, 480, 768, 1000, 1001, 1200]) {
       const iframe = document.createElement('iframe');
       iframe.style.cssText = `width:${width}px;height:300px;border:0;`;
       const loaded = new Promise((resolve) => iframe.addEventListener('load', resolve, { once: true }));
@@ -168,14 +207,31 @@ export async function runSearchTests(test, assert, equal) {
       const header = doc.querySelector('.app-header');
       const avatar = doc.querySelector('#avatar-button');
       const before = avatar.getBoundingClientRect();
+      const iconBefore = doc.querySelector('#book-search-button').getBoundingClientRect();
       header.classList.add('quick-search-open');
+      doc.querySelector('#quick-search-form').inert = false;
       const after = avatar.getBoundingClientRect();
       const input = doc.querySelector('#quick-search-input').getBoundingClientRect();
       const icon = doc.querySelector('#book-search-button').getBoundingClientRect();
       equal([after.x, after.y], [before.x, before.y], `avatar stable at ${width}px`);
+      equal([icon.x, icon.y], [iconBefore.x, iconBefore.y], `icon stable at ${width}px`);
       assert(input.left >= 0 && input.right <= width, `field fits viewport at ${width}px`);
       if (width <= 1000) assert(input.top >= after.bottom, `separate mobile row at ${width}px`);
-      else assert(input.right <= icon.left, 'desktop field opens left of icon');
+      else {
+        assert(input.right <= icon.left, 'desktop field opens left of icon');
+        const center = (rect) => rect.top + rect.height / 2;
+        assert(Math.abs(center(input) - center(icon)) < 1 && Math.abs(center(input) - center(after)) < 1, 'desktop input, icon and avatar share vertical center');
+        const link = doc.querySelector('#advanced-search-button');
+        assert(link.getBoundingClientRect().top >= input.bottom, 'advanced search is below input');
+        link.textContent += ' '.repeat(5) + 'очень длинная подпись для проверки переноса строки';
+        assert(Math.abs(center(doc.querySelector('#quick-search-input').getBoundingClientRect()) - center(input)) < 1, 'link height does not affect input center');
+      }
+      for (const selector of ['#quick-search-input', '#book-search-button', '#advanced-search-button']) {
+        const element = doc.querySelector(selector);
+        element.focus();
+        const styles = iframe.contentWindow.getComputedStyle(element);
+        assert(element.matches(':focus-visible') && styles.outlineColor === 'rgb(138, 98, 59)' && styles.outlineStyle === 'solid', `warm accessible focus for ${selector}`);
+      }
       assert(doc.documentElement.scrollWidth <= width, `no header overflow at ${width}px`);
       iframe.remove();
     }

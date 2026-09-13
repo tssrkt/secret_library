@@ -410,7 +410,7 @@ dd { margin: 0; font-weight: 750; font-variant-numeric: tabular-nums; }
 }
 .search-icon-button:not(:disabled):hover { color: black; cursor: pointer; }
 .search-icon-button:focus-visible, .advanced-search-link:focus-visible {
-  outline: 2px solid black;
+  outline: 2px solid #8a623b;
   outline-offset: 2px;
 }
 .quick-search-form {
@@ -442,10 +442,13 @@ dd { margin: 0; font-weight: 750; font-variant-numeric: tabular-nums; }
   font: inherit;
 }
 .quick-search-form input:focus-visible, .book-search-form input:focus-visible, .book-search-form select:focus-visible {
-  outline: 2px solid #273142;
+  outline: 2px solid #8a623b;
   outline-offset: 2px;
 }
 .advanced-search-link {
+  position: absolute;
+  top: 100%;
+  left: 0;
   padding: .2rem 0;
   font-size: .8rem;
   font-weight: 400;
@@ -477,6 +480,7 @@ dd { margin: 0; font-weight: 750; font-variant-numeric: tabular-nums; }
   .app-header.quick-search-open { padding-bottom: 4.5rem; }
   .quick-search-form { right: 0; left: 0; top: auto; bottom: 0; width: auto; transform: translateY(-.3rem); }
   .quick-search-open .quick-search-form { transform: translateY(0); }
+  .advanced-search-link { position: static; }
 }
 @media (prefers-reduced-motion: reduce) {
   .quick-search-form { transition: none; }

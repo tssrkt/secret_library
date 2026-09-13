@@ -25,6 +25,10 @@ const server = createServer(async (request, response) => {
     if (!path.startsWith(root + sep)) { response.writeHead(403).end(); return; }
     let content = await readFile(path);
     if (pathname === '/keyboard-fixture') content = content.toString().replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, '') + setup;
+    if (pathname === '/tests/fb2-tests.html') content = content.toString().replace(
+      '<script type="module" src="./fb2-tests.js"></script>',
+      '<script type="module">await new Promise(resolve => window.addEventListener("load", resolve, { once: true })); await import("./fb2-tests.js");</script>',
+    );
     response.setHeader('Content-Type', ({ '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.json': 'application/json', '.css': 'text/css' })[extname(path)] || 'application/octet-stream');
     response.end(content);
   } catch { response.writeHead(404).end(); }
@@ -74,6 +78,7 @@ try {
     await send('Input.dispatchKeyEvent', { type: 'keyUp', key, code, windowsVirtualKeyCode: virtualKey });
   };
   await send('Runtime.enable');
+  await send('Emulation.setFocusEmulationEnabled', { enabled: true });
   await send('Page.navigate', { url: `http://127.0.0.1:${server.address().port}/keyboard-fixture` });
   for (let i = 0; i < 100 && !await evaluate('Boolean(window.testReady)'); i++) await delay(50);
   assert(await evaluate('Boolean(window.testReady)'), await evaluate('JSON.stringify({url:location.href,body:document.body?.innerText,html:document.documentElement.outerHTML.slice(-1400)})'));
@@ -105,6 +110,12 @@ try {
     await key('Escape', 'Escape', 27);
   }
   console.log('Keyboard checks passed: native Enter, Escape, Tab, query transfer, automatic search and advanced submit.');
+  await key('Tab', 'Tab', 9);
+  await send('Page.navigate', { url: `http://127.0.0.1:${server.address().port}/tests/fb2-tests.html` });
+  for (let i = 0; i < 600 && !await evaluate('Boolean(document.body?.dataset.testStatus)'); i++) await delay(50);
+  const summary = await evaluate("document.querySelector('#results')?.textContent");
+  assert.equal(await evaluate('document.body?.dataset.testStatus'), 'passed', summary);
+  console.log(summary);
 } finally {
   socket?.close();
   chrome.kill();

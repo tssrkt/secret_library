@@ -22,7 +22,6 @@ export function createSearchController({ container, header, button, quickForm, q
     searchState.page = page.currentPage;
     const count = documentRef.createElement('p');
     count.className = 'search-result-count';
-    count.tabIndex = -1;
     count.setAttribute('role', 'status');
     count.textContent = `${page.totalItems === 1 ? 'Найдена' : 'Найдено'} ${russianBookCount(page.totalItems)}`;
     const grid = documentRef.createElement('div');
@@ -39,7 +38,6 @@ export function createSearchController({ container, header, button, quickForm, q
     } });
     disposeCards(results);
     results.replaceChildren(count, grid, ...(paginator ? [paginator] : []));
-    count.focus({ preventScroll: true });
   };
   const execute = () => {
     searchState.page = 1;
