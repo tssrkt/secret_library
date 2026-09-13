@@ -62,6 +62,8 @@ export async function indexPendingBooks(index, {
       }
       const recovery = metadata.binaryRecovery;
       const previous = previousBooks.get(book.id);
+      const preserveFull = Boolean(recovery?.code === 'metadata_only_recovered' && previous
+        && previous.metadataWarning !== 'metadata_only_recovered');
       const preserveCover = Boolean(recovery?.coverDamaged && previous?.coverFileId);
       let coverFields = {};
       try {
@@ -77,19 +79,22 @@ export async function indexPendingBooks(index, {
       delete metadata.cover;
       delete metadata.coverId;
       delete metadata.binaryRecovery;
-      Object.assign(book, metadata, coverFields, { metadataStatus: 'ready', metadataVersion: METADATA_VERSION });
+      if (preserveFull) {
+        for (const key of Object.keys(book)) delete book[key];
+        Object.assign(book, previousRecord(previous, sources.get(previous.id)));
+      } else Object.assign(book, metadata, coverFields, { metadataStatus: 'ready', metadataVersion: METADATA_VERSION });
       delete book.metadataError;
       delete book.metadataErrorMessage;
-      if (!Object.hasOwn(metadata, 'metadataWarning')) delete book.metadataWarning;
+      if (!preserveFull && !Object.hasOwn(metadata, 'metadataWarning')) delete book.metadataWarning;
       clearReport();
       if (recovery) {
         stats.recovered += 1;
         onIssue({ ...recovery, metadataIndexed: true, coverRecovered: !recovery.coverDamaged && Boolean(coverFields.coverFileId),
-          previousCoverPreserved: preserveCover, bookSkipped: false });
+          previousCoverPreserved: preserveCover, previousFullEntryPreserved: preserveFull, bookSkipped: false });
       } else stats.succeeded += 1;
       if (issues.size) {
         const events = [...issues.values()].map((event) => ({ ...event, retryResult: event.retryResult === 'retrying' ? 'success-after-backoff' : event.retryResult }));
-        recordIndexingError(index, book, events, { outcome: 'recovered' });
+        recordIndexingError(index, book, events, { outcome: 'recovered', preserved: preserveFull });
       }
     } catch (error) {
       if (signal?.aborted || error?.name === 'AbortError') {

@@ -217,8 +217,8 @@ export async function extractZipFb2(book, options = {}) {
     const bytes = await archive.readEntry(entry);
     let metadata;
     try { metadata = parseFullFb2(bytes, options.Parser); }
-    catch (error) { error.containerType = 'ZIP'; throw error; }
-    if (metadata.binaryRecovery) metadata.binaryRecovery.containerType = 'ZIP';
+    catch (error) { error.containerType = 'ZIP'; error.entryPath = entry.name; throw error; }
+    if (metadata.binaryRecovery) Object.assign(metadata.binaryRecovery, { containerType: 'ZIP', entryPath: entry.name });
     return { ...metadata, entryPath: entry.name.replaceAll('\\', '/'),
       ...(candidates.length > 1 ? { metadataWarning: 'multiple_fb2_entries' } : {}) };
   });

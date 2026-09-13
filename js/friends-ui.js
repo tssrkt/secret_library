@@ -4,7 +4,7 @@ import { socialError } from './social-runtime.js';
 export function mountFriends(page, social, retry) {
   const shareSection = document.createElement('section');
   shareSection.className = 'social-section';
-  shareSection.innerHTML = '<h3>Поделиться библиотекой</h3><form class="social-share-form"><label>Gmail<input type="email" name="email" autocomplete="off" required aria-label="Gmail"></label><button class="settings-save-button" type="submit">ПОДЕЛИТЬСЯ</button></form><p role="status"></p><button class="settings-save-button" type="button" data-social-retry hidden>ПОВТОРИТЬ ПОДКЛЮЧЕНИЕ</button>';
+  shareSection.innerHTML = '<h3>Поделиться библиотекой</h3><form class="social-share-form"><label><input type="email" name="email" autocomplete="off" required aria-label="Gmail" placeholder="Gmail вашего друга"></label><button class="settings-save-button" type="submit">ПОДЕЛИТЬСЯ</button></form><p role="status"></p><button class="settings-save-button" type="button" data-social-retry hidden>ПОВТОРИТЬ ПОДКЛЮЧЕНИЕ</button>';
   const friendsSection = document.createElement('section');
   friendsSection.className = 'social-section friends-section';
   friendsSection.innerHTML = '<h3>Друзья</h3><p class="friends-count" role="status"></p><div class="friends-table-container"></div>';

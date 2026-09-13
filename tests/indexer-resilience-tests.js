@@ -41,7 +41,9 @@ export async function runIndexerResilienceTests(test, assert, equal, makeZip) {
     for (const [text, reason] of [[source().replace('</binary>', ''), 'closing-boundary-not-found'],
       [source().replace('Текст', '\u0001Текст'), 'sanitized-xml-still-invalid'],
       [source().replace('</binary>', '<section>keep me</section></binary>'), 'ambiguous-binary-boundaries']]) {
-      const error = await rejects(() => parseFullFb2(utf8(text)), 'invalid_xml');
+      const result = parseFullFb2(utf8(text));
+      equal(result.metadataWarning, 'metadata_only_recovered', 'valid description remains recoverable');
+      const error = result.binaryRecovery;
       // The root closing tag is structural evidence when a binary closing tag is absent.
       assert(error.binaryRecoveryAttempt.reason === reason || (reason === 'closing-boundary-not-found' && error.binaryRecoveryAttempt.reason === 'ambiguous-binary-boundaries'), 'safe rejection reason');
       const log = formatIndexingErrors([{ ...errorDetails(error), outcome: 'failed' }]);

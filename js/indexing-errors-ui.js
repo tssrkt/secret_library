@@ -43,7 +43,8 @@ export function createIndexingErrorsController(root) {
       root.hidden = !entries.length;
       const failed = entries.filter((entry) => entry.outcome === 'failed').length;
       const recovered = entries.filter((entry) => entry.outcome === 'recovered').length;
-      const warnings = entries.filter((entry) => entry.outcome === 'recovered' && entry.code === 'binary_corruption_recovered').length;
+      const isWarning = (entry) => ['binary_corruption_recovered', 'metadata_only_recovered'].includes(entry.code);
+      const warnings = entries.filter((entry) => entry.outcome === 'recovered' && isWarning(entry)).length;
       const preserved = entries.filter((entry) => entry.previousEntryPreserved).length;
       const excluded = entries.filter((entry) => entry.outcome === 'excluded').length;
       const interrupted = entries.length - failed - recovered - excluded;
@@ -53,7 +54,7 @@ export function createIndexingErrorsController(root) {
       const renderEntry = (entry) => {
         const item = document.createElement('li');
         item.textContent = `${entry.fileName || entry.fileId || 'Индекс'} — ${entry.stage} — ${entry.status ? `HTTP ${entry.status}` : entry.code}: ${entry.message}`
-          + (entry.outcome === 'recovered' && entry.code !== 'binary_corruption_recovered' ? ' (повтор успешен)' : '')
+          + (entry.outcome === 'recovered' && !isWarning(entry) ? ' (повтор успешен)' : '')
           + (entry.binaries ? ` Вложения: ${entry.binaries.map((binary) => binary.id || '(без id)').join(', ')}.` : '')
           + (entry.previousCoverPreserved ? ' (предыдущая обложка сохранена)' : '')
           + (entry.previousEntryPreserved ? ' (старая запись сохранена)' : '');

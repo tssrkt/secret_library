@@ -1505,6 +1505,7 @@ await runSearchTests(test, assert, equal);
 await runUserSettingsTests(test, assert, equal);
 await runIndexingErrorTests(test, assert, equal, makeZip);
 await runBinaryRecoveryTests(test, assert, equal);
+await (await import('./metadata-only-tests.js')).runMetadataOnlyTests(test, assert, equal, makeZip);
 await runIndexingRunTests(test, assert, equal);
 await runIndexerResilienceTests(test, assert, equal, makeZip);
 await runBookFormatTests(test, assert, equal, makeZip);

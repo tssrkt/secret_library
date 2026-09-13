@@ -1,6 +1,7 @@
 import { downloadDriveFile, downloadFileRange } from './drive.js';
 import { recoverBinaryXml, xmlParserDiagnostics } from './fb2-binary-recovery.js';
 import { sniffFb2 } from './fb2-format.js';
+import { recoverDescriptionXml } from './fb2-metadata-recovery.js';
 
 // Bounded geometric reads, not one request per MiB. Full XML still has a memory budget.
 export const MAX_FB2_DOCUMENT_BYTES = 128 * 1024 * 1024;
@@ -85,6 +86,7 @@ async function readFb2Prefix(fileId, { signal, fetchRange = downloadFileRange, s
     chunks.push(response.bytes);
     totalLength += response.bytes.length;
     const bytes = concatChunks(chunks, totalLength);
+    if (sniffFb2(bytes).classification === 'unexpected_zip') return { bytes, complete: response.status === 200 || response.isComplete || bytes.length >= size, zip: true };
     let text;
     try { text = decodeFb2(bytes); }
     catch (error) {
@@ -266,12 +268,22 @@ function parseFullDocument(bytes, Parser) {
     const diagnostics = xmlParserDiagnostics(document);
     const binaryRecoveryAttempt = {};
     recovery = recoverBinaryXml(text, Parser, binaryRecoveryAttempt);
-    if (!recovery) throw Object.assign(new Fb2Error(format.classification || 'invalid_xml', 'FB2 document is malformed XML.'),
-      diagnostics, { stage: 'parse', encoding, containerType: 'raw FB2', format, binaryRecoveryAttempt });
-    document = recovery.document;
-    recovery = { code: 'binary_corruption_recovered', stage: 'parse',
+    if (!recovery) {
+      const metadataRecoveryAttempt = {};
+      const descriptionDocument = !format.classification && recoverDescriptionXml(text, Parser, metadataRecoveryAttempt);
+      if (!descriptionDocument) throw Object.assign(new Fb2Error(format.classification || 'invalid_xml', 'FB2 document is malformed XML.'),
+        diagnostics, { stage: 'parse', encoding, containerType: 'raw FB2', format, binaryRecoveryAttempt, metadataRecoveryAttempt });
+      document = descriptionDocument;
+      recovery = { code: 'metadata_only_recovered', stage: 'parse',
+        message: 'Полный FB2 повреждён; метаданные восстановлены из валидного description.',
+        ...diagnostics, encoding, containerType: 'raw FB2', binaryRecoveryAttempt, metadataRecoveryAttempt,
+        fullXmlParsed: false, bodyIndexed: false, previewIndexed: false, coverDamaged: true };
+    } else {
+      document = recovery.document;
+      recovery = { code: 'binary_corruption_recovered', stage: 'parse',
       message: 'Повреждено встроенное изображение; книга проиндексирована без него.',
       binaries: recovery.binaries, ...diagnostics, encoding, containerType: 'raw FB2', binaryRecoveryAttempt };
+    }
   }
   if (document.documentElement?.localName !== 'FictionBook') throw Object.assign(
     new Fb2Error(format.classification || 'invalid_xml', 'Expected an FB2 FictionBook document.'), { stage: 'parse', encoding, format });
@@ -282,9 +294,10 @@ function parseFullDocument(bytes, Parser) {
   if (!titleInfo) throw new Fb2Error('parse_failed', 'FB2 title-info is missing.');
   const metadata = titleInfoMetadata(titleInfo);
   if (recovery) {
-    metadata.binaryRecovery = { ...recovery, coverDamaged: recovery.binaries.some((binary) => binary.id === metadata.coverId) };
+    metadata.binaryRecovery = { ...recovery, coverDamaged: recovery.coverDamaged || recovery.binaries.some((binary) => binary.id === metadata.coverId) };
     metadata.metadataWarning = recovery.code;
   }
+  if (recovery?.code === 'metadata_only_recovered') return metadata;
   if (!metadata.annotation) metadata.preview = atStage('preview', () => extractBodyPreview(document));
   if (!metadata.coverId) return metadata;
   if (metadata.binaryRecovery?.coverDamaged) return metadata;
@@ -311,9 +324,12 @@ export async function extractFb2Metadata(book, options = {}) {
     if (!Number.isFinite(book.size) || book.size <= 1_048_576) {
       const blob = await (options.downloadFile || downloadDriveFile)(book.id, options.signal);
       if (blob.size > MAX_FB2_DOCUMENT_BYTES) throw new Fb2Error('fb2_memory_limit_exceeded', 'Full FB2 parse exceeds the 128 MiB memory budget.');
-      return parseFullFb2(new Uint8Array(await blob.arrayBuffer()), options.Parser);
+      const bytes = new Uint8Array(await blob.arrayBuffer());
+      if (options.onZip && sniffFb2(bytes).classification === 'unexpected_zip') return options.onZip(bytes, true);
+      return parseFullFb2(bytes, options.Parser);
     }
     const result = await readFb2Prefix(book.id, { ...options, size: book.size });
+    if (result.zip && options.onZip) return options.onZip(result.bytes, result.complete);
     if (result.complete) return parseFullFb2(result.bytes, options.Parser);
     let metadata;
     try { metadata = parseFb2Metadata(result.prefix, options.Parser); }

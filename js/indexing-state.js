@@ -9,7 +9,7 @@ export function indexingCounts(index) {
   const failed = failedBookIds(index);
   const warnings = new Set((index.indexingErrors || []).filter((entry) => entry.outcome === 'recovered').map((entry) => entry.fileId));
   const ready = index.books.filter((book) => book.metadataStatus === 'ready' && !failed.has(book.id));
-  const recoveredBooks = ready.filter((book) => warnings.has(book.id) || book.metadataWarning === 'binary_corruption_recovered').length;
+  const recoveredBooks = ready.filter((book) => warnings.has(book.id) || ['binary_corruption_recovered', 'metadata_only_recovered'].includes(book.metadataWarning)).length;
   return { totalEligibleBooks: Number.isInteger(index.lastFullScan?.totalEligible) ? index.lastFullScan.totalEligible : null,
     failedBooks: failed.size, recoveredBooks, successBooks: ready.length - recoveredBooks };
 }

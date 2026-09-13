@@ -70,7 +70,7 @@ export async function runBinaryRecoveryTests(test, assert, equal) {
     equal(metadata.binaryRecovery.binaries[0].id, 'cover.jpg', 'namespace and quote aware scanning');
     equal(attempts[1], text.replace(bad, ''), 'attributes kept byte-for-byte');
   });
-  await test('real XML damage outside binary and ambiguous boundaries remain fatal', () => {
+  await test('damage outside binary never repairs body; only a valid description can survive', () => {
     const cases = [
       source().replace('</section>', ''),
       source().replace('Обычный', 'Обычный\u0001'),
@@ -86,7 +86,11 @@ export async function runBinaryRecoveryTests(test, assert, equal) {
       source('').replace('</section>', '<![CDATA[<binary id="fake">\u0001</binary>]]></section>'),
     ];
     for (const text of cases) {
-      try { parseFullFb2(bytes(text)); assert(false, 'must reject genuine malformed XML'); }
+      try {
+        const result = parseFullFb2(bytes(text));
+        equal(result.metadataWarning, 'metadata_only_recovered', 'only description recovered');
+        assert(!result.preview && !result.cover, 'damaged body and cover not indexed');
+      }
       catch (error) {
         equal(error.code, 'invalid_xml', 'fatal invalid_xml retained');
         assert(error.parserMessage && error.stage === 'parse', 'safe parser diagnostic attached');
@@ -131,7 +135,7 @@ export async function runBinaryRecoveryTests(test, assert, equal) {
     const active = { version: 4, rootFolderId: 'root', folders: [], books: [old, pending('next'), pending('no-previous')] };
     const building = prepareBuildingIndex(active);
     const stats = await indexPendingBooks(building, { previousIndex: active, concurrency: 1,
-      extract: async (book) => parseFullFb2(bytes(book.id === 'next' ? source(binary('cover.jpg', PNG)) : source().replace('Обычный', 'Обычный\u0001'))),
+      extract: async (book) => parseFullFb2(bytes(book.id === 'next' ? source(binary('cover.jpg', PNG)) : source().replace('Тестовая аннотация', 'Аннотация\u0001'))),
     });
     equal([stats.succeeded, stats.recovered, stats.failed, stats.processed], [1, 0, 2, 3], 'continue after invalid_xml');
     equal(building.books[0], old, 'whole previous good record preserved');

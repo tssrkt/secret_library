@@ -52,6 +52,30 @@ export async function runSocialUiTests(test, assert, equal) {
       social.update({ friends: [] }); equal(page.querySelectorAll('tbody tr').length, 0, 'no active relationship removes row');
     } finally { cleanup(); page.remove(); }
   });
+  await test('settings controls use download accent, equal form heights and accessible Gmail placeholder', () => {
+    const page = document.createElement('div'); page.style.width = '650px'; document.body.append(page);
+    const cleanup = mountFriends(page, stub({}), () => {});
+    try {
+      const form = page.querySelector('form'); const input = form.elements.email; const button = form.querySelector('button');
+      equal(input.placeholder, 'Gmail вашего друга', 'placeholder');
+      assert(input.getAttribute('aria-label') && !form.querySelector('label').textContent.trim(), 'accessible name without visible label');
+      assert(!input.checkValidity(), 'empty value still required');
+      input.value = 'invalid'; assert(!input.checkValidity(), 'invalid email rejected');
+      input.value = 'friend@gmail.com'; assert(input.checkValidity(), 'email accepted');
+      const field = input.getBoundingClientRect(); const action = button.getBoundingClientRect();
+      equal([action.top, action.height], [field.top, field.height], 'same top and height from flex stretch');
+      equal(field.width, 280, 'input width preserved');
+      const retry = page.querySelector('[data-social-retry]'); retry.hidden = false;
+      const style = getComputedStyle(retry);
+      assert(parseFloat(style.paddingLeft) >= 16 && style.paddingLeft === style.paddingRight, 'standard equal horizontal padding');
+      equal(retry.getBoundingClientRect().height, 34, 'retry height unchanged');
+      const list = document.createElement('div'); list.className = 'sharing-folder-list';
+      list.innerHTML = '<input type="checkbox" checked><button class="book-download-button">СКАЧАТЬ</button>'; page.append(list);
+      const checkbox = list.querySelector('input');
+      equal(getComputedStyle(checkbox).accentColor, getComputedStyle(list.querySelector('button')).backgroundColor, 'same download accent');
+      checkbox.focus(); assert(parseFloat(getComputedStyle(checkbox).outlineWidth) > 0, 'keyboard focus retained');
+    } finally { cleanup(); page.remove(); }
+  });
   await test('notification badge, read marking, reciprocal action and dropdown coordination', async () => {
     const root = document.createElement('div');
     root.innerHTML = '<button id="test-bell"><span data-notification-badge hidden></span></button><div id="test-notifications" hidden></div><button id="test-avatar"></button><div id="test-menu" hidden></div>';

@@ -14,6 +14,14 @@ export function errorDetails(error, extra = {}) {
     ...(error.folderId ? { folderId: error.folderId, folderName: error.folderName || '' } : {}),
     ...(error.encoding ? { encoding: error.encoding } : {}),
     ...(error.containerType ? { containerType: error.containerType } : {}),
+    ...(error.entryPath ? { entryPath: String(error.entryPath).replace(/[\r\n\t]/g, ' ').slice(0, 240) } : {}),
+    ...(error.containerDetectedBySignature ? { containerDetectedBySignature: true } : {}),
+    ...(error.metadataRecoveryAttempt?.attempted ? { metadataRecoveryAttempt: { ...error.metadataRecoveryAttempt } } : {}),
+    ...(error.code === 'metadata_only_recovered' ? {
+      fullXmlParsed: false, bodyIndexed: false, previewIndexed: false, metadataIndexed: error.metadataIndexed,
+      coverRecovered: false, previousCoverPreserved: error.previousCoverPreserved,
+      previousFullEntryPreserved: error.previousFullEntryPreserved, bookSkipped: false,
+    } : {}),
     ...(error.format ? { format: error.format } : {}),
     ...(error.binaryRecoveryAttempt ? { binaryRecoveryAttempt: { ...error.binaryRecoveryAttempt } } : {}),
     ...(error.parserMessage ? { parserLine: error.parserLine, parserColumn: error.parserColumn, parserMessage: error.parserMessage } : {}),
@@ -32,7 +40,7 @@ export function errorDetails(error, extra = {}) {
 export function recordIndexingError(index, book, events, { preserved = false, outcome = 'failed' } = {}) {
   index.indexingErrors ||= [];
   const entry = {
-    ...(outcome === 'recovered' ? events.find((event) => event.code === 'binary_corruption_recovered') || events[0] : events.at(-1)), fileName: book.fileName || '', fileId: book.id || '',
+    ...(outcome === 'recovered' ? events.find((event) => ['binary_corruption_recovered', 'metadata_only_recovered'].includes(event.code)) || events[0] : events.at(-1)), fileName: book.fileName || '', fileId: book.id || '',
     retryResult: events.at(-1).retryResult, previousEntryPreserved: preserved, outcome, events,
   };
   // One report per file/run; individual request failures remain in its events.
@@ -54,6 +62,13 @@ export function formatIndexingErrors(entries) {
       `Content-Range: ${event.contentRange || 'unavailable'}`, `Retry: ${event.retryResult}`,
       ...(event.encoding ? [`Encoding: ${event.encoding}`] : []),
       ...(event.containerType ? [`Container: ${event.containerType}`] : []),
+      ...(event.entryPath ? [`Inner FB2 entry: ${event.entryPath}`] : []),
+      ...(event.containerDetectedBySignature ? ['Container detected by signature: yes'] : []),
+      ...(event.metadataRecoveryAttempt ? [`Metadata recovery attempted: yes`, `Metadata recovery result: ${event.metadataRecoveryAttempt.result}`,
+        `Metadata recovery reason: ${event.metadataRecoveryAttempt.reason}`, `Description XML valid: ${event.metadataRecoveryAttempt.descriptionValid ? 'yes' : 'no'}`] : []),
+      ...(event.code === 'metadata_only_recovered' ? ['Full XML parsed: no', 'Metadata indexed: yes', 'Body indexed: no', 'Preview indexed: no', 'Cover recovered: no',
+        `Previous cover preserved: ${event.previousCoverPreserved ? 'yes' : 'no'}`,
+        `Previous full index entry preserved: ${event.previousFullEntryPreserved ? 'yes' : 'no'}`, 'Book skipped: no'] : []),
       ...(event.format ? [`Signature: ${event.format.classification || 'XML/unknown'}`, `BOM: ${event.format.bom || 'none'}`, `XML declaration: ${event.format.xmlDeclaration ? 'yes' : 'no'}`] : []),
       ...(event.binaryRecoveryAttempt ? [`Binary recovery attempted: yes`, `Candidate binaries found: ${event.binaryRecoveryAttempt.candidateBinaries}`,
         `Recovery result: ${event.binaryRecoveryAttempt.result}`, `Reason: ${event.binaryRecoveryAttempt.reason}`] : []),
