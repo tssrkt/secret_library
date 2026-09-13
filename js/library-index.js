@@ -25,7 +25,7 @@ export function migrateIndex(index) {
   index.version = INDEX_VERSION;
   for (const book of index.books) {
     if (!book.sourceType) {
-      book.sourceType = /\.zip$/i.test(book.fileName) ? 'zip' : 'fb2';
+      book.sourceType = /\.(zip|epub|mobi)$/i.exec(book.fileName)?.[1].toLowerCase() || 'fb2';
       if (book.sourceType === 'zip' && !Object.hasOwn(book, 'entryPath')) book.entryPath = null;
       migrated = true;
     }

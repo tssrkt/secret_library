@@ -1,9 +1,13 @@
-import { FOLDER_MIME_TYPE, INDEX_VERSION, SCAN_CONCURRENCY } from './config.js';
+import { BOOK_SOURCE_TYPES, FOLDER_MIME_TYPE, INDEX_VERSION, SCAN_CONCURRENCY } from './config.js';
 import { getFolder, listFolderChildren } from './drive.js';
 
 export function classifyLibraryItem(file) {
   if (file.mimeType === FOLDER_MIME_TYPE) return 'folder';
-  if (/\.fb2$/i.test(file.name)) return 'fb2';
+  const extension = /\.(fb2|zip|epub|mobi)$/i.exec(file.name)?.[1].toLowerCase();
+  if (extension) return extension;
+  if (/\.(azw3?|pdf|djvu|docx?|txt)$/i.test(file.name)) return 'other';
+  if (file.mimeType === 'application/epub+zip') return 'epub';
+  if (file.mimeType === 'application/x-mobipocket-ebook') return 'mobi';
   if (/\.zip$/i.test(file.name) || ['application/zip', 'application/x-zip-compressed'].includes(file.mimeType)) return 'zip';
   return 'other';
 }
@@ -35,7 +39,7 @@ export async function scanLibrary(rootFolderId, onProgress = () => {}, { signal 
           if (itemType === 'folder') {
             folders.push({ id: item.id, parentId, name: item.name });
             pending.push(item.id);
-          } else if (['fb2', 'zip'].includes(itemType)) {
+          } else if (BOOK_SOURCE_TYPES.includes(itemType)) {
             books.push({
               id: item.id,
               parentId,
@@ -86,6 +90,10 @@ export function preserveBookMetadata(currentIndex, previousIndex) {
     if (book.metadataStatus === 'processing') book.metadataStatus = 'pending';
   }
   currentIndex.createdAt = previousIndex.createdAt || currentIndex.createdAt;
+  const presentIds = new Set(currentIndex.books.map((book) => book.id));
+  currentIndex.indexingErrors = structuredClone((previousIndex.indexingErrors || []).filter((entry) => presentIds.has(entry.fileId)));
+  if (previousIndex.lastIndexingRun) currentIndex.lastIndexingRun = structuredClone(previousIndex.lastIndexingRun);
+  if (previousIndex.fullRunId) currentIndex.fullRunId = previousIndex.fullRunId;
   return currentIndex;
 }
 

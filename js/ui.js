@@ -332,7 +332,7 @@ export function renderLibrary(index, onDownload = async () => {}) {
   if (!branch.childElementCount) {
     const empty = document.createElement('p');
     empty.className = 'empty-library';
-    empty.textContent = 'В библиотеке пока нет папок или FB2-файлов.';
+    empty.textContent = 'В библиотеке пока нет папок или книг.';
     elements.tree.append(empty);
   } else {
     elements.tree.append(branch);
@@ -352,7 +352,7 @@ export function renderLibrary(index, onDownload = async () => {}) {
       if (!branch.childElementCount) {
         const empty = document.createElement('p');
         empty.className = 'empty-library';
-        empty.textContent = 'В библиотеке пока нет папок или FB2-файлов.';
+        empty.textContent = 'В библиотеке пока нет папок или книг.';
         elements.tree.append(empty);
       }
     }

@@ -27,6 +27,7 @@ import { runIndexingErrorTests } from './indexing-errors-tests.js';
 import { runBinaryRecoveryTests } from './fb2-binary-recovery-tests.js';
 import { runIndexingRunTests } from './indexing-run-tests.js';
 import { runIndexerResilienceTests } from './indexer-resilience-tests.js';
+import { runBookFormatTests } from './book-formats-tests.js';
 import { runSocialUiTests } from './social-ui-tests.js';
 import {
   AUTH_SESSION_KEY, PREVIOUS_SIGN_IN_KEY, clearAccessToken, clearPersistedAuth,
@@ -108,6 +109,7 @@ await test('late Google response cannot restore authorization after logout', () 
 });
 
 async function test(name, callback) {
+  console.debug('TEST', name);
   output.textContent = `${passed} passed, ${failures.length} failed; running: ${name}`;
   try {
     await callback();
@@ -1504,6 +1506,7 @@ await runIndexingErrorTests(test, assert, equal, makeZip);
 await runBinaryRecoveryTests(test, assert, equal);
 await runIndexingRunTests(test, assert, equal);
 await runIndexerResilienceTests(test, assert, equal, makeZip);
+await runBookFormatTests(test, assert, equal, makeZip);
 await runSocialUiTests(test, assert, equal);
 
 output.textContent = failures.length

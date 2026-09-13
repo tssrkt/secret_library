@@ -87,6 +87,7 @@ async function rebuildIndex() {
     try {
       indexFileId = await saveIndex(index, indexFileId);
       ui.setStatus(`Библиотека обновлена: ${index.books.length.toLocaleString('ru-RU')} книг.`);
+      await runMetadataIndexing({ refreshOnly: true });
     } catch (error) {
       reportOperationError(index, error, 'index-write', indexFileId, 'secret-library-index.json');
       ui.setStatus('Сканирование завершено, библиотека доступна в этой вкладке.');
@@ -101,12 +102,13 @@ async function rebuildIndex() {
   }
 }
 
-async function runMetadataIndexing({ retryErrors = false } = {}) {
+async function runMetadataIndexing({ retryErrors = false, refreshOnly = false } = {}) {
   if (!currentIndex || metadataController) return;
+  if (refreshOnly && !currentIndex.books.some((book) => ['pending', 'processing'].includes(book.metadataStatus))) return;
   const activeIndex = currentIndex;
-  const mode = retryErrors ? 'retry' : 'full';
-  if (!retryErrors && !window.confirm('Переиндексировать всю библиотеку? Будут повторно обработаны все книги.')) return;
-  const modeLabel = retryErrors ? 'Повторная обработка ошибок' : 'Полная переиндексация';
+  const mode = refreshOnly ? 'refresh' : retryErrors ? 'retry' : 'full';
+  if (mode === 'full' && !window.confirm('Переиндексировать всю библиотеку? Будут повторно обработаны все книги.')) return;
+  const modeLabel = refreshOnly ? 'Индексация новых и изменённых книг' : retryErrors ? 'Повторная обработка ошибок' : 'Полная переиндексация';
   metadataController = new AbortController();
   ui.clearError();
   ui.setMetadataRunning(true);
@@ -120,7 +122,7 @@ async function runMetadataIndexing({ retryErrors = false } = {}) {
     });
     prepared = true;
     resetProcessingBooks(buildingIndex);
-    if (retryErrors && !buildingIndex.buildState.total) return;
+    if (mode !== 'full' && !buildingIndex.buildState.total) return;
     const cachedCount = Math.max(0, buildingIndex.books.length - buildingIndex.buildState.total);
     const previousProgress = { ...buildingIndex.buildState.progress };
     const overallProgress = (progress) => ({

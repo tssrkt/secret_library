@@ -58,15 +58,20 @@ try {
   await once(socket, 'open');
   let sequence = 0;
   const pending = new Map();
+  let currentTest = 'browser setup';
   socket.addEventListener('message', ({ data }) => {
     const response = JSON.parse(data);
+    if (response.method === 'Runtime.consoleAPICalled' && response.params.args?.[0]?.value === 'TEST') {
+      currentTest = response.params.args[1]?.value;
+      if (process.env.TEST_TRACE) console.log(currentTest);
+    }
     if (response.method === 'Runtime.exceptionThrown') console.error(JSON.stringify(response.params.exceptionDetails));
     const callback = pending.get(response.id);
     if (callback) { pending.delete(response.id); response.error ? callback.reject(response.error) : callback.resolve(response.result); }
   });
   const send = (method, params = {}) => new Promise((resolve, reject) => {
     const id = ++sequence;
-    const timer = setTimeout(() => { pending.delete(id); reject(new Error(`Chrome command timed out: ${method}`)); }, 15000);
+    const timer = setTimeout(() => { pending.delete(id); reject(new Error(`Chrome command timed out: ${method}; test: ${currentTest}`)); }, 60000);
     pending.set(id, { resolve: (value) => { clearTimeout(timer); resolve(value); }, reject: (error) => { clearTimeout(timer); reject(error); } });
     socket.send(JSON.stringify({ id, method, params }));
   });

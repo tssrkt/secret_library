@@ -9,7 +9,7 @@ export function bookCardView(book, genresRu = {}) {
   const genre = Array.isArray(book.genres)
     ? book.genres.find((value) => typeof value === 'string' && value.trim())
     : book.genre;
-  const fallbackTitle = String(book.fileName || '').replace(/\.(fb2|zip)$/i, '').trim() || book.fileName;
+  const fallbackTitle = String(book.fileName || '').replace(/\.(fb2|zip|epub|mobi)$/i, '').trim() || book.fileName;
   return {
     author: ready && book.authors?.length ? book.authors.join(', ') : 'Автор не указан',
     title: ready ? textOrFallback(book.title, fallbackTitle) : fallbackTitle,

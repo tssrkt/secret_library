@@ -1,9 +1,10 @@
 import { scanLibrary, classifyLibraryItem } from './library-tree.js';
 import { getLibraryFile } from './drive.js';
 import { canResumeBuildingIndex, prepareBuildingIndex } from './index-build.js';
+import { BOOK_SOURCE_TYPES } from './config.js';
 
 export async function prepareIndexingRun(active, { mode, building = null, scan = scanLibrary, signal, onScan = () => {} }) {
-  if (!['full', 'retry'].includes(mode)) throw new Error('Unknown indexing mode.');
+  if (!['full', 'retry', 'refresh'].includes(mode)) throw new Error('Unknown indexing mode.');
   const scannedIndex = mode === 'full' ? await scan(active.rootFolderId, onScan, { signal }) : undefined;
   signal?.throwIfAborted();
   return canResumeBuildingIndex(building, active, { mode, scannedIndex }) ? building
@@ -19,7 +20,7 @@ export function createRetryEligibilityCheck(index, { getFile = getLibraryFile, s
   return async (book) => {
     try {
       const file = await getFile(book.id, signal);
-      if (file.trashed || !['fb2', 'zip'].includes(classifyLibraryItem(file))) return false;
+      if (file.trashed || !BOOK_SOURCE_TYPES.includes(classifyLibraryItem(file))) return false;
       const ancestors = [];
       let parent = file.parents?.[0];
       const visited = new Set();

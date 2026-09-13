@@ -1,4 +1,4 @@
-import { INDEX_VERSION, METADATA_VERSION } from './config.js';
+import { BOOK_SOURCE_TYPES, INDEX_VERSION, METADATA_VERSION } from './config.js';
 import { failedBookIds, indexingCounts } from './indexing-state.js';
 
 function cloneIndex(index) {
@@ -16,11 +16,12 @@ export function prepareBuildingIndex(activeIndex, { retryErrors = false, mode = 
   if (mode === 'full' && (!scannedIndex || scannedIndex.rootFolderId !== activeIndex.rootFolderId)) throw new Error('Full reindex requires a fresh scan of the same root.');
   const building = cloneIndex(mode === 'full' ? scannedIndex : activeIndex);
   const previousFailures = failedBookIds(activeIndex);
-  building.indexingErrors = mode === 'retry' ? cloneIndex(activeIndex.indexingErrors || []).filter((entry) => entry.stage !== 'index-write') : [];
+  building.indexingErrors = ['retry', 'refresh'].includes(mode) ? cloneIndex(activeIndex.indexingErrors || []).filter((entry) => entry.stage !== 'index-write') : [];
   const selectedIds = [];
   let total = 0;
   for (const book of building.books) {
-    const needsMetadata = mode === 'full' || (mode === 'retry' ? previousFailures.has(book.id) : book.metadataStatus === 'pending'
+    const needsMetadata = mode === 'full' || (mode === 'retry' ? previousFailures.has(book.id) : mode === 'refresh'
+      ? ['pending', 'processing'].includes(book.metadataStatus) : book.metadataStatus === 'pending'
       || book.metadataStatus === 'processing'
       || book.metadataVersion !== METADATA_VERSION);
     if (!needsMetadata) continue;
@@ -87,11 +88,11 @@ export function validateCompletedIndex(candidate, activeIndex, manifest = candid
   const selected = new Set(manifest?.selectedIds || []);
   const preservedIds = new Set((candidate.indexingErrors || []).filter((entry) => entry.previousEntryPreserved && entry.outcome === 'failed').map((entry) => entry.fileId));
   for (const book of candidate.books) {
-    if (!book?.id || builtIds.has(book.id) || !activeIds.has(book.id) || !book.fileName || !['fb2', 'zip'].includes(book.sourceType)) {
+    if (!book?.id || builtIds.has(book.id) || !activeIds.has(book.id) || !book.fileName || !BOOK_SOURCE_TYPES.includes(book.sourceType)) {
       throw new Error('Built index contains an invalid book record.');
     }
     builtIds.add(book.id);
-    if (manifest?.mode === 'retry' && !selected.has(book.id)) {
+    if (['retry', 'refresh'].includes(manifest?.mode) && !selected.has(book.id)) {
       if (JSON.stringify(book) !== JSON.stringify(oldBooks.get(book.id))) throw new Error('Retry changed an unselected book.');
       continue;
     }
