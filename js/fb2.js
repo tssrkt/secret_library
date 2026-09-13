@@ -1,4 +1,5 @@
 import { downloadDriveFile, downloadFileRange } from './drive.js';
+import { recoverBinaryXml, xmlParserDiagnostics } from './fb2-binary-recovery.js';
 
 export const FB2_RANGES = Object.freeze([
   [0, 65_535],
@@ -206,7 +207,7 @@ export function parseFb2Metadata(descriptionPrefix, Parser = globalThis.DOMParse
   const rootName = rootMatch[0].match(/^<([^\s>]+)/)[1];
   const fragment = `${descriptionPrefix}</${rootName}>`;
   const document = new Parser().parseFromString(fragment, 'application/xml');
-  if (document.querySelector('parsererror')) throw new Fb2Error('invalid_xml', 'FB2 description is malformed XML.');
+  if (document.querySelector('parsererror')) throw Object.assign(new Fb2Error('invalid_xml', 'FB2 description is malformed XML.'), xmlParserDiagnostics(document));
 
   const description = [...document.getElementsByTagNameNS('*', 'description')][0];
   const titleInfo = description && directChild(description, 'title-info');
@@ -226,13 +227,28 @@ function decodeBase64(text) {
 
 export function parseFullFb2(bytes, Parser = globalThis.DOMParser) {
   if (!Parser) throw new Fb2Error('parse_failed', 'DOMParser is unavailable.');
-  const document = new Parser().parseFromString(decodeFb2(bytes), 'application/xml');
-  if (document.querySelector('parsererror')) throw new Fb2Error('invalid_xml', 'FB2 document is malformed XML.');
+  const text = decodeFb2(bytes);
+  let document = new Parser().parseFromString(text, 'application/xml');
+  let recovery = null;
+  if (document.querySelector('parsererror')) {
+    const diagnostics = xmlParserDiagnostics(document);
+    recovery = recoverBinaryXml(text, Parser);
+    if (!recovery) throw Object.assign(new Fb2Error('invalid_xml', 'FB2 document is malformed XML.'), diagnostics);
+    document = recovery.document;
+    recovery = { code: 'binary_corruption_recovered', stage: 'parse',
+      message: 'Повреждено встроенное изображение; книга проиндексирована без него.',
+      binaries: recovery.binaries, ...diagnostics };
+  }
   const titleInfo = [...document.getElementsByTagNameNS('*', 'title-info')][0];
   if (!titleInfo) throw new Fb2Error('parse_failed', 'FB2 title-info is missing.');
   const metadata = titleInfoMetadata(titleInfo);
+  if (recovery) {
+    metadata.binaryRecovery = { ...recovery, coverDamaged: recovery.binaries.some((binary) => binary.id === metadata.coverId) };
+    metadata.metadataWarning = recovery.code;
+  }
   if (!metadata.annotation) metadata.preview = atStage('preview', () => extractBodyPreview(document));
   if (!metadata.coverId) return metadata;
+  if (metadata.binaryRecovery?.coverDamaged) return metadata;
   const binary = [...document.getElementsByTagNameNS('*', 'binary')]
     .find((element) => element.getAttribute('id') === metadata.coverId);
   if (!binary) return metadata;

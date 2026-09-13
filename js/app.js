@@ -110,6 +110,7 @@ async function runMetadataIndexing({ retryErrors = false } = {}) {
     total: buildingIndex.buildState.total,
     processed: (previousProgress.processed || 0) + progress.processed,
     succeeded: (previousProgress.succeeded || 0) + progress.succeeded,
+    recovered: (previousProgress.recovered || 0) + (progress.recovered || 0),
     failed: (previousProgress.failed || 0) + progress.failed,
     skipped: cachedCount,
   });
@@ -123,6 +124,7 @@ async function runMetadataIndexing({ retryErrors = false } = {}) {
     total: buildingIndex.buildState.total,
     processed: previousProgress.processed || 0,
     succeeded: previousProgress.succeeded || 0,
+    recovered: previousProgress.recovered || 0,
     skipped: cachedCount,
     failed: previousProgress.failed || 0,
   };
@@ -134,7 +136,7 @@ async function runMetadataIndexing({ retryErrors = false } = {}) {
       onProgress: (progress) => {
         stats = overallProgress(progress);
         updateBuildProgress(buildingIndex, stats);
-        ui.setStatus(`Индексирование FB2… Обработано: ${stats.processed.toLocaleString('ru-RU')} / ${stats.total.toLocaleString('ru-RU')}. Успешно: ${stats.succeeded.toLocaleString('ru-RU')}. Из кеша: ${stats.skipped.toLocaleString('ru-RU')}. Ошибок: ${stats.failed.toLocaleString('ru-RU')}.`);
+        ui.setStatus(`Индексирование FB2… Обработано: ${stats.processed.toLocaleString('ru-RU')} / ${stats.total.toLocaleString('ru-RU')}. Успешно: ${stats.succeeded.toLocaleString('ru-RU')}. Восстановлено: ${stats.recovered.toLocaleString('ru-RU')}. Из кеша: ${stats.skipped.toLocaleString('ru-RU')}. Ошибок: ${stats.failed.toLocaleString('ru-RU')}.`);
       },
       onCover: cacheBuildingCover,
       onCheckpoint: async (index, progress) => {
@@ -162,7 +164,7 @@ async function runMetadataIndexing({ retryErrors = false } = {}) {
       try { await deleteBuildingIndex(completedBuildingFileId); } catch { /* Active index is already safely committed. */ }
       try { await removeCovers(obsoleteCovers); } catch { /* Orphan cleanup can be retried on the next load. */ }
       const preserved = (currentIndex.indexingErrors || []).filter((entry) => entry.previousEntryPreserved).length;
-      ui.setStatus(`Всего: ${stats.total.toLocaleString('ru-RU')}. Успешно: ${stats.succeeded.toLocaleString('ru-RU')}. Из кеша: ${stats.skipped.toLocaleString('ru-RU')}. Ошибок: ${stats.failed.toLocaleString('ru-RU')}. Сохранены из предыдущего индекса: ${preserved}.`);
+      ui.setStatus(`Всего: ${stats.total.toLocaleString('ru-RU')}. Успешно: ${stats.succeeded.toLocaleString('ru-RU')}. Восстановлено: ${stats.recovered.toLocaleString('ru-RU')}. Из кеша: ${stats.skipped.toLocaleString('ru-RU')}. Ошибок: ${stats.failed.toLocaleString('ru-RU')}. Сохранены из предыдущего индекса: ${preserved}.`);
     }
   } catch (error) {
     reportOperationError(buildingIndex, error, 'index-write', buildingIndexFileId, 'secret-library-index-building.json');

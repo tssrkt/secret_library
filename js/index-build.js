@@ -33,7 +33,7 @@ export function prepareBuildingIndex(activeIndex, { retryErrors = false, now = (
     startedAt: now(),
     total,
     retryErrors,
-    progress: { processed: 0, succeeded: 0, failed: 0 },
+    progress: { processed: 0, succeeded: 0, recovered: 0, failed: 0 },
   };
   return building;
 }
@@ -51,6 +51,7 @@ export function updateBuildProgress(building, progress) {
   building.buildState.progress = {
     processed: progress.processed,
     succeeded: progress.succeeded,
+    recovered: progress.recovered || 0,
     failed: progress.failed,
     currentFileName: progress.currentFileName || '',
   };

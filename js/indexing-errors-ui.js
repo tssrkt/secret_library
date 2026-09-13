@@ -43,14 +43,17 @@ export function createIndexingErrorsController(root) {
       root.hidden = !entries.length;
       const failed = entries.filter((entry) => entry.outcome === 'failed').length;
       const recovered = entries.filter((entry) => entry.outcome === 'recovered').length;
+      const warnings = entries.filter((entry) => entry.outcome === 'recovered' && entry.code === 'binary_corruption_recovered').length;
       const preserved = entries.filter((entry) => entry.previousEntryPreserved).length;
       const interrupted = entries.length - failed - recovered;
-      count.textContent = `Ошибок: ${failed}. Восстановлено повтором: ${recovered}. Сохранены из предыдущего индекса: ${preserved}.`
+      count.textContent = `Ошибок: ${failed}. Предупреждений: ${warnings}. Восстановлено повтором: ${recovered - warnings}. Сохранены из предыдущего индекса: ${preserved}.`
         + (interrupted ? ` Прерываний: ${interrupted}.` : '');
       const renderEntry = (entry) => {
         const item = document.createElement('li');
         item.textContent = `${entry.fileName || entry.fileId || 'Индекс'} — ${entry.stage} — ${entry.status ? `HTTP ${entry.status}` : entry.code}: ${entry.message}`
-          + (entry.outcome === 'recovered' ? ' (повтор успешен)' : '')
+          + (entry.outcome === 'recovered' && entry.code !== 'binary_corruption_recovered' ? ' (повтор успешен)' : '')
+          + (entry.binaries ? ` Вложения: ${entry.binaries.map((binary) => binary.id || '(без id)').join(', ')}.` : '')
+          + (entry.previousCoverPreserved ? ' (предыдущая обложка сохранена)' : '')
           + (entry.previousEntryPreserved ? ' (старая запись сохранена)' : '');
         return item;
       };

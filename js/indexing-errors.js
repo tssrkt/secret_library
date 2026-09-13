@@ -11,6 +11,15 @@ export function errorDetails(error, extra = {}) {
     range: error.range || null,
     contentRange: error.contentRange || null,
     retryResult: error.retryResult || 'not-retried',
+    ...(error.parserMessage ? { parserLine: error.parserLine, parserColumn: error.parserColumn, parserMessage: error.parserMessage } : {}),
+    ...(error.code === 'binary_corruption_recovered' ? {
+      binaries: error.binaries.map(({ id, contentType, reason, payloadLength }) => ({
+        id: String(id).replace(/[\r\n\t]/g, ' ').slice(0, 160),
+        contentType: String(contentType).replace(/[\r\n\t]/g, ' ').slice(0, 80), reason, payloadLength,
+      })),
+      metadataIndexed: error.metadataIndexed, coverRecovered: error.coverRecovered,
+      previousCoverPreserved: error.previousCoverPreserved, bookSkipped: error.bookSkipped,
+    } : {}),
     ...extra,
   };
 }
@@ -18,7 +27,7 @@ export function errorDetails(error, extra = {}) {
 export function recordIndexingError(index, book, events, { preserved = false, outcome = 'failed' } = {}) {
   index.indexingErrors ||= [];
   const entry = {
-    ...(outcome === 'recovered' ? events[0] : events.at(-1)), fileName: book.fileName || '', fileId: book.id || '',
+    ...(outcome === 'recovered' ? events.find((event) => event.code === 'binary_corruption_recovered') || events[0] : events.at(-1)), fileName: book.fileName || '', fileId: book.id || '',
     retryResult: events.at(-1).retryResult, previousEntryPreserved: preserved, outcome, events,
   };
   // One report per file/run; individual request failures remain in its events.
@@ -36,6 +45,13 @@ export function formatIndexingErrors(entries) {
       `At: ${event.timestamp}`, `Stage: ${event.stage}`, `HTTP: ${event.status ?? '-'}`, `Code: ${event.code}`,
       `Error: ${event.message}`, `Attempt: ${event.attempt}`, `Range: ${event.range || 'none'}`,
       `Content-Range: ${event.contentRange || 'unavailable'}`, `Retry: ${event.retryResult}`,
+      ...(event.parserMessage ? [`Parser line: ${event.parserLine ?? 'unavailable'}`, `Parser column: ${event.parserColumn ?? 'unavailable'}`, `Parser error: ${event.parserMessage}`] : []),
+      ...(event.binaries ? [
+        `Damaged binaries: ${event.binaries.length}`,
+        ...event.binaries.flatMap((binary) => [`Binary id: ${binary.id}`, `Content-Type: ${binary.contentType}`, `Corruption: ${binary.reason}`, `Payload length: ${binary.payloadLength}`]),
+        `Metadata indexed: ${event.metadataIndexed ? 'yes' : 'no'}`, `Cover recovered: ${event.coverRecovered ? 'yes' : 'no'}`,
+        `Previous cover preserved: ${event.previousCoverPreserved ? 'yes' : 'no'}`, `Book skipped: ${event.bookSkipped ? 'yes' : 'no'}`,
+      ] : []),
     ]),
   ].join('\n')).join('\n\n---\n\n');
 }
