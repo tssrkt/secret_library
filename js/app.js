@@ -17,6 +17,8 @@ import {
 } from './index-build.js';
 import * as ui from './ui.js';
 import { errorDetails, recordIndexingError } from './indexing-errors.js';
+import { social } from './social-runtime.js';
+import { getAccessToken } from './auth.js';
 
 function reportOperationError(index, error, stage, fileId = '', fileName = '') {
   if (!index || error.indexingLogged) return;
@@ -192,6 +194,7 @@ function stopMetadataIndexing() {
 
 async function afterAuthorization({ restoredUser = null } = {}) {
   ui.setAuthorized(true);
+  void social.connect(getAccessToken());
   persistAuthSession(restoredUser || {});
   const requestId = ++avatarRequestId;
   if (restoredUser) {

@@ -1,0 +1,8 @@
+{
+  "indexes": [],
+  "fieldOverrides": [
+    { "collectionGroup": "shares", "fieldPath": "ownerUid", "indexes": [
+      { "order": "ASCENDING", "queryScope": "COLLECTION_GROUP" }
+    ] }
+  ]
+}

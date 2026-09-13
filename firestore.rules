@@ -1,0 +1,110 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signed() {
+      return request.auth != null && request.auth.token.email_verified == true
+        && request.auth.token.firebase.sign_in_provider == 'google.com';
+    }
+    function me() { return request.auth.uid; }
+    function email() { return request.auth.token.email.lower(); }
+    function own(uid) { return signed() && me() == uid; }
+    function validEmail(value) { return value is string && value.size() <= 254 && value == value.lower() && value.matches('^[^ /@]+@[^ /@]+[.][^ /@]+$'); }
+    function userPath(uid) { return /databases/$(database)/documents/users/$(uid); }
+    function pendingPath(address, owner) { return /databases/$(database)/documents/pendingInvites/$(address)/shares/$(owner); }
+    function sharePath(owner, viewer) { return /databases/$(database)/documents/libraryShares/$(owner + '__' + viewer); }
+    function registered() { return signed() && exists(userPath(me())); }
+
+    match /users/{uid} {
+      allow get: if signed();
+      allow list, delete: if false;
+      function shape() {
+        let d = request.resource.data;
+        return d.keys().hasOnly(['displayName', 'photoURL', 'createdAt', 'invitedByUid'])
+          && d.keys().hasAll(['displayName', 'photoURL', 'createdAt', 'invitedByUid'])
+          && d.displayName is string && d.displayName.size() <= 160
+          && d.photoURL is string && d.photoURL.size() <= 2048;
+      }
+      allow create: if own(uid) && shape() && request.resource.data.createdAt == request.time
+        && ((!exists(/databases/$(database)/documents/pendingInvites/$(email())) && request.resource.data.invitedByUid == null)
+          || request.resource.data.invitedByUid == get(/databases/$(database)/documents/pendingInvites/$(email())).data.firstOwnerUid);
+      allow update: if own(uid) && shape()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['displayName', 'photoURL']);
+      match /knownContacts/{otherUid} {
+        allow read, delete: if own(uid);
+        allow create, update: if own(uid) && request.resource.data.keys().hasOnly(['email'])
+          && validEmail(request.resource.data.email)
+          && get(/databases/$(database)/documents/userDirectory/$(request.resource.data.email)).data.uid == otherUid;
+      }
+      match /incomingShareReads/{owner} {
+        allow read: if own(uid);
+        allow create, update: if own(uid) && request.resource.data.keys().hasOnly(['seenSharedAt'])
+          && request.resource.data.seenSharedAt is timestamp
+          && get(sharePath(owner, uid)).data.active == true
+          && request.resource.data.seenSharedAt == get(sharePath(owner, uid)).data.sharedAt;
+        allow delete: if false;
+      }
+    }
+    match /userDirectory/{address} {
+      allow get: if registered() || (signed() && address == email());
+      allow list, update, delete: if false;
+      allow create: if signed() && address == email() && validEmail(address)
+        && request.resource.data.keys().hasOnly(['uid']) && request.resource.data.uid == me()
+        && existsAfter(userPath(me()));
+    }
+    match /libraryShares/{id} {
+      allow get: if registered() && ((resource != null && (resource.data.ownerUid == me() || resource.data.viewerUid == me()))
+        || (!exists(/databases/$(database)/documents/libraryShares/$(id)) && (id.matches('^' + me() + '__.*') || id.matches('.*__' + me() + '$'))));
+      allow list: if registered() && (resource.data.ownerUid == me() || resource.data.viewerUid == me());
+      allow delete: if false;
+      function shape() {
+        let d = request.resource.data;
+        return d.keys().hasOnly(['ownerUid', 'viewerUid', 'active', 'sharedAt', 'revokedAt'])
+          && d.keys().hasAll(['ownerUid', 'viewerUid', 'active', 'sharedAt', 'revokedAt'])
+          && d.ownerUid is string && d.viewerUid is string && d.ownerUid != d.viewerUid
+          && id == d.ownerUid + '__' + d.viewerUid && d.active is bool && d.sharedAt is timestamp
+          && existsAfter(userPath(d.ownerUid)) && existsAfter(userPath(d.viewerUid));
+      }
+      function activation() { return request.resource.data.active == true && request.resource.data.sharedAt == request.time && request.resource.data.revokedAt == null; }
+      function claim() {
+        let d = request.resource.data;
+        let p = pendingPath(email(), d.ownerUid);
+        return d.viewerUid == me() && get(p).data.active == true && get(p).data.claimedUid == null
+          && getAfter(p).data.claimedUid == me() && getAfter(p).data.claimedAt == request.time && activation();
+      }
+      allow create: if registered() && shape() && activation() && (request.resource.data.ownerUid == me() || claim());
+      allow update: if registered() && shape() && request.resource.data.ownerUid == resource.data.ownerUid
+        && request.resource.data.viewerUid == resource.data.viewerUid
+        && ((resource.data.active == false && activation() && (resource.data.ownerUid == me() || claim()))
+          || (resource.data.ownerUid == me() && resource.data.active == true && request.resource.data.active == false
+            && request.resource.data.sharedAt == resource.data.sharedAt && request.resource.data.revokedAt == request.time));
+    }
+    match /pendingInvites/{address} {
+      allow get: if signed();
+      allow list, update, delete: if false;
+      allow create: if registered() && validEmail(address) && address != email()
+        && request.resource.data.keys().hasOnly(['firstOwnerUid', 'createdAt'])
+        && request.resource.data.firstOwnerUid == me() && request.resource.data.createdAt == request.time
+        && getAfter(pendingPath(address, me())).data.createdAt == request.time;
+      match /shares/{owner} {
+        allow get: if signed() && (owner == me() || address == email());
+        allow list: if signed() && address == email();
+        allow delete: if false;
+        allow create: if own(owner) && registered() && validEmail(address) && address != email()
+          && !exists(/databases/$(database)/documents/userDirectory/$(address))
+          && request.resource.data.keys().hasOnly(['ownerUid', 'inviteeEmail', 'active', 'createdAt', 'claimedUid', 'claimedAt'])
+          && request.resource.data.ownerUid == owner && request.resource.data.inviteeEmail == address
+          && request.resource.data.active == true && request.resource.data.createdAt == request.time
+          && request.resource.data.claimedUid == null && request.resource.data.claimedAt == null
+          && existsAfter(/databases/$(database)/documents/pendingInvites/$(address));
+        allow update: if signed() && address == email() && resource.data.active == true && resource.data.claimedUid == null
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['claimedUid', 'claimedAt'])
+          && request.resource.data.claimedUid == me() && request.resource.data.claimedAt == request.time
+          && getAfter(sharePath(owner, me())).data.active == true;
+      }
+    }
+    // Owner-scoped collection-group lookup restores only email addresses they entered.
+    match /{path=**}/shares/{owner} {
+      allow list: if registered() && resource.data.ownerUid == me();
+    }
+  }
+}

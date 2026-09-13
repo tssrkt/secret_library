@@ -1,4 +1,5 @@
 import { DRIVE_SCOPES, GOOGLE_CLIENT_ID } from './config.js';
+import { firebaseConfigured } from './firebase-config.js';
 
 let accessToken = null;
 let tokenClient = null;
@@ -105,7 +106,7 @@ export async function initializeAuth() {
   await loadGoogleIdentity();
   tokenClient = google.accounts.oauth2.initTokenClient({
     client_id: GOOGLE_CLIENT_ID,
-    scope: DRIVE_SCOPES,
+    scope: firebaseConfigured() ? `${DRIVE_SCOPES} openid email profile` : DRIVE_SCOPES,
     callback: () => {},
     error_callback: () => {},
   });

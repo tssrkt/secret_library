@@ -1,12 +1,13 @@
 import { loadUserSettings, saveUserSettings, sharingFolders } from './user-settings.js';
 
 export function createUserSettingsController({ container, index, onError, clearError,
-  load = loadUserSettings, save = saveUserSettings, documentRef = document }) {
+  load = loadUserSettings, save = saveUserSettings, documentRef = document, mountSections = () => () => {} }) {
   let active = false;
   let revision = 0;
   let saved = null;
   let loading = null;
   let saving = null;
+  let unmount = () => {};
   const element = (tag, text, className) => {
     const node = documentRef.createElement(tag);
     if (text) node.textContent = text;
@@ -14,6 +15,7 @@ export function createUserSettingsController({ container, index, onError, clearE
     return node;
   };
   const open = async () => {
+    unmount();
     active = true;
     const current = ++revision;
     const isCurrent = () => active && current === revision;
@@ -27,6 +29,7 @@ export function createUserSettingsController({ container, index, onError, clearE
     page.append(element('h2', 'Настройки'), section);
     section.append(status);
     container.replaceChildren(page);
+    unmount = mountSections(page);
     try {
       // Reopening during a write waits for its file ID, so it cannot create a duplicate.
       if (saving) await saving;
@@ -91,5 +94,5 @@ export function createUserSettingsController({ container, index, onError, clearE
       section.append(retry);
     }
   };
-  return { open, get active() { return active; }, leave() { active = false; revision++; } };
+  return { open, get active() { return active; }, leave() { active = false; revision++; unmount(); unmount = () => {}; } };
 }

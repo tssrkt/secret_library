@@ -25,6 +25,7 @@ import { runSearchTests } from './search-tests.js';
 import { runUserSettingsTests } from './user-settings-tests.js';
 import { runIndexingErrorTests } from './indexing-errors-tests.js';
 import { runBinaryRecoveryTests } from './fb2-binary-recovery-tests.js';
+import { runSocialUiTests } from './social-ui-tests.js';
 import {
   AUTH_SESSION_KEY, PREVIOUS_SIGN_IN_KEY, clearAccessToken, clearPersistedAuth,
   createAuthAttemptGuard, getAccessToken, persistAuthSession, recoverAuthSession, restoreAuthSession,
@@ -1499,6 +1500,7 @@ await runSearchTests(test, assert, equal);
 await runUserSettingsTests(test, assert, equal);
 await runIndexingErrorTests(test, assert, equal, makeZip);
 await runBinaryRecoveryTests(test, assert, equal);
+await runSocialUiTests(test, assert, equal);
 
 output.textContent = failures.length
   ? `${passed} passed, ${failures.length} failed\n\n${failures.join('\n\n')}`

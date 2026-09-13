@@ -100,7 +100,9 @@ try {
   assert.equal(await evaluate("document.querySelectorAll('.book-card').length"), 1, 'native Enter submits advanced form');
   await evaluate("document.querySelector('#library-home-link').click(); document.querySelector('#book-search-button').focus()");
   await key('Tab', 'Tab', 9);
-  assert.equal(await evaluate('document.activeElement.id'), 'avatar-button', 'closed quick form is absent from Tab order');
+  assert.equal(await evaluate('document.activeElement.id'), 'notifications-button', 'closed quick form is absent from Tab order');
+  await key('Tab', 'Tab', 9);
+  assert.equal(await evaluate('document.activeElement.id'), 'avatar-button', 'bell is between search and avatar');
   for (const width of [390, 1200]) {
     await send('Emulation.setDeviceMetricsOverride', { width, height: 800, deviceScaleFactor: 1, mobile: false });
     await evaluate("document.querySelector('#book-search-button').click()");

@@ -18,6 +18,13 @@
         <button id="book-search-button" class="search-icon-button" type="button" aria-label="Поиск книг" aria-expanded="false" aria-controls="quick-search-form" disabled hidden>
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4.5 4.5"/></svg>
         </button>
+        <div id="notification-controls" class="notification-controls" hidden>
+          <button id="notifications-button" class="search-icon-button notification-button" type="button" aria-label="Уведомления" aria-expanded="false" aria-controls="notifications-panel">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg>
+            <span data-notification-badge class="notification-badge" aria-hidden="true" hidden></span>
+          </button>
+          <div id="notifications-panel" class="notifications-panel" aria-label="Уведомления" hidden></div>
+        </div>
         <div id="user-controls" class="user-controls" hidden>
           <button id="avatar-button" class="avatar-button" type="button" aria-label="Открыть меню пользователя" aria-haspopup="menu" aria-expanded="false">
             <span id="avatar-placeholder" aria-hidden="true">☺</span>

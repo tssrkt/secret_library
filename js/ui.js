@@ -11,6 +11,10 @@ import { filterBooksByDirectValue, russianBookCount } from './direct-filter.js';
 import { createSearchController } from './search-ui.js';
 import { createIndexingErrorsController } from './indexing-errors-ui.js';
 import { createUserSettingsController } from './user-settings-ui.js';
+import { mountFriends } from './friends-ui.js';
+import { createNotificationsController } from './notifications-ui.js';
+import { social } from './social-runtime.js';
+import { getAccessToken } from './auth.js';
 
 const genresRu = await loadGenreDictionary().catch(() => ({}));
 
@@ -72,6 +76,10 @@ const elements = {
 };
 
 const dropdown = setupDropdown(elements.avatar, elements.avatarMenu);
+const retrySocial = () => { void social.connect(getAccessToken()); };
+const notifications = createNotificationsController({ button: document.querySelector('#notifications-button'),
+  panel: document.querySelector('#notifications-panel'), avatarButton: elements.avatar,
+  closeAvatar: () => dropdown.close(), social, retry: retrySocial });
 const indexingErrors = createIndexingErrorsController(document.querySelector('#indexing-errors'));
 export function updateIndexingErrors(entries) { indexingErrors.update(entries); }
 const avatar = createAvatarController(elements.avatar, elements.avatarImage, elements.avatarPlaceholder);
@@ -131,6 +139,9 @@ export function bindActions(actions) {
 }
 
 export function setAuthorized(authorized) {
+  const controls = document.querySelector('#notification-controls');
+  if (controls) controls.hidden = !authorized;
+  document.querySelector('.app-header')?.classList.toggle('social-header', authorized);
   if (elements.settings) elements.settings.disabled = !authorized;
   elements.signIn.hidden = authorized;
   elements.userControls.hidden = !authorized;
@@ -138,6 +149,8 @@ export function setAuthorized(authorized) {
   const searchButton = document.querySelector('#book-search-button');
   if (searchButton) searchButton.hidden = !authorized;
   if (!authorized) {
+    notifications.close();
+    social.disconnect();
     dropdown.close();
     resetUserAvatar();
     elements.metadata.hidden = true;
@@ -206,6 +219,7 @@ export function renderLibrary(index, onDownload = async () => {}) {
   const resultsState = { filter: null, page: 1 };
   settingsController = createUserSettingsController({
     container: elements.tree, index, clearError,
+    mountSections: (page) => mountFriends(page, social, retrySocial),
     onError: (error) => reportSettingsError(error),
   });
   openSettings = () => {
@@ -401,6 +415,7 @@ export function renderLibrary(index, onDownload = async () => {}) {
 }
 
 export function resetUi() {
+  notifications.close();
   settingsController?.leave();
   settingsController = null;
   openSettings = () => {};

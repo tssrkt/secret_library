@@ -168,10 +168,10 @@ export async function runUserSettingsTests(test, assert, equal) {
       assert(!menuItem.disabled && menuItem.textContent === 'Настройки' && !menuItem.querySelector('small'), 'active menu item without placeholder');
       click('#avatar-button');
       click('#settings-button');
-      for (let i = 0; i < 100 && !tree.querySelector('form') && fixture.querySelector('#error-panel').hidden; i++) await tick();
-      assert(tree.querySelector('form'), `settings loaded: ${fixture.querySelector('#error-text').textContent}`);
+      for (let i = 0; i < 100 && !tree.querySelector('.sharing-settings-form') && fixture.querySelector('#error-panel').hidden; i++) await tick();
+      assert(tree.querySelector('.sharing-settings-form'), `settings loaded: ${fixture.querySelector('#error-text').textContent}`);
       assert(fixture.querySelector('#avatar-menu').hidden && tree.querySelector('h2').textContent === 'Настройки', 'menu closes and settings opens');
-      assert([...tree.querySelectorAll('input')].every((field) => field.checked), 'missing settings selects all');
+      assert([...tree.querySelectorAll('input[type=checkbox]')].every((field) => field.checked), 'missing settings selects all');
       tree.querySelector('input').checked = false;
       click('#library-home-link');
       assert(tree.querySelector('.tree-list') && !tree.querySelector('.user-settings-page'), 'home restores tree');
