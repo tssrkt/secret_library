@@ -11,6 +11,7 @@ export function errorDetails(error, extra = {}) {
     range: error.range || null,
     contentRange: error.contentRange || null,
     retryResult: error.retryResult || 'not-retried',
+    ...(error.folderId ? { folderId: error.folderId, folderName: error.folderName || '' } : {}),
     ...(error.encoding ? { encoding: error.encoding } : {}),
     ...(error.containerType ? { containerType: error.containerType } : {}),
     ...(error.format ? { format: error.format } : {}),
@@ -48,6 +49,7 @@ export function formatIndexingErrors(entries) {
     `Outcome: ${entry.outcome}`, `Previous index entry preserved: ${entry.previousEntryPreserved ? 'yes' : 'no'}`,
     ...(entry.events || [entry]).flatMap((event) => [
       `At: ${event.timestamp}`, `Stage: ${event.stage}`, `HTTP: ${event.status ?? '-'}`, `Code: ${event.code}`,
+      ...(event.folderId ? [`Folder ID: ${event.folderId}`, `Folder name: ${event.folderName || '(unknown)'}`] : []),
       `Error: ${event.message}`, `Attempt: ${event.attempt}`, `Range: ${event.range || 'none'}`,
       `Content-Range: ${event.contentRange || 'unavailable'}`, `Retry: ${event.retryResult}`,
       ...(event.encoding ? [`Encoding: ${event.encoding}`] : []),

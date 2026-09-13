@@ -16,7 +16,12 @@ export class DriveError extends Error {
   }
 }
 
-const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+const delay = (milliseconds, signal) => new Promise((resolve, reject) => {
+  const finish = () => { signal?.removeEventListener('abort', abort); resolve(); };
+  const timer = setTimeout(finish, milliseconds);
+  const abort = () => { clearTimeout(timer); signal.removeEventListener('abort', abort); reject(signal.reason); };
+  if (signal?.aborted) abort(); else signal?.addEventListener('abort', abort, { once: true });
+});
 
 function resourceKeyHeaders() {
   return ROOT_FOLDER_RESOURCE_KEY
@@ -25,39 +30,52 @@ function resourceKeyHeaders() {
 }
 
 export async function driveFetch(path, options = {}, retry = 0, apiRoot = API_ROOT) {
-  const { diagnostics = {}, ...requestOptions } = options;
+  const { diagnostics = {}, readJson = false, ...requestOptions } = options;
+  options.signal?.throwIfAborted();
+  const pause = (ms) => diagnostics.sleep ? diagnostics.sleep(ms) : delay(ms, options.signal);
   const report = (error, retryResult) => {
     Object.assign(error, { stage: diagnostics.stage || (requestOptions.method ? 'index-write' : path.includes('alt=media') ? 'download' : path.startsWith('/files?') ? 'list' : 'metadata'),
       fileId: diagnostics.fileId || decodeURIComponent(path.match(/^\/files\/([^?]+)/)?.[1] || ''),
+      ...(diagnostics.folderId ? { folderId: diagnostics.folderId, folderName: diagnostics.folderName || '' } : {}),
       attempt: retry + 1, range: options.headers?.Range || null, retryResult });
     diagnostics.onIssue?.(error);
     return error;
   };
   const token = getAccessToken();
-  if (!token) throw new DriveError('Сеанс Google истек. Войдите снова.', { status: 401, code: 'unauthorized' });
+  if (!token) throw report(new DriveError('Сеанс Google истек. Войдите снова.', { status: 401, code: 'unauthorized' }), 'not-retried');
 
   let response;
+  const timeoutSignal = AbortSignal.timeout(diagnostics.timeoutMs ?? 30000);
+  const requestSignal = options.signal ? AbortSignal.any([options.signal, timeoutSignal]) : timeoutSignal;
   try {
     response = await fetch(`${apiRoot}${path}`, {
       ...requestOptions,
-      signal: options.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(30000)]) : AbortSignal.timeout(30000),
+      signal: requestSignal,
       headers: { Authorization: `Bearer ${token}`, ...resourceKeyHeaders(), ...options.headers },
     });
+    // Folder listing must retry body-read timeouts/network failures too, not
+    // only failures before the HTTP headers arrive.
+    if (response.ok && readJson) {
+      const value = await response.json();
+      diagnostics.onSuccess?.({ attempt: retry + 1 });
+      return value;
+    }
   } catch (error) {
-    if (options.signal?.aborted || error?.name === 'AbortError') throw error;
-    const timedOut = error?.name === 'TimeoutError';
+    if (options.signal?.aborted) throw options.signal.reason;
+    const timedOut = error?.name === 'TimeoutError' || timeoutSignal.aborted;
+    if (error?.name === 'AbortError' && !timedOut) throw error;
     const failure = new DriveError(timedOut ? 'Google Drive не ответил за 30 секунд.'
       : 'Не удалось связаться с Google Drive. Проверьте подключение к интернету.',
     { code: timedOut ? 'download_timeout' : 'network_error', retryable: true });
     if (retry < (diagnostics.maxRetries ?? MAX_RETRIES)) {
       report(failure, 'retrying');
-      await (diagnostics.sleep || delay)(500 * (2 ** retry));
+      await pause(500 * (2 ** retry));
       return driveFetch(path, options, retry + 1, apiRoot);
     }
     throw report(failure, retry ? 'exhausted' : 'not-retried');
   }
 
-  if (response.ok) return response;
+  if (response.ok) { diagnostics.onSuccess?.({ attempt: retry + 1 }); return response; }
   let errorBody = null;
   try { errorBody = await response.clone().json(); } catch { /* response has no JSON body */ }
   const reason = errorBody?.error?.errors?.[0]?.reason || '';
@@ -66,7 +84,7 @@ export async function driveFetch(path, options = {}, retry = 0, apiRoot = API_RO
   if (retryable && retry < (diagnostics.maxRetries ?? MAX_RETRIES)) {
     report(new DriveError(errorBody?.error?.message || `HTTP ${response.status}`, { status: response.status, retryable }), 'retrying');
     const retryAfter = Number(response.headers.get('Retry-After')) * 1000;
-    await (diagnostics.sleep || delay)(Math.min(retryAfter || 700 * (2 ** retry), 10000));
+    await pause(Math.min(retryAfter || 700 * (2 ** retry), 10000));
     return driveFetch(path, options, retry + 1, apiRoot);
   }
 
@@ -87,10 +105,9 @@ export async function driveFetch(path, options = {}, retry = 0, apiRoot = API_RO
   throw report(error, retry ? 'exhausted' : 'not-retried');
 }
 
-export async function getFolder(folderId) {
+export async function getFolder(folderId, { signal, diagnostics = {} } = {}) {
   const params = new URLSearchParams({ fields: 'id,name,mimeType,parents', supportsAllDrives: 'true' });
-  const response = await driveFetch(`/files/${encodeURIComponent(folderId)}?${params}`);
-  const folder = await response.json();
+  const folder = await driveFetch(`/files/${encodeURIComponent(folderId)}?${params}`, { signal, readJson: true, diagnostics });
   if (folder.mimeType !== FOLDER_MIME_TYPE) throw new DriveError('Настроенный rootFolderId не является папкой Google Drive.', { code: 'not_folder' });
   return folder;
 }
@@ -106,23 +123,28 @@ export async function getCurrentDriveUser(request = driveFetch) {
   return (await response.json()).user || {};
 }
 
-export async function listFolderChildren(folderId) {
+export async function listFolderChildren(folderId, { signal, diagnostics = {} } = {}) {
   const files = [];
   let pageToken = '';
+  const seenTokens = new Set();
   do {
+    signal?.throwIfAborted();
     const params = new URLSearchParams({
       q: `'${folderId.replaceAll("'", "\\'")}' in parents and trashed = false`,
-      fields: 'nextPageToken,files(id,name,mimeType,parents,size,modifiedTime,md5Checksum,resourceKey)',
+      fields: 'nextPageToken,incompleteSearch,files(id,name,mimeType,parents,size,modifiedTime,md5Checksum,resourceKey)',
       pageSize: '1000',
       spaces: 'drive',
       supportsAllDrives: 'true',
       includeItemsFromAllDrives: 'true',
     });
     if (pageToken) params.set('pageToken', pageToken);
-    const response = await driveFetch(`/files?${params}`, { diagnostics: { stage: 'list', fileId: folderId } });
-    const page = await response.json();
-    files.push(...(page.files || []));
+    const page = await driveFetch(`/files?${params}`, { signal, readJson: true, diagnostics: { ...diagnostics, stage: 'list', fileId: folderId } });
+    if (page.incompleteSearch) throw Object.assign(new DriveError('Google Drive вернул неполный список папки.', { code: 'incomplete_folder_list' }), { stage: 'list', fileId: folderId });
+    if (!Array.isArray(page.files)) throw Object.assign(new DriveError('Некорректный ответ списка папки.', { code: 'invalid_folder_response' }), { stage: 'list', fileId: folderId });
+    files.push(...page.files);
     pageToken = page.nextPageToken || '';
+    if (pageToken && seenTokens.has(pageToken)) throw Object.assign(new DriveError('Повторяющаяся страница списка папки.', { code: 'repeated_page_token' }), { stage: 'list', fileId: folderId });
+    if (pageToken) seenTokens.add(pageToken);
   } while (pageToken);
   return files;
 }

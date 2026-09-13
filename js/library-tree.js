@@ -12,59 +12,102 @@ export function classifyLibraryItem(file) {
   return 'other';
 }
 
-export async function scanLibrary(rootFolderId, onProgress = () => {}, { signal } = {}) {
-  signal?.throwIfAborted();
-  const root = await getFolder(rootFolderId);
-  const folders = [{ id: root.id, parentId: null, name: root.name }];
+export async function scanLibrary(rootFolderId, onProgress = () => {}, {
+  signal, getRoot = getFolder, listChildren = listFolderChildren, heartbeatMs = 1000, now = Date.now,
+} = {}) {
+  const controller = new AbortController();
+  const scanSignal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
+  const started = now();
+  const folders = [];
   const books = [];
-  let pending = [root.id];
+  const queue = [];
+  const running = new Set();
+  const seenFolders = new Set([rootFolderId]);
+  const seenBooks = new Set();
+  const retrying = new Set();
+  const events = new Map();
   let processedFolders = 0;
-
-  while (pending.length) {
-    signal?.throwIfAborted();
-    const level = pending;
-    pending = [];
-    for (let offset = 0; offset < level.length; offset += SCAN_CONCURRENCY) {
-      signal?.throwIfAborted();
-      const batch = level.slice(offset, offset + SCAN_CONCURRENCY);
-      const results = await Promise.all(batch.map(async (folderId) => ({
-        folderId,
-        children: await listFolderChildren(folderId),
-      })));
-
-      for (const { folderId, children } of results) {
-        for (const item of children) {
-          const parentId = item.parents?.[0] || folderId;
-          const itemType = classifyLibraryItem(item);
-          if (itemType === 'folder') {
-            folders.push({ id: item.id, parentId, name: item.name });
-            pending.push(item.id);
-          } else if (BOOK_SOURCE_TYPES.includes(itemType)) {
-            books.push({
-              id: item.id,
-              parentId,
-              fileName: item.name,
-              extension: itemType,
-              size: item.size == null ? null : Number(item.size),
-              modifiedTime: item.modifiedTime || null,
-              md5Checksum: item.md5Checksum || null,
-              sourceType: itemType,
-              ...(itemType === 'zip' ? { entryPath: null } : {}),
-              metadataStatus: 'pending',
-            });
-          }
+  let readingRoot = true;
+  let failure = null;
+  const emit = () => {
+    if (failure || scanSignal.aborted) return;
+    onProgress({ processedFolders, discoveredFolders: Math.max(0, folders.length - 1),
+      // Outstanding work includes requests already in flight.
+      queuedFolders: queue.length + running.size + (readingRoot ? 1 : 0),
+      activeFolders: running.size + (readingRoot ? 1 : 0), books: books.length,
+      retrying: retrying.size > 0, elapsedSeconds: Math.floor((now() - started) / 1000) });
+  };
+  const diagnostics = (folder) => ({
+    stage: 'list', fileId: folder.id, folderId: folder.id, folderName: folder.name || '',
+    onIssue(error) {
+      if (failure || scanSignal.aborted) return;
+      if (!events.has(folder.id)) events.set(folder.id, []);
+      events.get(folder.id).push({ timestamp: new Date().toISOString(), stage: 'list',
+        folderId: folder.id, folderName: folder.name || '', fileId: folder.id,
+        attempt: error.attempt || 1, retryResult: error.retryResult || 'not-retried',
+        status: error.status || null, code: error.code || error.name, message: error.message });
+      if (error.retryResult === 'retrying') retrying.add(folder.id);
+      emit();
+    },
+    onSuccess() { retrying.delete(folder.id); emit(); },
+  });
+  const folderError = (error, folder) => Object.assign(error, { stage: 'list',
+    folderId: folder.id, folderName: folder.name || '', fileId: folder.id,
+    attempt: error.attempt || 1, retryResult: error.retryResult || 'not-retried',
+    scanEvents: events.get(folder.id) || [] });
+  const readFolder = async (folder) => {
+    try {
+      const children = await listChildren(folder.id, { signal: scanSignal, diagnostics: diagnostics(folder) });
+      scanSignal.throwIfAborted();
+      for (const item of children) {
+        const parentId = folder.id;
+        const itemType = classifyLibraryItem(item);
+        if (itemType === 'folder' && !seenFolders.has(item.id)) {
+          seenFolders.add(item.id);
+          const child = { id: item.id, parentId, name: item.name };
+          folders.push(child); queue.push(child);
+        } else if (BOOK_SOURCE_TYPES.includes(itemType) && !seenBooks.has(item.id)) {
+          seenBooks.add(item.id);
+          books.push({ id: item.id, parentId, fileName: item.name, extension: itemType,
+            size: item.size == null ? null : Number(item.size), modifiedTime: item.modifiedTime || null,
+            md5Checksum: item.md5Checksum || null, sourceType: itemType,
+            ...(itemType === 'zip' ? { entryPath: null } : {}), metadataStatus: 'pending' });
         }
-        processedFolders += 1;
-        onProgress({ processedFolders, discoveredFolders: folders.length - 1, books: books.length });
-        await new Promise(requestAnimationFrame);
       }
+      processedFolders += 1;
+    } catch (error) {
+      if (!failure) { failure = folderError(error, folder); controller.abort(); }
     }
+  };
+  const heartbeat = setInterval(emit, heartbeatMs);
+  try {
+    scanSignal.throwIfAborted();
+    emit();
+    let root;
+    try { root = await getRoot(rootFolderId, { signal: scanSignal, diagnostics: diagnostics({ id: rootFolderId }) }); }
+    catch (error) { throw folderError(error, { id: rootFolderId }); }
+    scanSignal.throwIfAborted();
+    const rootFolder = { id: root.id, parentId: null, name: root.name };
+    folders.push(rootFolder); queue.push(rootFolder); readingRoot = false;
+    while (queue.length || running.size) {
+      scanSignal.throwIfAborted();
+      while (queue.length && running.size < SCAN_CONCURRENCY && !failure) {
+        const folder = queue.shift();
+        const task = readFolder(folder).finally(() => { running.delete(task); emit(); });
+        running.add(task);
+      }
+      emit();
+      await Promise.race(running);
+      if (failure) throw failure;
+    }
+    scanSignal.throwIfAborted();
+    const timestamp = new Date().toISOString();
+    return { version: INDEX_VERSION, rootFolderId, createdAt: timestamp, updatedAt: timestamp,
+      folders, books, lastFullScan: { scannedAt: timestamp, totalEligible: books.length } };
+  } finally {
+    clearInterval(heartbeat);
+    controller.abort();
   }
-
-  const now = new Date().toISOString();
-  signal?.throwIfAborted();
-  return { version: INDEX_VERSION, rootFolderId, createdAt: now, updatedAt: now, folders, books,
-    lastFullScan: { scannedAt: now, totalEligible: books.length } };
 }
 
 const METADATA_FIELDS = [

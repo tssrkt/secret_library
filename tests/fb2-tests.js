@@ -1500,6 +1500,7 @@ await test('direct result navigation uses all folders, current-page DOM, home an
   fixture.remove();
 });
 
+await (await import('./library-refresh-tests.js')).runLibraryRefreshTests(test, assert, equal);
 await runSearchTests(test, assert, equal);
 await runUserSettingsTests(test, assert, equal);
 await runIndexingErrorTests(test, assert, equal, makeZip);

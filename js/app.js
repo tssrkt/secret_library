@@ -10,7 +10,7 @@ import {
   deleteBuildingIndex, IndexError, loadBuildingIndex, loadIndex, readIndexFile,
   saveBuildingIndex, saveIndex,
 } from './library-index.js';
-import { preserveBookMetadata, scanLibrary, staleCoverFileIds } from './library-tree.js';
+import { createLibraryRefresher, scanStatus, scanFailureMessage } from './library-refresh.js';
 import { indexPendingBooks, resetProcessingBooks } from './metadata-indexer.js';
 import {
   canResumeBuildingIndex, updateBuildProgress, validateCompletedIndex,
@@ -23,7 +23,8 @@ import { getAccessToken } from './auth.js';
 
 function reportOperationError(index, error, stage, fileId = '', fileName = '') {
   if (!index || error.indexingLogged) return;
-  recordIndexingError(index, { id: error.fileId || fileId, fileName }, [errorDetails(error, { stage: error.stage || stage })], { outcome: 'interrupted' });
+  recordIndexingError(index, { id: error.fileId || fileId, fileName: error.folderName || fileName },
+    [...(error.scanEvents || []), errorDetails(error, { stage: error.stage || stage })], { outcome: 'interrupted' });
   error.indexingLogged = true;
   ui.updateIndexingErrors(index.indexingErrors);
 }
@@ -67,43 +68,38 @@ function renderLibrary(index) {
   ui.renderLibrary(index, downloadBook);
 }
 
+const libraryRefresher = createLibraryRefresher({
+  save: saveIndex,
+  apply: (index) => { currentIndex = index; renderLibrary(index); },
+  removeCovers,
+  onProgress: (stats) => { ui.setStatus(scanStatus(stats)); ui.showStats(stats.processedFolders, stats.books); },
+  onPhase: () => ui.setStatus('Сканирование завершено. Новая структура применена. Сохраняем индекс…'),
+  onCleanupError: (error) => reportOperationError(currentIndex, error, 'cover'),
+});
+
 async function rebuildIndex() {
-  if (metadataController) return;
+  if (metadataController || libraryRefresher.running) return;
   ui.clearError();
   ui.setBusy(true);
-  ui.setStatus('Сканирование библиотеки…');
+  ui.setStatus('Сканирование библиотеки… Обработано папок: 0. В очереди: 1. Найдено книг: 0.');
   try {
-    const scannedIndex = await scanLibrary(ROOT_FOLDER_ID, ({ processedFolders, books }) => {
-      ui.setStatus(`Сканирование библиотеки… Обработано папок: ${processedFolders}. Найдено книг: ${books}.`);
-      ui.showStats(processedFolders, books);
-    });
-    const obsoleteCovers = staleCoverFileIds(scannedIndex, currentIndex);
-    const index = preserveBookMetadata(scannedIndex, currentIndex);
-    try { await removeCovers(obsoleteCovers); }
-    catch (error) { ui.showError(`Не удалось полностью очистить старый кеш обложек: ${error.message}`); }
-    currentIndex = index;
-    renderLibrary(index);
-    ui.setStatus('Сканирование завершено. Сохраняем индекс…');
-    try {
-      indexFileId = await saveIndex(index, indexFileId);
-      ui.setStatus(`Библиотека обновлена: ${index.books.length.toLocaleString('ru-RU')} книг.`);
-      await runMetadataIndexing({ refreshOnly: true });
-    } catch (error) {
-      reportOperationError(index, error, 'index-write', indexFileId, 'secret-library-index.json');
-      ui.setStatus('Сканирование завершено, библиотека доступна в этой вкладке.');
-      ui.showError(readableError(error), { canRebuild: false });
-    }
+    const result = await libraryRefresher.run({ activeIndex: currentIndex, rootFolderId: ROOT_FOLDER_ID, fileId: indexFileId });
+    if (!result) return;
+    indexFileId = result.fileId;
+    ui.setStatus(`Библиотека обновлена: ${result.index.books.length.toLocaleString('ru-RU')} книг.`);
+    await runMetadataIndexing({ refreshOnly: true });
   } catch (error) {
-    reportOperationError(currentIndex || {}, error, 'list', ROOT_FOLDER_ID);
-    ui.showError(readableError(error), { canRebuild: true });
-    ui.setStatus('Не удалось обновить библиотеку.');
+    reportOperationError(currentIndex || {}, error, error.stage || 'list', error.folderId || ROOT_FOLDER_ID);
+    if (error.status === 401 || error.code === 'unauthorized') ui.showError(readableError(error));
+    else ui.showError(error.stage === 'index-write' ? readableError(error) : scanFailureMessage(error), { canRebuild: true });
+    ui.setStatus(error.stage === 'index-write' ? 'Новая структура показана в этой вкладке. Сохранить индекс не удалось; прежний сохранённый индекс и обложки оставлены.' : scanFailureMessage(error));
   } finally {
     ui.setBusy(false);
   }
 }
 
 async function runMetadataIndexing({ retryErrors = false, refreshOnly = false } = {}) {
-  if (!currentIndex || metadataController) return;
+  if (!currentIndex || metadataController || (libraryRefresher.running && !refreshOnly)) return;
   if (refreshOnly && !currentIndex.books.some((book) => ['pending', 'processing'].includes(book.metadataStatus))) return;
   const activeIndex = currentIndex;
   const mode = refreshOnly ? 'refresh' : retryErrors ? 'retry' : 'full';
@@ -117,8 +113,7 @@ async function runMetadataIndexing({ retryErrors = false, refreshOnly = false } 
   try {
     buildingIndex = await prepareIndexingRun(activeIndex, {
       mode, building: buildingIndex, signal: metadataController.signal,
-      onScan: ({ processedFolders, books }) => ui.setStatus(
-        `${modeLabel} — сканирование. Папок: ${processedFolders}. Найдено книг: ${books}.`),
+      onScan: (stats) => ui.setStatus(scanStatus(stats)),
     });
     prepared = true;
     resetProcessingBooks(buildingIndex);
