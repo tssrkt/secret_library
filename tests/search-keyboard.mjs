@@ -129,6 +129,23 @@ try {
   assert.equal(await evaluate("document.querySelector('#metadata-button').hidden"), false, 'full available without errors');
   assert.equal(await evaluate("document.querySelector('#retry-metadata-button').hidden"), true, 'empty retry hidden');
   console.log('Indexing menu checks passed: independent actions, 9257/303 counts, full available with zero errors.');
+  await send('Emulation.setDeviceMetricsOverride', { width: 390, height: 800, deviceScaleFactor: 1, mobile: false });
+  await evaluate(`window.testUi.updateIndexingErrors([
+    {fileId: 'AAA', fileName: 'Chehov_Horistka.169391.fb2', path: 'Библиотека / Чехов / Рассказы & заметки / Chehov_Horistka.169391.fb2', code: 'binary_file', outcome: 'failed', stage: 'parse'},
+    {fileId: 'BBB', fileName: 'book.fb2', code: 'invalid_xml', outcome: 'failed', stage: 'parse'}
+  ]); document.querySelector('[data-error-toggle]').click(); document.querySelector('#indexing-errors').scrollIntoView();`);
+  const mobileJournal = await evaluate(`(() => {
+    const root = document.querySelector('#indexing-errors');
+    const link = root.querySelector('.indexing-error-drive');
+    const bounds = link.getBoundingClientRect();
+    return {height: bounds.height, left: bounds.left, right: bounds.right,
+      overflow: root.scrollWidth > root.clientWidth, href: link.href};
+  })()`);
+  assert.ok(mobileJournal.height >= 44 && mobileJournal.left >= 0 && mobileJournal.right <= 390 && !mobileJournal.overflow, 'mobile journal fits viewport with touch-sized Drive link');
+  assert.equal(mobileJournal.href, 'https://drive.google.com/file/d/AAA/view');
+  const journalShot = await send('Page.captureScreenshot', { format: 'png' });
+  await writeFile(resolve(root, 'temp/indexing-journal-mobile.png'), Buffer.from(journalShot.data, 'base64'));
+  await send('Emulation.setDeviceMetricsOverride', { width: 1200, height: 800, deviceScaleFactor: 1, mobile: false });
   await key('Tab', 'Tab', 9);
   await send('Page.navigate', { url: `http://127.0.0.1:${server.address().port}/tests/fb2-tests.html` });
   for (let i = 0; i < 600 && !await evaluate('Boolean(document.body?.dataset.testStatus)'); i++) await delay(50);

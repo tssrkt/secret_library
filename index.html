@@ -62,9 +62,14 @@
         <span data-error-count></span>
         <button type="button" class="secondary" data-error-toggle aria-expanded="false" aria-controls="indexing-error-panel">Показать</button>
         <div id="indexing-error-panel" data-error-panel hidden>
+          <label class="indexing-error-filter">Тип ошибки
+            <select data-error-filter aria-label="Тип ошибки"></select>
+          </label>
           <ul data-error-list></ul>
           <p data-recovered-heading hidden>Восстановленные книги и предупреждения:</p>
           <ul data-recovered-list hidden></ul>
+          <p data-other-heading hidden>Прерывания и история:</p>
+          <ul data-other-list hidden></ul>
           <button type="button" class="secondary" data-error-copy>Скопировать ошибки</button>
           <button type="button" class="secondary" data-error-download>Скачать лог</button>
           <p role="status"></p>

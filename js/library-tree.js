@@ -1,5 +1,6 @@
 import { BOOK_SOURCE_TYPES, FOLDER_MIME_TYPE, INDEX_VERSION, SCAN_CONCURRENCY } from './config.js';
 import { getFolder, listFolderChildren } from './drive.js';
+import { libraryFilePath } from './library-path.js';
 
 export function classifyLibraryItem(file) {
   if (file.mimeType === FOLDER_MIME_TYPE) return 'folder';
@@ -26,6 +27,7 @@ export async function scanLibrary(rootFolderId, onProgress = () => {}, {
   const seenBooks = new Set();
   const retrying = new Set();
   const events = new Map();
+  const folderPaths = new Map();
   let processedFolders = 0;
   let readingRoot = true;
   let failure = null;
@@ -65,10 +67,12 @@ export async function scanLibrary(rootFolderId, onProgress = () => {}, {
         if (itemType === 'folder' && !seenFolders.has(item.id)) {
           seenFolders.add(item.id);
           const child = { id: item.id, parentId, name: item.name };
+          folderPaths.set(child.id, `${folderPaths.get(parentId)} / ${item.name}`);
           folders.push(child); queue.push(child);
         } else if (BOOK_SOURCE_TYPES.includes(itemType) && !seenBooks.has(item.id)) {
           seenBooks.add(item.id);
           books.push({ id: item.id, parentId, fileName: item.name, extension: itemType,
+            path: `${folderPaths.get(parentId)} / ${item.name}`,
             size: item.size == null ? null : Number(item.size), modifiedTime: item.modifiedTime || null,
             md5Checksum: item.md5Checksum || null, sourceType: itemType,
             ...(itemType === 'zip' ? { entryPath: null } : {}), metadataStatus: 'pending' });
@@ -88,6 +92,7 @@ export async function scanLibrary(rootFolderId, onProgress = () => {}, {
     catch (error) { throw folderError(error, { id: rootFolderId }); }
     scanSignal.throwIfAborted();
     const rootFolder = { id: root.id, parentId: null, name: root.name };
+    folderPaths.set(root.id, root.name);
     folders.push(rootFolder); queue.push(rootFolder); readingRoot = false;
     while (queue.length || running.size) {
       scanSignal.throwIfAborted();
@@ -135,6 +140,11 @@ export function preserveBookMetadata(currentIndex, previousIndex) {
   currentIndex.createdAt = previousIndex.createdAt || currentIndex.createdAt;
   const presentIds = new Set(currentIndex.books.map((book) => book.id));
   currentIndex.indexingErrors = structuredClone((previousIndex.indexingErrors || []).filter((entry) => presentIds.has(entry.fileId)));
+  const currentBooks = new Map(currentIndex.books.map((book) => [book.id, book]));
+  for (const entry of currentIndex.indexingErrors) {
+    const path = libraryFilePath(currentIndex, currentBooks.get(entry.fileId));
+    if (path) entry.path = path;
+  }
   if (previousIndex.lastIndexingRun) currentIndex.lastIndexingRun = structuredClone(previousIndex.lastIndexingRun);
   if (previousIndex.fullRunId) currentIndex.fullRunId = previousIndex.fullRunId;
   return currentIndex;

@@ -2,6 +2,7 @@ import { scanLibrary, classifyLibraryItem } from './library-tree.js';
 import { getLibraryFile } from './drive.js';
 import { canResumeBuildingIndex, prepareBuildingIndex } from './index-build.js';
 import { BOOK_SOURCE_TYPES } from './config.js';
+import { libraryFilePath } from './library-path.js';
 
 export async function prepareIndexingRun(active, { mode, building = null, scan = scanLibrary, signal, onScan = () => {} }) {
   if (!['full', 'retry', 'refresh'].includes(mode)) throw new Error('Unknown indexing mode.');
@@ -39,6 +40,9 @@ export function createRetryEligibilityCheck(index, { getFile = getLibraryFile, s
       Object.assign(book, { parentId: file.parents[0], fileName: file.name, size: file.size == null ? null : Number(file.size),
         modifiedTime: file.modifiedTime || null, md5Checksum: file.md5Checksum || null,
         sourceType: classifyLibraryItem(file), extension: classifyLibraryItem(file) });
+      const path = libraryFilePath(index, { ...book, path: null });
+      if (path) book.path = path;
+      else delete book.path;
       return true;
     } catch (error) {
       if (error.status === 404 || (error.status === 403 && !error.retryable)) return false;

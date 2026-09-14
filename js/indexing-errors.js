@@ -1,3 +1,5 @@
+import { libraryFilePath } from './library-path.js';
+
 export const INDEXING_STAGES = ['list', 'metadata', 'download', 'parse', 'metadata-extraction', 'annotation', 'preview', 'cover', 'index-write'];
 
 export function errorDetails(error, extra = {}) {
@@ -39,9 +41,11 @@ export function errorDetails(error, extra = {}) {
 
 export function recordIndexingError(index, book, events, { preserved = false, outcome = 'failed' } = {}) {
   index.indexingErrors ||= [];
+  const path = libraryFilePath(index, book);
   const entry = {
     ...(outcome === 'recovered' ? events.find((event) => ['binary_corruption_recovered', 'metadata_only_recovered'].includes(event.code)) || events[0] : events.at(-1)), fileName: book.fileName || '', fileId: book.id || '',
     retryResult: events.at(-1).retryResult, previousEntryPreserved: preserved, outcome, events,
+    ...(path ? { path } : {}),
   };
   // One report per file/run; individual request failures remain in its events.
   const existing = index.indexingErrors.findIndex((item) => item.fileId === entry.fileId && item.stage !== 'index-write');
@@ -53,6 +57,7 @@ export function recordIndexingError(index, book, events, { preserved = false, ou
 export function formatIndexingErrors(entries) {
   return entries.map((entry) => [
     `[${entry.timestamp}]`, `File: ${entry.fileName}`, `FileId: ${entry.fileId}`,
+    ...(entry.path ? [`Path: ${entry.path}`] : []),
     `Run: ${entry.runId || 'legacy'}`,
     `Outcome: ${entry.outcome}`, `Previous index entry preserved: ${entry.previousEntryPreserved ? 'yes' : 'no'}`,
     ...(entry.events || [entry]).flatMap((event) => [

@@ -1,6 +1,10 @@
+export function latestBookOutcomes(entries = []) {
+  return new Map(entries.filter((entry) => entry.stage !== 'index-write'
+    && ['failed', 'recovered', 'excluded'].includes(entry.outcome)).map((entry) => [entry.fileId, entry]));
+}
+
 export function failedBookIds(index) {
-  const outcomes = new Map((index.indexingErrors || []).filter((entry) => entry.stage !== 'index-write'
-    && ['failed', 'recovered', 'excluded'].includes(entry.outcome)).map((entry) => [entry.fileId, entry.outcome]));
+  const outcomes = new Map([...latestBookOutcomes(index.indexingErrors)].map(([id, entry]) => [id, entry.outcome]));
   return new Set(index.books.filter((book) => outcomes.get(book.id) === 'failed'
     || (!index.lastIndexingRun && !outcomes.has(book.id) && book.metadataStatus === 'error')).map((book) => book.id));
 }

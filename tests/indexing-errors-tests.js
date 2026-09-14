@@ -163,13 +163,14 @@ export async function runIndexingErrorTests(test, assert, equal, makeZip) {
     document.body.append(root);
     const controller = createIndexingErrorsController(root);
     const entry = { timestamp: new Date().toISOString(), fileName: '<book>.fb2', fileId: 'test-id', stage: 'download', status: 404,
-      code: 'drive_error', message: 'Not found', attempt: 1, retryResult: 'not-retried', previousEntryPreserved: true, outcome: 'failed' };
+      code: 'drive_error', message: 'Not found', attempt: 1, retryResult: 'not-retried', previousEntryPreserved: true, outcome: 'failed', path: 'Книги / <book>.fb2' };
     controller.update([entry]);
     root.querySelector('[data-error-toggle]').click();
     assert(!root.querySelector('[data-error-panel]').hidden, 'list opens');
     assert(root.querySelectorAll('li').length === 1 && root.textContent.includes('<book>.fb2'), 'one escaped row per file');
     assert(root.querySelector('[data-error-count]').textContent.includes('Ошибок: 1'), 'count matches failed rows');
     const report = formatIndexingErrors([entry]);
+    assert(report.includes('Path: Книги / <book>.fb2'), 'copy/download report includes path');
     assert(report.includes('FileId: test-id') && report.includes('Previous index entry preserved: yes') && report.includes('HTTP: 404'), 'copy/download contains diagnostic details');
     assert(root.querySelector('[data-error-copy]') && root.querySelector('[data-error-download]'), 'both report actions available');
     const clipboard = Object.getOwnPropertyDescriptor(navigator, 'clipboard');

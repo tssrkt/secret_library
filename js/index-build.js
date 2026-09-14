@@ -130,7 +130,7 @@ export function validateCompletedIndex(candidate, activeIndex, manifest = candid
 // Preserve good metadata while retaining the freshly scanned location/source identity.
 export function previousRecord(previous, source) {
   const result = cloneIndex(previous);
-  if (source) for (const field of ['id', 'parentId', 'fileName', 'extension', 'size', 'modifiedTime', 'md5Checksum', 'sourceType']) {
+  if (source) for (const field of ['id', 'parentId', 'fileName', 'extension', 'size', 'modifiedTime', 'md5Checksum', 'sourceType', 'path']) {
     if (Object.hasOwn(source, field)) result[field] = source[field];
   }
   return result;

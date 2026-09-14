@@ -111,6 +111,7 @@ export async function indexPendingBooks(index, {
         throw error;
       }
       onIssue(error);
+      const diagnosticBook = { ...book };
       const previous = previousBooks.get(book.id);
       if (retry && (error.code === 'no_longer_eligible' || (error.status === 404 && (!error.stage || error.stage === 'download' || error.stage === 'metadata')))) {
         index.books = index.books.filter((item) => item.id !== book.id);
@@ -128,7 +129,7 @@ export async function indexPendingBooks(index, {
             : error instanceof Fb2Error ? error.code : error.code || 'download_failed';
           book.metadataErrorMessage = String(error?.message || book.metadataError).slice(0, 240);
         }
-        recordIndexingError(index, book, [...issues.values()], { preserved: Boolean(previous) });
+        recordIndexingError(index, diagnosticBook, [...issues.values()], { preserved: Boolean(previous) });
         stats.failed += 1;
       }
     }
