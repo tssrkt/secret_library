@@ -47,6 +47,9 @@ test('shared catalogs enforce incoming access, exclude private folders and revok
   await sharedA.publish(index, { sharing: { excludedFolderIds: ['open', 'closed'] } });
   assert.deepEqual((await sharedB.load('owner')).books, []);
   await assertFails(sdk.getDocs(sdk.collection(b.db, `sharedLibraries/owner/versions/${first.revision}/chunks`)));
+  await sharedA.unpublish();
+  await assert.rejects(sharedB.load('owner'), /недоступна/, 'closing catalog before a settings update removes access');
+  await sharedA.publish(index, { sharing: { excludedFolderIds: ['open', 'closed'] } });
   await a.store.setSharing('viewer', false);
   await assert.rejects(sharedB.load('owner'), /permission/i);
   await sharedA.unpublish();

@@ -21,14 +21,17 @@ function clearCatalogs() {
   catalogWatches.clear(); catalogs.clear();
 }
 function watchCatalogs(friends) {
+  const watchGeneration = generation;
   const incoming = friends.filter((friend) => friend.inbound);
   const ids = new Set(incoming.map((friend) => friend.uid));
   for (const [id, stop] of catalogWatches) if (!ids.has(id)) { stop(); catalogWatches.delete(id); catalogs.delete(id); }
   const publish = () => emit({ libraries: state.friends.filter((friend) => friend.inbound && catalogs.get(friend.uid))
     .map((friend) => ({ uid: friend.uid, displayName: friend.displayName, revision: catalogs.get(friend.uid).revision })) });
   for (const friend of incoming) if (!catalogWatches.has(friend.uid)) {
-    catalogWatches.set(friend.uid, shared.watchManifest(friend.uid, (value) => { catalogs.set(friend.uid, value); watchCatalogs(state.friends); },
-      () => { catalogs.delete(friend.uid); publish(); }));
+    catalogWatches.set(friend.uid, shared.watchManifest(friend.uid, (value) => {
+      if (generation !== watchGeneration || !state.friends.some((item) => item.uid === friend.uid && item.inbound)) return;
+      catalogs.set(friend.uid, value); watchCatalogs(state.friends);
+    }, () => { if (generation === watchGeneration) { catalogs.delete(friend.uid); publish(); } }));
   }
   publish();
 }

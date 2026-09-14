@@ -207,6 +207,19 @@ try {
   assert.ok(await evaluate(`(() => { const s=document.querySelector('.library-tab-strip').getBoundingClientRect(); const t=document.querySelector('[role=tab][aria-selected=true]').getBoundingClientRect(); return t.left >= s.left-1 && t.right <= s.right+1; })()`), 'mobile collapse reveals selected tab');
   const tabsShot = await send('Page.captureScreenshot', { format: 'png' });
   await writeFile(resolve(root, 'temp/library-tabs-mobile.png'), Buffer.from(tabsShot.data, 'base64'));
+  await evaluate("document.querySelector('[data-library=\"\"]').click()");
+  await delay(150);
+  await send('Emulation.setTouchEmulationEnabled', { enabled: true });
+  const touchStrip = await evaluate(`(() => { const r=document.querySelector('.library-tab-strip').getBoundingClientRect(); return {x:r.right-15, y:r.top+r.height/2}; })()`);
+  await send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: touchStrip.x, y: touchStrip.y }] });
+  for (let step = 1; step <= 6; step++) {
+    await send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: touchStrip.x - step * 25, y: touchStrip.y }] });
+    await delay(20);
+  }
+  await send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  await delay(100);
+  assert.ok(await evaluate("document.querySelector('.library-tab-strip').scrollLeft > 0"), 'native touch swipe scrolls strip');
+  assert.equal(await evaluate("document.querySelector('[role=tab][aria-selected=true]').dataset.library"), '', 'touch swipe does not select a tab');
   console.log('Library tabs app checks passed: default own, mouse drag, isolated search, URL reload, revocation and mobile collapse.');
 } finally {
   socket?.close();

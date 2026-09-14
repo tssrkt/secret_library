@@ -26,10 +26,14 @@ export function createLibraryTabs(root, onSelect) {
   const layout = () => {
     frame = 0;
     if (!root.clientWidth) return;
-    if (expanded) { previous.hidden = next.hidden = true; expand.hidden = false; return; }
     const naturalWidth = [...strip.children].reduce((sum, node) => sum + node.getBoundingClientRect().width, 0)
       + Math.max(0, strip.children.length - 1) * (parseFloat(getComputedStyle(strip).columnGap) || 0);
-    if (naturalWidth <= root.clientWidth + 1) { previous.hidden = next.hidden = expand.hidden = true; return; }
+    if (naturalWidth <= root.clientWidth + 1) {
+      expanded = false; root.classList.remove('expanded');
+      expand.textContent = '⌄'; expand.title = 'Показать все'; expand.setAttribute('aria-label', expand.title); expand.setAttribute('aria-expanded', 'false');
+      previous.hidden = next.hidden = expand.hidden = true; return;
+    }
+    if (expanded) { previous.hidden = next.hidden = true; expand.hidden = false; return; }
     previous.hidden = strip.scrollLeft <= 1;
     next.hidden = strip.scrollLeft + strip.clientWidth >= strip.scrollWidth - 1;
     const bounds = strip.getBoundingClientRect();

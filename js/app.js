@@ -35,6 +35,8 @@ function reportOperationError(index, error, stage, fileId = '', fileName = '') {
 
 let indexFileId = null;
 let currentIndex = null;
+let shareableIndex = null;
+let sharingVersion = 0;
 let buildingIndex = null;
 let buildingIndexFileId = null;
 let metadataController = null;
@@ -47,22 +49,26 @@ const tabs = createLibraryTabs(tabsRoot, (uid) => selection.select(uid));
 const selection = createLibrarySelection({ tabs, service: social,
   show: (index, { own, ownerIndex }) => {
     tabsRoot.hidden = false;
-    ui.renderLibrary(index, downloadBook, { ownerIndex, readOnly: !own, onSettingsSaved: publishLibrary,
-      beforeSettingsSave: () => firebaseConfigured() ? social.unpublishLibrary() : Promise.resolve() });
+    ui.renderLibrary(index, downloadBook, { ownerIndex, readOnly: !own,
+      onSettingsSaved: (index, settings) => publishLibrary(shareableIndex || index, settings),
+      beforeSettingsSave: () => { sharingVersion++; return firebaseConfigured() ? social.unpublishLibrary() : Promise.resolve(); } });
   },
   unavailable: (message, goHome) => { tabsRoot.hidden = false; ui.showLibraryUnavailable(message, goHome); },
 });
 async function publishLibrary(index, settings = null) {
   if (!social.ready) return;
+  const version = sharingVersion;
+  const owner = authorizedOwner;
   const loaded = settings || (await loadUserSettings(index)).settings;
+  if (version !== sharingVersion || owner !== authorizedOwner) return;
   await social.publishLibrary(index, loaded);
 }
 let publishingFor = null;
 social.subscribe((state) => {
   if (state.status !== 'ready') { publishingFor = null; return; }
-  if (currentIndex && publishingFor !== currentIndex) {
-    publishingFor = currentIndex;
-    void publishLibrary(currentIndex).catch((error) => { ui.showError(`Не удалось обновить каталог для друзей: ${error.message}`); });
+  if (shareableIndex && publishingFor !== shareableIndex) {
+    publishingFor = shareableIndex;
+    void publishLibrary(shareableIndex).catch((error) => { ui.showError(`Не удалось обновить каталог для друзей: ${error.message}`); });
   }
 });
 
@@ -128,6 +134,7 @@ async function rebuildIndex() {
     const result = await libraryRefresher.run({ activeIndex: currentIndex, rootFolderId: ROOT_FOLDER_ID, fileId: indexFileId });
     if (!result) return;
     indexFileId = result.fileId;
+    shareableIndex = result.index;
     void publishLibrary(result.index).catch((error) => ui.showError(`Не удалось обновить каталог для друзей: ${error.message}`));
     ui.setStatus(`Библиотека обновлена: ${result.index.books.length.toLocaleString('ru-RU')} книг.`);
     await runMetadataIndexing({ refreshOnly: true });
@@ -228,6 +235,7 @@ async function runMetadataIndexing({ retryErrors = false, refreshOnly = false, r
         remove: () => deleteCheckpoint(localCheckpointKey),
       });
       currentIndex = committed.index;
+      shareableIndex = currentIndex;
       renderLibrary(currentIndex);
       void publishLibrary(currentIndex).catch((error) => ui.showError(`Не удалось обновить каталог для друзей: ${error.message}`));
       const obsoleteCovers = staleActiveCoverIds(activeIndex, currentIndex);
@@ -273,6 +281,10 @@ async function afterAuthorization() {
   const user = await getCurrentDriveUser();
   if (!user.emailAddress) throw new Error('Google не вернул идентификатор пользователя.');
   const sameOwner = authorizedOwner === user.emailAddress;
+  if (authorizedOwner && !sameOwner) {
+    sharingVersion++; shareableIndex = null; currentIndex = null;
+    selection.reset(); tabsRoot.hidden = true; ui.resetUi();
+  }
   authorizedOwner = user.emailAddress;
   localCheckpointKey = checkpointKey(authorizedOwner, ROOT_FOLDER_ID);
   reconnectRequired = false;
@@ -301,6 +313,7 @@ async function afterAuthorization() {
         saved.index.updatedAt = new Date().toISOString();
         indexFileId = await saveIndex(saved.index, indexFileId);
       }
+      shareableIndex = currentIndex;
       const local = await loadCheckpoint(localCheckpointKey);
       try {
         const draft = local ? { index: local, fileId: null } : await loadBuildingIndex(ROOT_FOLDER_ID);
@@ -359,6 +372,7 @@ async function signIn() {
 }
 
 function signOut() {
+  sharingVersion++; shareableIndex = null;
   selection.reset(); tabsRoot.hidden = true;
   authAttempts.invalidate();
   clearPersistedAuth({ forget: true });
