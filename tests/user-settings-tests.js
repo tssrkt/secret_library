@@ -138,7 +138,7 @@ export async function runUserSettingsTests(test, assert, equal) {
     const noop = () => {};
     ui.bindActions({ home: ui.showLibraryHome, signIn: noop, refresh: noop, indexMetadata: noop,
       retryMetadata: noop, stopMetadata: noop, signOut: noop, rebuild: noop });
-    restoreAuthSession({ session: { getItem: () => JSON.stringify({ accessToken: 'test-only', expiresAt: Date.now() + 60000 }) } });
+    restoreAuthSession({ session: { getItem: () => JSON.stringify({ accessToken: 'test-only', expiresAt: Date.now() + 3600000 }) } });
     const nativeFetch = window.fetch;
     const requests = [];
     let stored = null;

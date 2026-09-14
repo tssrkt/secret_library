@@ -23,10 +23,11 @@ const setup = `<script type="module">
 const server = createServer(async (request, response) => {
   try {
     const pathname = new URL(request.url, 'http://localhost').pathname;
-    const path = resolve(root, '.' + (pathname === '/keyboard-fixture' ? '/index.html' : pathname));
+    const path = resolve(root, '.' + (['/keyboard-fixture', '/resume-fixture'].includes(pathname) ? '/index.html' : pathname));
     if (!path.startsWith(root + sep)) { response.writeHead(403).end(); return; }
     let content = await readFile(path);
     if (pathname === '/keyboard-fixture') content = content.toString().replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, '') + setup;
+    if (pathname === '/resume-fixture') content = content.toString().replace('./js/app.js', './tests/resume-app-fixture.js');
     if (pathname === '/tests/fb2-tests.html') content = content.toString().replace(
       '<script type="module" src="./fb2-tests.js"></script>',
       '<script type="module">await new Promise(resolve => window.addEventListener("load", resolve, { once: true })); await import("./fb2-tests.js");</script>',
@@ -122,7 +123,7 @@ try {
   await evaluate(`window.testUi.updateMetadataActions({books: Array.from({length: 303}, (_, i) => ({id: String(i), metadataStatus: 'error'})), lastFullScan: {totalEligible: 9257}});
     document.querySelector('#metadata-button').click(); document.querySelector('#retry-metadata-button').click();`);
   assert.deepEqual(await evaluate('window.indexActions'), ['full', 'retry'], 'menu actions remain independent');
-  assert.equal(await evaluate("document.querySelector('#metadata-button').textContent"), `Переиндексировать книги (${(9257).toLocaleString('ru-RU')})`);
+  assert.equal(await evaluate("document.querySelector('#metadata-button').textContent"), `Переиндексировать все книги (${(9257).toLocaleString('ru-RU')})`);
   assert.equal(await evaluate("document.querySelector('#retry-metadata-button').textContent"), 'Повторить ошибки (303)');
   await evaluate('window.testUi.updateMetadataActions({books: []})');
   assert.equal(await evaluate("document.querySelector('#metadata-button').hidden"), false, 'full available without errors');
@@ -134,6 +135,26 @@ try {
   const summary = await evaluate("document.querySelector('#results')?.textContent");
   assert.equal(await evaluate('document.body?.dataset.testStatus'), 'passed', summary);
   console.log(summary);
+  await send('Page.navigate', { url: `http://127.0.0.1:${server.address().port}/resume-fixture` });
+  const until = async (condition) => {
+    for (let i = 0; i < 200; i++) { if (await evaluate(condition)) return; await delay(50); }
+    throw new Error(`App condition timed out: ${condition}; ${await evaluate("document.querySelector('#status-text')?.textContent")}`);
+  };
+  await until('window.resumeFixture?.ready');
+  assert.equal(await evaluate("document.querySelector('#status-text').nextElementSibling.textContent"), 'Продолжить индексацию — осталось 3');
+  await send('Page.reload');
+  await delay(200);
+  await until('window.resumeFixture?.ready');
+  assert.equal(await evaluate('(async () => (await window.resumeFixture.checkpoint()).buildState.progress.processed)()'), 3, 'real page reload preserves progress');
+  await evaluate("document.querySelector('#status-text').nextElementSibling.click()");
+  await until("(async () => (await window.resumeFixture.checkpoint())?.buildState.status === 'paused' && !document.querySelector('#sign-in-button').hidden)()");
+  assert.equal(await evaluate("document.querySelector('#user-controls').hidden"), false, 'expired token never logs app out');
+  assert.equal(await evaluate('(async () => (await window.resumeFixture.checkpoint()).buildState.progress.processed)()'), 3, 'failed renewal keeps checkpoint');
+  await evaluate("window.resumeFixture.deny = false; document.querySelector('#sign-in-button').click()");
+  await until('(async () => !(await window.resumeFixture.checkpoint()))()');
+  assert.equal(await evaluate("window.resumeFixture.downloads.some(id => ['book0','book1','book2'].includes(id))"), false, 'completed metadata is never downloaded again');
+  assert.equal(await evaluate("document.querySelector('#sign-in-button').hidden"), true, 'reconnection restores connected controls');
+  console.log('Real app checks passed: reload, paused auth, no logout, automatic continuation, verified commit and checkpoint cleanup.');
 } finally {
   socket?.close();
   chrome.kill();

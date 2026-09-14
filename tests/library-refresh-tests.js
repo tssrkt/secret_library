@@ -21,7 +21,7 @@ const oldIndex = (count = 1) => ({ version: INDEX_VERSION, rootFolderId: 'root',
 export async function runLibraryRefreshTests(test, assert, equal) {
   await test('incomplete or repeating Drive pages fail explicitly instead of publishing partial folders', async () => {
     const original = window.fetch;
-    restoreAuthSession({ session: { getItem: () => JSON.stringify({ accessToken: 'test-only', expiresAt: Date.now() + 60000 }) } });
+    restoreAuthSession({ session: { getItem: () => JSON.stringify({ accessToken: 'test-only', expiresAt: Date.now() + 3600000 }) } });
     try {
       for (const [page, code, count] of [
         [{ files: [], incompleteSearch: true }, 'incomplete_folder_list', 1],
@@ -67,7 +67,7 @@ export async function runLibraryRefreshTests(test, assert, equal) {
   for (const mode of ['temporary', 'body-timeout', 'fatal']) {
     await test(`folder list ${mode} uses bounded retries and preserves active index on failure`, async () => {
       const original = window.fetch; let calls = 0; const progress = []; const old = oldIndex(); let applied = 0; let saved = 0; let removed = 0;
-      restoreAuthSession({ session: { getItem: () => JSON.stringify({ accessToken: 'test-only', expiresAt: Date.now() + 60000 }) } });
+      restoreAuthSession({ session: { getItem: () => JSON.stringify({ accessToken: 'test-only', expiresAt: Date.now() + 3600000 }) } });
       window.fetch = async (url, options) => {
         calls++;
         if (mode === 'body-timeout' && calls === 1) return { ok: true, json: () => new Promise((resolve, reject) => {

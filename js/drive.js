@@ -1,10 +1,19 @@
 import { FOLDER_MIME_TYPE, ROOT_FOLDER_ID, ROOT_FOLDER_RESOURCE_KEY } from './config.js';
-import { getAccessToken } from './auth.js';
+import { ensureAccessToken, renewAccessToken } from './auth.js';
 
 const API_ROOT = 'https://www.googleapis.com/drive/v3';
 const UPLOAD_ROOT = 'https://www.googleapis.com/upload/drive/v3';
 const RETRYABLE_STATUSES = new Set([429, 500, 502, 503, 504]);
 const MAX_RETRIES = 2;
+
+async function readDownloadBody(response, method, signal) {
+  try { return await response[method](); }
+  catch (cause) {
+    signal?.throwIfAborted();
+    throw Object.assign(new DriveError('Загрузка Google Drive прервана. Проверьте подключение.',
+      { code: 'network_error', retryable: true }), { stage: 'download', cause });
+  }
+}
 
 export class DriveError extends Error {
   constructor(message, { status = 0, code = 'drive_error', retryable = false } = {}) {
@@ -29,7 +38,7 @@ function resourceKeyHeaders() {
     : {};
 }
 
-export async function driveFetch(path, options = {}, retry = 0, apiRoot = API_ROOT) {
+export async function driveFetch(path, options = {}, retry = 0, apiRoot = API_ROOT, authRetried = false) {
   const { diagnostics = {}, readJson = false, ...requestOptions } = options;
   options.signal?.throwIfAborted();
   const pause = (ms) => diagnostics.sleep ? diagnostics.sleep(ms) : delay(ms, options.signal);
@@ -41,7 +50,7 @@ export async function driveFetch(path, options = {}, retry = 0, apiRoot = API_RO
     diagnostics.onIssue?.(error);
     return error;
   };
-  const token = getAccessToken();
+  const token = await ensureAccessToken();
   if (!token) throw report(new DriveError('Сеанс Google истек. Войдите снова.', { status: 401, code: 'unauthorized' }), 'not-retried');
 
   let response;
@@ -70,12 +79,17 @@ export async function driveFetch(path, options = {}, retry = 0, apiRoot = API_RO
     if (retry < (diagnostics.maxRetries ?? MAX_RETRIES)) {
       report(failure, 'retrying');
       await pause(500 * (2 ** retry));
-      return driveFetch(path, options, retry + 1, apiRoot);
+      return driveFetch(path, options, retry + 1, apiRoot, authRetried);
     }
     throw report(failure, retry ? 'exhausted' : 'not-retried');
   }
 
   if (response.ok) { diagnostics.onSuccess?.({ attempt: retry + 1 }); return response; }
+  if (response.status === 401 && !authRetried) {
+    await renewAccessToken(token);
+    options.signal?.throwIfAborted();
+    return driveFetch(path, options, retry, apiRoot, true);
+  }
   let errorBody = null;
   try { errorBody = await response.clone().json(); } catch { /* response has no JSON body */ }
   const reason = errorBody?.error?.errors?.[0]?.reason || '';
@@ -85,7 +99,7 @@ export async function driveFetch(path, options = {}, retry = 0, apiRoot = API_RO
     report(new DriveError(errorBody?.error?.message || `HTTP ${response.status}`, { status: response.status, retryable }), 'retrying');
     const retryAfter = Number(response.headers.get('Retry-After')) * 1000;
     await pause(Math.min(retryAfter || 700 * (2 ** retry), 10000));
-    return driveFetch(path, options, retry + 1, apiRoot);
+    return driveFetch(path, options, retry + 1, apiRoot, authRetried);
   }
 
   const apiMessage = errorBody?.error?.message || '';
@@ -114,7 +128,7 @@ export async function getFolder(folderId, { signal, diagnostics = {} } = {}) {
 
 export async function getLibraryFile(fileId, signal) {
   const params = new URLSearchParams({ fields: 'id,name,mimeType,parents,size,modifiedTime,md5Checksum,trashed', supportsAllDrives: 'true' });
-  return (await driveFetch(`/files/${encodeURIComponent(fileId)}?${params}`, { signal, diagnostics: { stage: 'metadata', fileId } })).json();
+  return driveFetch(`/files/${encodeURIComponent(fileId)}?${params}`, { signal, readJson: true, diagnostics: { stage: 'metadata', fileId } });
 }
 
 export async function getCurrentDriveUser(request = driveFetch) {
@@ -187,7 +201,7 @@ export async function downloadAppDataFile(fileId) {
 export async function downloadDriveFile(fileId, signal, request = driveFetch, diagnostics = {}) {
   const params = new URLSearchParams({ alt: 'media', supportsAllDrives: 'true' });
   const response = await request(`/files/${encodeURIComponent(fileId)}?${params}`, { signal, diagnostics });
-  return response.blob();
+  return readDownloadBody(response, 'blob', signal);
 }
 
 export async function downloadFileRange(fileId, start, end, signal, { requirePartial = false, diagnostics = {} } = {}) {
@@ -204,7 +218,7 @@ export async function downloadFileRange(fileId, start, end, signal, { requirePar
     await response.body?.cancel();
     throw new DriveError('Google Drive проигнорировал Range для ZIP; полный архив не загружен.', { code: 'range_ignored' });
   }
-  const bytes = new Uint8Array(await response.arrayBuffer());
+  const bytes = new Uint8Array(await readDownloadBody(response, 'arrayBuffer', signal));
   const contentRange = response.headers.get('Content-Range')?.match(/bytes\s+(\d+)-(\d+)\/(\d+|\*)/i);
   if (response.status === 206 && contentRange
       && (Number(contentRange[1]) !== start || Number(contentRange[2]) - start + 1 !== bytes.length)) {
@@ -257,7 +271,7 @@ export async function createAppDataBlob(name, blob) {
 }
 
 export async function downloadAppDataBlob(fileId, signal) {
-  return (await driveFetch(`/files/${encodeURIComponent(fileId)}?alt=media`, { signal })).blob();
+  return readDownloadBody(await driveFetch(`/files/${encodeURIComponent(fileId)}?alt=media`, { signal }), 'blob', signal);
 }
 
 export async function deleteAppDataFile(fileId) {

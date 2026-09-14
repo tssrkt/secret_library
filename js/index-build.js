@@ -8,7 +8,7 @@ function cloneIndex(index) {
 }
 
 function activeSignature(index) {
-  return `${index.rootFolderId}:${index.updatedAt || ''}:${index.books.length}`;
+  return `${index.version}:${METADATA_VERSION}:${index.rootFolderId}:${index.updatedAt || ''}:${index.books.length}`;
 }
 
 export function prepareBuildingIndex(activeIndex, { retryErrors = false, mode = retryErrors ? 'retry' : 'incremental', scannedIndex,
@@ -39,6 +39,8 @@ export function prepareBuildingIndex(activeIndex, { retryErrors = false, mode = 
     runId: globalThis.crypto.randomUUID(),
     mode,
     selectedIds,
+    processedIds: [],
+    pendingIds: [...selectedIds],
     bookIds: building.books.map((book) => book.id),
     removedBookIds: [],
     ...(mode === 'full' ? { sourceBooks: cloneIndex(scannedIndex.books) } : {}),
@@ -50,7 +52,7 @@ export function prepareBuildingIndex(activeIndex, { retryErrors = false, mode = 
 }
 
 export function canResumeBuildingIndex(building, activeIndex, { retryErrors = false, mode = retryErrors ? 'retry' : 'incremental', scannedIndex } = {}) {
-  if (!building?.buildState || building.buildState.status !== 'building') return false;
+  if (!building?.buildState || !['building', 'paused'].includes(building.buildState.status)) return false;
   if (building.buildState.baseSignature !== activeSignature(activeIndex)) return false;
   if ((building.buildState.mode || 'incremental') !== mode) return false;
   if (building.rootFolderId !== activeIndex.rootFolderId) return false;
@@ -66,6 +68,7 @@ export function canResumeBuildingIndex(building, activeIndex, { retryErrors = fa
 }
 
 export function updateBuildProgress(building, progress) {
+  building.buildState.remaining = Math.max(0, building.buildState.total - progress.processed);
   building.buildState.progress = {
     processed: progress.processed,
     succeeded: progress.succeeded,

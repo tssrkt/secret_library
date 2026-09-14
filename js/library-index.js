@@ -48,7 +48,10 @@ export function migrateIndex(index) {
 export async function loadIndex(rootFolderId) {
   let files;
   try { files = await listAppDataFiles(INDEX_FILE_NAME); }
-  catch (error) { throw new IndexError(`Не удалось проверить сохраненный индекс: ${error.message}`, 'index_read_failed'); }
+  catch (error) {
+    if (error.status === 401 || error.code === 'unauthorized' || error.retryable) throw error;
+    throw new IndexError(`Не удалось проверить сохраненный индекс: ${error.message}`, 'index_read_failed');
+  }
   if (!files.length) return { index: null, fileId: null };
 
   try {
@@ -56,6 +59,7 @@ export async function loadIndex(rootFolderId) {
     const result = migrateIndex(validateIndex(await response.json(), rootFolderId));
     return { ...result, fileId: files[0].id };
   } catch (error) {
+    if (error.status === 401 || error.code === 'unauthorized' || error.retryable) throw error;
     if (error instanceof IndexError) {
       error.fileId = files[0].id;
       throw error;
@@ -77,6 +81,7 @@ export async function saveIndex(index, fileId = null) {
     wrapped.stage = 'index-write';
     wrapped.attempt = error.attempt;
     wrapped.retryResult = error.retryResult;
+    wrapped.retryable = error.retryable;
     if (error.code === 'unauthorized') wrapped.code = 'unauthorized';
     throw wrapped;
   }
@@ -89,7 +94,8 @@ export async function loadBuildingIndex(rootFolderId) {
     const response = await downloadAppDataFile(files[0].id);
     const result = migrateIndex(validateIndex(await response.json(), rootFolderId));
     return { ...result, fileId: files[0].id };
-  } catch {
+  } catch (error) {
+    if (error.status === 401 || error.code === 'unauthorized' || error.retryable) throw error;
     return { index: null, fileId: files[0].id };
   }
 }

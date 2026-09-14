@@ -4,6 +4,34 @@ import { firebaseConfigured } from './firebase-config.js';
 let accessToken = null;
 let tokenClient = null;
 let tokenExpiresAt = 0;
+let pendingToken = null;
+let renewalTimer;
+let sessionUser = {};
+let interactionRequired = false;
+let tokenGeneration = 0;
+
+function scheduleRenewal() {
+  clearTimeout(renewalTimer);
+  renewalTimer = setTimeout(() => { void renewAccessToken().catch(() => {}); }, Math.max(1000, tokenExpiresAt - Date.now() - 60000));
+  renewalTimer.unref?.();
+}
+
+export async function renewAccessToken(rejectedToken = null) {
+  if (rejectedToken && accessToken && rejectedToken !== accessToken) return accessToken;
+  if (interactionRequired) throw Object.assign(new AuthError('Подключите Google снова, чтобы продолжить.', 'unauthorized'), { status: 401 });
+  try { return await requestAccessToken({ prompt: '' }); }
+  catch (cause) {
+    interactionRequired = true;
+    const error = Object.assign(new AuthError('Подключите Google снова, чтобы продолжить.', 'unauthorized'), { status: 401, cause });
+    globalThis.window?.dispatchEvent(new Event('google-reconnect-required'));
+    throw error;
+  }
+}
+
+export async function ensureAccessToken() {
+  if (!accessToken || tokenExpiresAt <= Date.now() + 60000) return renewAccessToken();
+  return accessToken;
+}
 
 export const AUTH_SESSION_KEY = 'secret-library-google-session';
 export const PREVIOUS_SIGN_IN_KEY = 'secret-library-previous-sign-in';
@@ -15,6 +43,7 @@ function storageOrNull(name) {
 export function persistAuthSession(user = {}, {
   session = storageOrNull('sessionStorage'), local = storageOrNull('localStorage'),
 } = {}) {
+  sessionUser = user;
   if (!accessToken || tokenExpiresAt <= Date.now()) return false;
   try {
     session?.setItem(AUTH_SESSION_KEY, JSON.stringify({ accessToken, expiresAt: tokenExpiresAt, user }));
@@ -26,6 +55,9 @@ export function persistAuthSession(user = {}, {
 export function restoreAuthSession({ session = storageOrNull('sessionStorage'), now = Date.now() } = {}) {
   let saved;
   try { saved = JSON.parse(session?.getItem(AUTH_SESSION_KEY) || 'null'); } catch { saved = null; }
+  clearTimeout(renewalTimer);
+  sessionUser = saved?.user || {};
+  interactionRequired = false;
   if (!saved?.accessToken || !Number.isFinite(saved.expiresAt) || saved.expiresAt <= now) {
     try { session?.removeItem(AUTH_SESSION_KEY); } catch { /* storage may be unavailable */ }
     accessToken = null;
@@ -34,6 +66,8 @@ export function restoreAuthSession({ session = storageOrNull('sessionStorage'), 
   }
   accessToken = saved.accessToken;
   tokenExpiresAt = saved.expiresAt;
+  sessionUser = saved.user || {};
+  scheduleRenewal();
   return { expiresAt: saved.expiresAt, user: saved.user || {} };
 }
 
@@ -114,20 +148,33 @@ export async function initializeAuth() {
 
 export function requestAccessToken({ prompt = 'consent' } = {}) {
   if (!tokenClient) return Promise.reject(new AuthError('Google OAuth еще не инициализирован.'));
-
-  return new Promise((resolve, reject) => {
+  if (pendingToken) return pendingToken;
+  const generation = tokenGeneration;
+  pendingToken = new Promise((resolve, reject) => {
+    let settled = false;
+    const timer = setTimeout(() => fail(new AuthError('Google не завершил подключение.', 'auth_timeout')), 60000);
+    const fail = (error) => { settled = true; clearTimeout(timer); reject(error); };
     tokenClient.callback = (response) => {
-      if (response.error) {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (generation !== tokenGeneration) { reject(new AuthError('Вход отменён.', 'cancelled')); return; }
+      if (response.error || !response.access_token) {
         reject(new AuthError('Авторизация Google не завершена. Попробуйте войти еще раз.', response.error));
         return;
       }
       accessToken = response.access_token;
       tokenExpiresAt = Date.now() + Math.max(0, Number(response.expires_in) || 3600) * 1000;
+      interactionRequired = false;
+      persistAuthSession(sessionUser);
+      scheduleRenewal();
       resolve(accessToken);
     };
-    tokenClient.error_callback = () => reject(new AuthError('Окно авторизации было закрыто или вход отменен.', 'popup_closed'));
-    tokenClient.requestAccessToken({ prompt });
-  });
+    tokenClient.error_callback = (error) => fail(new AuthError('Окно авторизации было закрыто или вход отменен.', error?.type || 'popup_closed'));
+    try { tokenClient.requestAccessToken({ prompt, ...(sessionUser.emailAddress ? { login_hint: sessionUser.emailAddress } : {}) }); }
+    catch (error) { fail(error); }
+  }).finally(() => { pendingToken = null; });
+  return pendingToken;
 }
 
 export function getAccessToken() {
@@ -135,6 +182,10 @@ export function getAccessToken() {
 }
 
 export function clearAccessToken({ revoke = false } = {}) {
+  tokenGeneration += 1;
+  clearTimeout(renewalTimer);
+  interactionRequired = false;
+  sessionUser = {};
   const token = accessToken;
   accessToken = null;
   tokenExpiresAt = 0;

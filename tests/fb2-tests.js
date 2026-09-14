@@ -1510,6 +1510,7 @@ await runIndexingRunTests(test, assert, equal);
 await runIndexerResilienceTests(test, assert, equal, makeZip);
 await runBookFormatTests(test, assert, equal, makeZip);
 await runSocialUiTests(test, assert, equal);
+await (await import('./resumable-indexing-tests.js')).runResumableIndexingTests(test, assert, equal);
 
 output.textContent = failures.length
   ? `${passed} passed, ${failures.length} failed\n\n${failures.join('\n\n')}`

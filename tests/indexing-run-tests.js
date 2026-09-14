@@ -18,7 +18,7 @@ export async function runIndexingRunTests(test, assert, equal) {
     active.indexingErrors.push({ fileId: '400', outcome: 'recovered', stage: 'parse' });
     const snapshot = JSON.stringify(active);
     const labels = metadataActionLabels(active);
-    equal(labels.full, `Переиндексировать книги (${(9257).toLocaleString('ru-RU')})`, 'full count');
+    equal(labels.full, `Переиндексировать все книги (${(9257).toLocaleString('ru-RU')})`, 'full count');
     equal(labels.retry, 'Повторить ошибки (303)', 'failed count');
     let scans = 0;
     const full = await prepareIndexingRun(active, { mode: 'full', scan: async () => { scans++; return structuredClone(active); } });
@@ -52,7 +52,7 @@ export async function runIndexingRunTests(test, assert, equal) {
   await test('full action remains available with zero errors and unknown total', () => {
     const active = library([book('one')]);
     delete active.lastFullScan;
-    equal(metadataActionLabels(active).full, 'Переиндексировать книги', 'no invented count and full available');
+    equal(metadataActionLabels(active).full, 'Переиндексировать все книги', 'no invented count and full available');
     assert(metadataActionLabels(active).retryHidden, 'nothing to retry');
   });
 

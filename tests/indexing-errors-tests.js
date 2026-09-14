@@ -15,7 +15,7 @@ const pendingBook = (id, size = 100) => ({ id, fileName: `${id}.fb2`, sourceType
 async function withDrive(respond, run) {
   const original = window.fetch;
   const calls = [];
-  restoreAuthSession({ session: { getItem: () => JSON.stringify({ accessToken: 'test-only', expiresAt: Date.now() + 60000 }) } });
+  restoreAuthSession({ session: { getItem: () => JSON.stringify({ accessToken: 'test-only', expiresAt: Date.now() + 3600000 }) } });
   window.fetch = async (url, options = {}) => {
     const call = { fileId: String(url).match(/\/files\/([^?]+)/)?.[1], range: options.headers?.Range || null, url: String(url) };
     calls.push(call);
@@ -90,10 +90,14 @@ export async function runIndexingErrorTests(test, assert, equal, makeZip) {
     }, async (calls) => {
       const sleeps = [];
       const index = { books: [pendingBook('temporary')] };
-      const stats = await indexPendingBooks(index, {
-        extract: (book, options) => extractBookMetadata(book, { ...options, diagnostics: { sleep: async (delay) => sleeps.push(delay) } }),
-      });
-      equal([calls.length, stats.failed, index.indexingErrors.length], [3, 1, 1], 'one file error with all attempts');
+      let paused = false;
+      try {
+        await indexPendingBooks(index, {
+          extract: (book, options) => extractBookMetadata(book, { ...options, diagnostics: { sleep: async (delay) => sleeps.push(delay) } }),
+        });
+      } catch (error) { paused = error.retryable; }
+      assert(paused, 'temporary failures pause the queue');
+      equal([calls.length, index.books[0].metadataStatus, index.indexingErrors.length], [3, 'pending', 1], 'interrupted file retains all attempts and remains pending');
       assert(sleeps.length === 2 && sleeps[1] > sleeps[0], 'increasing backoff');
       equal([index.indexingErrors[0].attempt, index.indexingErrors[0].retryResult], [3, 'exhausted'], 'retry exhaustion recorded');
       assert(index.indexingErrors[0].events.length === 3, 'request history retained');

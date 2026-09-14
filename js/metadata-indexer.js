@@ -26,6 +26,7 @@ export async function indexPendingBooks(index, {
   signal,
   onProgress = () => {},
   onCheckpoint = async () => {},
+  onLocalCheckpoint = async () => {},
   extract = extractBookMetadata,
   concurrency = METADATA_CONCURRENCY,
   checkpointSize = METADATA_CHECKPOINT_SIZE,
@@ -101,7 +102,7 @@ export async function indexPendingBooks(index, {
         book.metadataStatus = 'pending';
         return;
       }
-      if (error?.status === 401 || error?.code === 'unauthorized') {
+      if (error?.status === 401 || error?.code === 'unauthorized' || error?.retryable) {
         book.metadataStatus = 'pending';
         onIssue(error);
         recordIndexingError(index, book, [...issues.values()], { outcome: 'interrupted' });
@@ -132,6 +133,7 @@ export async function indexPendingBooks(index, {
       }
     }
     stats.processed += 1;
+    if (index.buildState?.processedIds) index.buildState.processedIds.push(book.id);
     if (issues.size || reportChanged) onErrors(index.indexingErrors);
     onProgress({ ...stats, currentFileName: book.fileName });
   };
@@ -140,6 +142,9 @@ export async function indexPendingBooks(index, {
   for (let offset = 0; offset < pending.length && !signal?.aborted; offset += concurrency) {
     const batch = await Promise.allSettled(pending.slice(offset, offset + concurrency).map(processBook));
     const fatal = batch.find((result) => result.status === 'rejected');
+    if (index.buildState) index.buildState.pendingIds = pending
+      .filter((book) => ['pending', 'processing'].includes(book.metadataStatus)).map((book) => book.id);
+    await onLocalCheckpoint(index, { ...stats }, pending.slice(offset, offset + concurrency).map((book) => book.id));
     if (fatal) throw fatal.reason;
     if (stats.processed >= checkpointAt) {
       index.updatedAt = new Date().toISOString();

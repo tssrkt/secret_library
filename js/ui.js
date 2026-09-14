@@ -188,6 +188,22 @@ export function setMetadataRunning(running) {
 
 export function setStatus(message) { elements.status.textContent = message; }
 
+const continueIndexing = document.createElement('button');
+continueIndexing.type = 'button';
+continueIndexing.hidden = true;
+elements.status.after(continueIndexing);
+export function setIndexingContinuation(state, resume = null) {
+  continueIndexing.hidden = !state;
+  continueIndexing.onclick = resume;
+  if (state) continueIndexing.textContent = `Продолжить индексацию — осталось ${Math.max(0, state.total - state.progress.processed).toLocaleString('ru-RU')}`;
+}
+
+export function setReconnectRequired(required) {
+  elements.signIn.hidden = !required;
+  elements.signIn.textContent = required ? 'Подключить Google снова' : 'Войти через Google';
+  if (required) elements.signIn.disabled = false;
+}
+
 export function showStats(folderCount, bookCount) {
   elements.stats.hidden = false;
   elements.folderCount.textContent = folderCount.toLocaleString('ru-RU');

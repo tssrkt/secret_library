@@ -16,6 +16,6 @@ export function indexingCounts(index) {
 
 export function metadataActionLabels(index) {
   const { totalEligibleBooks, failedBooks } = indexingCounts(index);
-  return { full: 'Переиндексировать книги' + (totalEligibleBooks == null ? '' : ` (${totalEligibleBooks.toLocaleString('ru-RU')})`),
+  return { full: 'Переиндексировать все книги' + (totalEligibleBooks == null ? '' : ` (${totalEligibleBooks.toLocaleString('ru-RU')})`),
     retry: `Повторить ошибки (${failedBooks.toLocaleString('ru-RU')})`, retryHidden: !failedBooks };
 }
