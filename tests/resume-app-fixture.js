@@ -24,6 +24,19 @@ if (!sessionStorage.getItem('resume-fixture-started')) {
 sessionStorage.setItem(AUTH_SESSION_KEY, JSON.stringify({ accessToken: 'fixture-old', expiresAt: Date.now() + 3600000,
   user: { emailAddress: owner } }));
 const state = window.resumeFixture = { deny: true, requests: [], downloads: [], checkpoint: () => loadCheckpoint(key) };
+if (location.pathname === '/libraries-fixture') {
+  const listeners = new Set();
+  const libraries = Array.from({ length: 20 }, (_, i) => ({ uid: `friend-${i}`, displayName: `Друг ${i} Имя`, revision: 'one' }));
+  let snapshot = { status: 'ready', friends: libraries.map((library) => ({ ...library, inbound: true })), libraries, notifications: [] };
+  social.subscribe = (listener) => { listeners.add(listener); listener(snapshot); return () => listeners.delete(listener); };
+  social.loadLibrary = async (uid) => ({ ...active,
+    books: [{ id: uid, parentId: ROOT_FOLDER_ID, fileName: `${uid}.fb2`, sourceType: 'fb2', extension: 'fb2',
+      metadataStatus: 'ready', metadataVersion: METADATA_VERSION, title: `FriendOnly ${uid}`, authors: ['Friend Author'], genres: ['sf'] }] });
+  state.revoke = (uid) => {
+    snapshot = { ...snapshot, libraries: snapshot.libraries.filter((library) => library.uid !== uid) };
+    listeners.forEach((listener) => listener(snapshot));
+  };
+}
 const client = { requestAccessToken(options) {
   state.requests.push(options);
   queueMicrotask(() => state.deny ? client.error_callback({ type: 'popup_failed_to_open' })

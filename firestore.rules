@@ -14,6 +14,25 @@ service cloud.firestore {
     function sharePath(owner, viewer) { return /databases/$(database)/documents/libraryShares/$(owner + '__' + viewer); }
     function registered() { return signed() && exists(userPath(me())); }
 
+    match /sharedLibraries/{owner} {
+      function canRead() { return registered() && (me() == owner || get(sharePath(owner, me())).data.active == true); }
+      allow get: if canRead();
+      allow list: if false;
+      allow create, update: if own(owner) && registered()
+        && request.resource.data.keys().hasOnly(['revision', 'signature', 'chunkCount'])
+        && request.resource.data.revision is string && request.resource.data.revision.size() <= 100
+        && request.resource.data.signature is string && request.resource.data.signature.size() == 64
+        && request.resource.data.chunkCount is int && request.resource.data.chunkCount > 0;
+      allow delete: if own(owner);
+      match /versions/{revision}/chunks/{chunk} {
+        allow read: if canRead() && (me() == owner || get(/databases/$(database)/documents/sharedLibraries/$(owner)).data.revision == revision);
+        allow create, update: if own(owner) && registered()
+          && request.resource.data.keys().hasOnly(['position', 'json'])
+          && request.resource.data.position is int && request.resource.data.position >= 0
+          && request.resource.data.json is string && request.resource.data.json.size() <= 600000;
+        allow delete: if own(owner);
+      }
+    }
     match /users/{uid} {
       allow get: if signed();
       allow list, delete: if false;

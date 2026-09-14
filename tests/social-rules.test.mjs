@@ -5,6 +5,7 @@ import { initializeTestEnvironment, assertFails, assertSucceeds } from '@firebas
 import * as sdk from 'firebase/firestore';
 import { createSocialStore } from '../js/social-store.js';
 import { friendsModel, notificationsModel, validateShareEmail } from '../js/social-model.js';
+import { createSharedLibraryStore } from '../js/shared-library.js';
 
 let env;
 const identity = (uid, email = `${uid}@gmail.com`) => ({ uid, email, emailVerified: true, displayName: uid, photoURL: '' });
@@ -17,6 +18,40 @@ const get = async (db, path) => { const snap = await sdk.getDoc(sdk.doc(db, path
 before(async () => { env = await initializeTestEnvironment({ projectId: 'demo-secret-library', firestore: { rules: await readFile(new URL('../firestore.rules', import.meta.url), 'utf8') } }); });
 beforeEach(async () => { await env.clearFirestore(); });
 after(async () => { await env.cleanup(); });
+
+test('shared catalogs enforce incoming access, exclude private folders and revoke old revisions', async () => {
+  const a = client('owner'); const b = client('viewer'); const c = client('other');
+  for (const person of [a, b, c]) await person.store.register();
+  const sharedA = createSharedLibraryStore({ db: a.db, sdk, user: a.user });
+  const sharedB = createSharedLibraryStore({ db: b.db, sdk, user: b.user });
+  const index = { version: 4, rootFolderId: 'root', folders: [
+    { id: 'root', parentId: null, name: 'Root' }, { id: 'open', parentId: 'root', name: 'Open' },
+    { id: 'closed', parentId: 'root', name: 'Private' }, { id: 'nested', parentId: 'closed', name: 'Nested' },
+  ], books: [{ id: 'yes', parentId: 'open', title: 'Visible', coverFileId: 'private-appdata', metadataError: 'private diagnostic' },
+    { id: 'no', parentId: 'nested', title: 'Secret' }, { id: 'loose', parentId: 'root', title: 'Root file' }] };
+  const settings = { sharing: { excludedFolderIds: ['closed'] } };
+  await sharedA.publish(index, settings);
+  const first = await get(a.db, 'sharedLibraries/owner');
+  await assertFails(sdk.getDoc(sdk.doc(b.db, 'sharedLibraries/owner')));
+  await b.store.setSharing('owner', true);
+  await assert.rejects(sharedB.load('owner'), /permission/i, 'outgoing share does not grant incoming access');
+  await a.store.setSharing('viewer', true);
+  const visible = await sharedB.load('owner');
+  assert.deepEqual(visible.books.map((book) => book.id), ['yes']);
+  assert(!JSON.stringify(visible).includes('private-appdata'));
+  assert(!JSON.stringify(visible).includes('Secret'));
+  await assertFails(sdk.getDocs(sdk.collection(c.db, 'sharedLibraries')));
+  await assertFails(sdk.getDoc(sdk.doc(c.db, 'sharedLibraries/owner')));
+  await assertFails(sdk.setDoc(sdk.doc(b.db, 'sharedLibraries/owner'), first));
+  await assertFails(sdk.setDoc(sdk.doc(b.db, `sharedLibraries/owner/versions/${first.revision}/chunks/0`), { position: 0, json: '{}' }));
+  await sharedA.publish(index, { sharing: { excludedFolderIds: ['open', 'closed'] } });
+  assert.deepEqual((await sharedB.load('owner')).books, []);
+  await assertFails(sdk.getDocs(sdk.collection(b.db, `sharedLibraries/owner/versions/${first.revision}/chunks`)));
+  await a.store.setSharing('viewer', false);
+  await assert.rejects(sharedB.load('owner'), /permission/i);
+  await sharedA.unpublish();
+  assert.equal(await get(a.db, 'sharedLibraries/owner'), null);
+});
 
 test('verified Google registration creates safe profile, exact email directory and immutable attribution', async () => {
   const anna = client('anna'); const boris = client('boris');

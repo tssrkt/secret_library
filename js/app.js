@@ -20,6 +20,10 @@ import { errorDetails, recordIndexingError } from './indexing-errors.js';
 import { social } from './social-runtime.js';
 import { getAccessToken } from './auth.js';
 import { checkpointKey, loadCheckpoint, saveCheckpoint, deleteCheckpoint, commitCheckpoint } from './indexing-checkpoint.js';
+import { createLibraryTabs } from './library-tabs.js';
+import { createLibrarySelection } from './library-selection.js';
+import { loadUserSettings } from './user-settings.js';
+import { firebaseConfigured } from './firebase-config.js';
 
 function reportOperationError(index, error, stage, fileId = '', fileName = '') {
   if (!index || error.indexingLogged) return;
@@ -38,6 +42,29 @@ let localCheckpointKey = null;
 let authorizedOwner = null;
 let reconnectRequired = false;
 const authAttempts = createAuthAttemptGuard();
+const tabsRoot = document.querySelector('#library-tabs');
+const tabs = createLibraryTabs(tabsRoot, (uid) => selection.select(uid));
+const selection = createLibrarySelection({ tabs, service: social,
+  show: (index, { own, ownerIndex }) => {
+    tabsRoot.hidden = false;
+    ui.renderLibrary(index, downloadBook, { ownerIndex, readOnly: !own, onSettingsSaved: publishLibrary,
+      beforeSettingsSave: () => firebaseConfigured() ? social.unpublishLibrary() : Promise.resolve() });
+  },
+  unavailable: (message, goHome) => { tabsRoot.hidden = false; ui.showLibraryUnavailable(message, goHome); },
+});
+async function publishLibrary(index, settings = null) {
+  if (!social.ready) return;
+  const loaded = settings || (await loadUserSettings(index)).settings;
+  await social.publishLibrary(index, loaded);
+}
+let publishingFor = null;
+social.subscribe((state) => {
+  if (state.status !== 'ready') { publishingFor = null; return; }
+  if (currentIndex && publishingFor !== currentIndex) {
+    publishingFor = currentIndex;
+    void publishLibrary(currentIndex).catch((error) => { ui.showError(`Не удалось обновить каталог для друзей: ${error.message}`); });
+  }
+});
 
 function showUnfinishedOperation() {
   const state = buildingIndex?.buildState;
@@ -79,7 +106,7 @@ async function downloadBook(book) {
 }
 
 function renderLibrary(index) {
-  ui.renderLibrary(index, downloadBook);
+  selection.setOwn(index);
 }
 
 const libraryRefresher = createLibraryRefresher({
@@ -101,6 +128,7 @@ async function rebuildIndex() {
     const result = await libraryRefresher.run({ activeIndex: currentIndex, rootFolderId: ROOT_FOLDER_ID, fileId: indexFileId });
     if (!result) return;
     indexFileId = result.fileId;
+    void publishLibrary(result.index).catch((error) => ui.showError(`Не удалось обновить каталог для друзей: ${error.message}`));
     ui.setStatus(`Библиотека обновлена: ${result.index.books.length.toLocaleString('ru-RU')} книг.`);
     await runMetadataIndexing({ refreshOnly: true });
   } catch (error) {
@@ -201,6 +229,7 @@ async function runMetadataIndexing({ retryErrors = false, refreshOnly = false, r
       });
       currentIndex = committed.index;
       renderLibrary(currentIndex);
+      void publishLibrary(currentIndex).catch((error) => ui.showError(`Не удалось обновить каталог для друзей: ${error.message}`));
       const obsoleteCovers = staleActiveCoverIds(activeIndex, currentIndex);
       const completedBuildingFileId = buildingIndexFileId;
       buildingIndex = null;
@@ -285,6 +314,7 @@ async function afterAuthorization() {
         throw error;
       }
       renderLibrary(currentIndex);
+      void publishLibrary(currentIndex).catch((error) => ui.showError(`Не удалось обновить каталог для друзей: ${error.message}`));
       ui.updateIndexingErrors(buildingIndex?.indexingErrors || currentIndex.indexingErrors || []);
       const coverIndex = buildingIndex
         ? { books: [...currentIndex.books, ...buildingIndex.books] }
@@ -329,6 +359,7 @@ async function signIn() {
 }
 
 function signOut() {
+  selection.reset(); tabsRoot.hidden = true;
   authAttempts.invalidate();
   clearPersistedAuth({ forget: true });
   clearAccessToken({ revoke: true });

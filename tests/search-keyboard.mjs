@@ -23,11 +23,11 @@ const setup = `<script type="module">
 const server = createServer(async (request, response) => {
   try {
     const pathname = new URL(request.url, 'http://localhost').pathname;
-    const path = resolve(root, '.' + (['/keyboard-fixture', '/resume-fixture'].includes(pathname) ? '/index.html' : pathname));
+    const path = resolve(root, '.' + (['/keyboard-fixture', '/resume-fixture', '/libraries-fixture'].includes(pathname) ? '/index.html' : pathname));
     if (!path.startsWith(root + sep)) { response.writeHead(403).end(); return; }
     let content = await readFile(path);
     if (pathname === '/keyboard-fixture') content = content.toString().replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, '') + setup;
-    if (pathname === '/resume-fixture') content = content.toString().replace('./js/app.js', './tests/resume-app-fixture.js');
+    if (['/resume-fixture', '/libraries-fixture'].includes(pathname)) content = content.toString().replace('./js/app.js', './tests/resume-app-fixture.js');
     if (pathname === '/tests/fb2-tests.html') content = content.toString().replace(
       '<script type="module" src="./fb2-tests.js"></script>',
       '<script type="module">await new Promise(resolve => window.addEventListener("load", resolve, { once: true })); await import("./fb2-tests.js");</script>',
@@ -172,6 +172,42 @@ try {
   assert.equal(await evaluate("window.resumeFixture.downloads.some(id => ['book0','book1','book2'].includes(id))"), false, 'completed metadata is never downloaded again');
   assert.equal(await evaluate("document.querySelector('#sign-in-button').hidden"), true, 'reconnection restores connected controls');
   console.log('Real app checks passed: reload, paused auth, no logout, automatic continuation, verified commit and checkpoint cleanup.');
+  await send('Page.navigate', { url: `http://127.0.0.1:${server.address().port}/libraries-fixture` });
+  await until('window.resumeFixture?.ready');
+  assert.equal(await evaluate("document.querySelector('[role=tab][aria-selected=true]').textContent"), 'Моя библиотека');
+  const mouse = (type, x, y, extra = {}) => send('Input.dispatchMouseEvent', { type, x, y, ...extra });
+  const dragTab = await evaluate(`(() => { const r = document.querySelector('[data-library="friend-0"]').getBoundingClientRect(); return {x:r.x+r.width/2, y:r.y+r.height/2}; })()`);
+  await mouse('mouseMoved', dragTab.x, dragTab.y);
+  await mouse('mousePressed', dragTab.x, dragTab.y, { button: 'left', buttons: 1, clickCount: 1 });
+  await mouse('mouseMoved', dragTab.x - 110, dragTab.y, { button: 'left', buttons: 1 });
+  await mouse('mouseReleased', dragTab.x - 110, dragTab.y, { button: 'left', clickCount: 1 });
+  assert.equal(await evaluate("document.querySelector('[role=tab][aria-selected=true]').dataset.library"), '', 'mouse drag never selects starting tab');
+  assert.ok(await evaluate("document.querySelector('.library-tab-strip').scrollLeft > 0"), 'mouse drag scrolls');
+  await evaluate("document.querySelector('[data-library=friend-0]').click()");
+  await until("document.querySelector('.book-card-title')?.textContent === 'FriendOnly friend-0'");
+  assert.ok(await evaluate("location.search.includes('library=friend-0')"));
+  await evaluate("document.querySelector('#quick-search-input').value = 'book'; document.querySelector('#quick-search-form').requestSubmit()");
+  assert.equal(await evaluate("document.querySelectorAll('.book-card').length"), 0, 'own filenames cannot appear in friend search');
+  await evaluate("document.querySelector('[data-library=friend-1]').click()");
+  await until("document.querySelector('.book-card-title')?.textContent === 'FriendOnly friend-1'");
+  assert.equal(await evaluate("document.querySelector('#quick-search-input').value"), '', 'search resets across libraries');
+  await send('Page.reload'); await delay(200); await until('window.resumeFixture?.ready');
+  await until("document.querySelector('.book-card-title')?.textContent === 'FriendOnly friend-1'");
+  await evaluate("window.resumeFixture.revoke('friend-1')");
+  assert.equal(await evaluate("document.querySelectorAll('.book-card').length"), 0, 'revocation clears catalog');
+  assert.equal(await evaluate("document.querySelector('[data-library=friend-1]')"), null, 'revoked tab removed');
+  await evaluate("document.querySelector('#library-selection-message button').click()");
+  assert.equal(await evaluate("document.querySelector('[role=tab][aria-selected=true]').textContent"), 'Моя библиотека');
+  await send('Emulation.setDeviceMetricsOverride', { width: 390, height: 800, deviceScaleFactor: 1, mobile: true });
+  await delay(100);
+  await evaluate("document.querySelector('[aria-label=\"Показать все\"]').click()");
+  assert.equal(await evaluate("document.querySelector('.library-tabs').classList.contains('expanded')"), true);
+  await evaluate("document.querySelector('[data-library=friend-19]').click(); document.querySelector('[aria-label=\"Свернуть\"]').click()");
+  await delay(150);
+  assert.ok(await evaluate(`(() => { const s=document.querySelector('.library-tab-strip').getBoundingClientRect(); const t=document.querySelector('[role=tab][aria-selected=true]').getBoundingClientRect(); return t.left >= s.left-1 && t.right <= s.right+1; })()`), 'mobile collapse reveals selected tab');
+  const tabsShot = await send('Page.captureScreenshot', { format: 'png' });
+  await writeFile(resolve(root, 'temp/library-tabs-mobile.png'), Buffer.from(tabsShot.data, 'base64'));
+  console.log('Library tabs app checks passed: default own, mouse drag, isolated search, URL reload, revocation and mobile collapse.');
 } finally {
   socket?.close();
   chrome.kill();

@@ -15,6 +15,7 @@ import { mountFriends } from './friends-ui.js';
 import { createNotificationsController } from './notifications-ui.js';
 import { social } from './social-runtime.js';
 import { getAccessToken } from './auth.js';
+import { saveUserSettings } from './user-settings.js';
 
 const genresRu = await loadGenreDictionary().catch(() => ({}));
 
@@ -220,7 +221,14 @@ export function clearError() { elements.errorPanel.hidden = true; }
 
 export function showLibraryHome() { resetLibraryHome(); }
 
-export function renderLibrary(index, onDownload = async () => {}) {
+export function renderLibrary(index, onDownload = async () => {}, { ownerIndex = index, readOnly = false,
+  onSettingsSaved = async () => {}, beforeSettingsSave = async () => {} } = {}) {
+  annotationModal.close();
+  pageByFolderId.clear();
+  const selectionMessage = document.querySelector('#library-selection-message');
+  if (selectionMessage) selectionMessage.hidden = true;
+  elements.libraryPanel.classList.toggle('friend-library', readOnly);
+  document.body.classList.toggle('viewing-friend-library', readOnly);
   settingsController?.leave();
   searchController?.destroy();
   clearCoverUrls();
@@ -231,7 +239,14 @@ export function renderLibrary(index, onDownload = async () => {}) {
   const lookups = buildLibraryLookups(index);
   const resultsState = { filter: null, page: 1 };
   settingsController = createUserSettingsController({
-    container: elements.tree, index, clearError,
+    container: elements.tree, index: ownerIndex, clearError,
+    save: async (settings, settingsIndex, fileId) => {
+      await beforeSettingsSave();
+      const saved = await saveUserSettings(settings, settingsIndex, fileId);
+      try { await onSettingsSaved(settingsIndex, settings); }
+      catch (error) { reportSettingsError(error); }
+      return saved;
+    },
     mountSections: (page) => mountFriends(page, social, retrySocial),
     onError: (error) => reportSettingsError(error),
   });
@@ -424,10 +439,25 @@ export function renderLibrary(index, onDownload = async () => {}) {
     renderResults();
   };
   showStats(Math.max(0, index.folders.length - (root ? 1 : 0)), index.books.length);
-  updateMetadataActions(index);
+  updateMetadataActions(ownerIndex);
+}
+
+export function showLibraryUnavailable(message, goHome) {
+  searchController?.destroy(); searchController = null;
+  settingsController?.leave();
+  annotationModal.close(); clearCoverUrls(); disposeBookCards(elements.tree); elements.tree.replaceChildren();
+  elements.libraryPanel.hidden = false;
+  document.body.classList.add('viewing-friend-library');
+  const panel = document.querySelector('#library-selection-message');
+  const button = document.createElement('button'); button.type = 'button'; button.textContent = 'Моя библиотека';
+  button.addEventListener('click', goHome);
+  panel.replaceChildren(document.createTextNode(`${message} `), button); panel.hidden = false;
+  resetLibraryHome = goHome;
+  openSettings = () => { goHome(); openSettings(); };
 }
 
 export function resetUi() {
+  document.body.classList.remove('viewing-friend-library');
   notifications.close();
   settingsController?.leave();
   settingsController = null;
