@@ -150,7 +150,7 @@ export async function runIndexerResilienceTests(test, assert, equal, makeZip) {
     equal(retry.books.find((book) => book.id === 'legacy').title, 'Café', 'retry decodes actual legacy bytes');
     assert(retry.indexingErrors.some((entry) => entry.outcome === 'recovered' && entry.binaryRecoveryAttempt.result === 'recovered'), 'warning contains attempt diagnostics');
     const emptyZip = await makeZip([{ name: 'text.txt', bytes: utf8('Not FB2') }]);
-    await rejects(() => extractZipFb2({ id: 'empty', size: emptyZip.length }, { fetchRange: fetcher(emptyZip) }), 'zip_no_fb2');
+    await rejects(() => extractZipFb2({ id: 'empty', size: emptyZip.length }, { fetchRange: fetcher(emptyZip) }), 'zip_no_supported_book');
     await rejects(() => extractZipFb2({ id: 'bad', size: 24 }, { fetchRange: fetcher(new Uint8Array(24)) }), 'malformed_zip');
   });
 }

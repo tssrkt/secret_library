@@ -56,7 +56,7 @@ DOMParser требует полный документ, а отбрасыван�
 Контракт API: [WHATWG Compression](https://compression.spec.whatwg.org/).
 
 Превышения имеют отдельные safety codes; это не утверждение о повреждении книги.
-Неправильные размеры/Deflate остаются `malformed_zip`, отсутствие FB2 — `zip_no_fb2`.
+Неправильные размеры/Deflate остаются `malformed_zip`, отсутствие поддерживаемой книги — `zip_no_supported_book`.
 
 ## Проверка без полного rebuild
 

@@ -125,6 +125,40 @@ export async function runBookFormatTests(test, assert, equal, makeZip) {
       equal(result.title, 'MOBI title', 'metadata independent of text');
     }
   });
+  await test('ZIP is a book container for FB2, EPUB and MOBI with deterministic selection', async () => {
+    const epubData = await epub(); const mobiData = makeMobi();
+    const fb2Data = bytes('<FictionBook><description><title-info><book-title>ZIP FB2</book-title></title-info></description></FictionBook>');
+    const extractZip = async (fileName, entries) => {
+      const data = await makeZip(entries);
+      return extractBookMetadata({ id: fileName, fileName, sourceType: 'zip', size: data.length }, { fetchRange: ranges(data) });
+    };
+    const epubResult = await extractZip('archive.zip', [{ name: 'cover.jpg', bytes: PNG }, { name: 'notes.txt', bytes: bytes('ignore') }, { name: 'nested/book.EPUB', bytes: epubData }]);
+    equal([epubResult.title, epubResult.entryPath, epubResult.innerFormat], ['EPUB title', 'nested/book.EPUB', 'epub'], 'ZIP to EPUB uses normal EPUB parser');
+    const mobiResult = await extractZip('archive.zip', [{ name: '__MACOSX/ghost.mobi', bytes: mobiData }, { name: 'Thumbs.db', bytes: bytes('ignore') }, { name: 'book.MOBI', bytes: mobiData }]);
+    equal([mobiResult.title, mobiResult.entryPath, mobiResult.innerFormat], ['MOBI title', 'book.MOBI', 'mobi'], 'ZIP to MOBI ignores service entries');
+    const fb2Result = await extractZip('archive.zip', [{ name: 'book.fb2', bytes: fb2Data }]);
+    equal([fb2Result.title, fb2Result.innerFormat], ['ZIP FB2', 'fb2'], 'ZIP to FB2 remains supported');
+    const preferred = await extractZip('choice.fb2.zip', [{ name: 'first.epub', bytes: epubData }, { name: 'wanted.fb2', bytes: fb2Data }, { name: 'third.mobi', bytes: mobiData }]);
+    equal([preferred.title, preferred.entryPath, preferred.metadataWarning], ['ZIP FB2', 'wanted.fb2', 'multiple_supported_book_entries'], 'outer format preference wins over central-directory order');
+    const ordinary = await extractZip('ordinary.zip', [{ name: 'first.mobi', bytes: mobiData }, { name: 'second.epub', bytes: epubData }]);
+    equal(ordinary.entryPath, 'first.mobi', 'ordinary ZIP uses stable central-directory order');
+    const epubPreferred = await extractZip('choice.epub.zip', [{ name: 'first.mobi', bytes: mobiData }, { name: 'wanted.epub', bytes: epubData }]);
+    equal(epubPreferred.entryPath, 'wanted.epub', 'EPUB suffix preference');
+    const mobiPreferred = await extractZip('choice.mobi.zip', [{ name: 'first.epub', bytes: epubData }, { name: 'wanted.mobi', bytes: mobiData }]);
+    equal(mobiPreferred.entryPath, 'wanted.mobi', 'MOBI suffix preference');
+  });
+  await test('ZIP errors retain selected inner parser format and reject no-book containers', async () => {
+    const noBook = await makeZip([{ name: 'cover.jpg', bytes: PNG }, { name: 'readme.txt', bytes: bytes('ignore') }]);
+    let error;
+    try { await extractBookMetadata({ id: 'none', fileName: 'none.zip', sourceType: 'zip', size: noBook.length }, { fetchRange: ranges(noBook) }); } catch (caught) { error = caught; }
+    equal([error?.code, error?.containerType], ['zip_no_supported_book', 'ZIP'], 'generic missing-book error');
+    const brokenEpub = await makeZip([{ name: 'book.epub', bytes: await epub({ broken: true }) }]);
+    try { await extractBookMetadata({ id: 'broken-epub', fileName: 'broken.zip', sourceType: 'zip', size: brokenEpub.length }, { fetchRange: ranges(brokenEpub) }); } catch (caught) { error = caught; }
+    equal([error?.code, error?.containerType, error?.innerFormat], ['invalid_epub', 'ZIP', 'epub'], 'broken nested EPUB preserves EPUB error');
+    const brokenMobi = await makeZip([{ name: 'book.mobi', bytes: new Uint8Array(100) }]);
+    try { await extractBookMetadata({ id: 'broken-mobi', fileName: 'broken.zip', sourceType: 'zip', size: brokenMobi.length }, { fetchRange: ranges(brokenMobi) }); } catch (caught) { error = caught; }
+    assert(['invalid_mobi', 'unsupported_mobi'].includes(error?.code) && error.containerType === 'ZIP' && error.innerFormat === 'mobi', 'broken nested MOBI preserves MOBI error');
+  });
   await test('new formats support one full retry after 416, abort and controlled corruption errors', async () => {
     for (const type of ['epub', 'mobi']) {
       const data = type === 'epub' ? await epub() : makeMobi();

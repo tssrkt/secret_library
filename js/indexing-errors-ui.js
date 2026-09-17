@@ -7,7 +7,7 @@ const ERROR_LABELS = {
   not_xml_rtf: 'RTF-файл вместо FB2',
   invalid_xml: 'Повреждённый XML/FB2',
   malformed_zip: 'Повреждённый ZIP',
-  zip_no_fb2: 'ZIP не содержит FB2',
+  zip_no_supported_book: 'ZIP не содержит поддерживаемую книгу',
   zip_compressed_limit_exceeded: 'ZIP превышает безопасный лимит',
 };
 const isWarning = (entry) => ['binary_corruption_recovered', 'metadata_only_recovered'].includes(entry.code);

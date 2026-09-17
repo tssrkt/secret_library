@@ -26,7 +26,7 @@ export const ZIP_MAX_CENTRAL_DIRECTORY_SIZE = 4 * 1024 * 1024;
 // One selected entry: <=64 MiB input + <=128 MiB output (plus decoded XML/DOM).
 // Inflate writes into one bounded output buffer; other entries are never inflated.
 export const ZIP_MAX_COMPRESSED_ENTRY_SIZE = 64 * 1024 * 1024;
-export const ZIP_MAX_FB2_ENTRY_SIZE = 128 * 1024 * 1024;
+export const ZIP_MAX_BOOK_ENTRY_SIZE = 128 * 1024 * 1024;
 export const ZIP_MAX_TOTAL_UNCOMPRESSED_BYTES = 512 * 1024 * 1024;
 export const ZIP_MAX_COMPRESSION_RATIO = 500;
 export const ZIP_MAX_ENTRY_COUNT = 4096;

@@ -30,7 +30,7 @@ export async function runMetadataOnlyTests(test, assert, equal, makeZip) {
   await test('ZIP signature keeps no-FB2, malformed and bomb errors', async () => {
     const bomb = await makeZip([{ name: 'bomb.fb2', method: 8, bytes: bytes('x'.repeat(1024 * 1024)) }]);
     for (const [archive, code] of [
-      [await makeZip([{ name: 'book.txt', bytes: bytes('text') }]), 'zip_no_fb2'],
+      [await makeZip([{ name: 'book.txt', bytes: bytes('text') }]), 'zip_no_supported_book'],
       [new Uint8Array([80, 75, 3, 4, 0]), 'malformed_zip'],
       [bomb, 'zip_suspicious_compression_ratio'],
     ]) {

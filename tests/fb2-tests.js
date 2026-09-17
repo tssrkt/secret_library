@@ -529,7 +529,7 @@ await test('folders are expandable from indexed children, independently of files
     ],
     books: [
       { id: 'zip', parentId: 'zip-folder', fileName: 'book.zip', sourceType: 'zip', metadataStatus: 'pending' },
-      { id: 'bad', parentId: 'bad-zip-folder', fileName: 'bad.zip', sourceType: 'zip', metadataStatus: 'error', metadataError: 'zip_no_fb2' },
+      { id: 'bad', parentId: 'bad-zip-folder', fileName: 'bad.zip', sourceType: 'zip', metadataStatus: 'error', metadataError: 'zip_no_supported_book' },
     ],
   };
   const lookups = buildLibraryLookups(index);
@@ -585,7 +585,7 @@ await test('Deflate FB2 extraction', async () => {
 await test('multiple FB2 entries use first and preserve warning', async () => {
   const bytes = await makeZip([{ name: 'one.fb2', bytes: zipFb2 }, { name: 'two.fb2', bytes: zipFb2 }]);
   const result = await extractZipFb2({ id: 'zip', size: bytes.length }, { fetchRange: zipFetcher(bytes) });
-  equal([result.entryPath, result.metadataWarning], ['one.fb2', 'multiple_fb2_entries'], 'multiple entries');
+  equal([result.entryPath, result.metadataWarning], ['one.fb2', 'multiple_supported_book_entries'], 'multiple entries');
 });
 
 await test('ZIP without FB2 is isolated error', async () => {
@@ -593,7 +593,7 @@ await test('ZIP without FB2 is isolated error', async () => {
   try {
     await extractZipFb2({ id: 'zip', size: bytes.length }, { fetchRange: zipFetcher(bytes) });
     assert(false, 'error expected');
-  } catch (error) { equal(error.code, 'zip_no_fb2', 'error code'); }
+  } catch (error) { equal(error.code, 'zip_no_supported_book', 'error code'); }
 });
 
 await test('malformed ZIP and invalid offset are rejected', async () => {

@@ -17,6 +17,7 @@ export function errorDetails(error, extra = {}) {
     ...(error.encoding ? { encoding: error.encoding } : {}),
     ...(error.containerType ? { containerType: error.containerType } : {}),
     ...(error.entryPath ? { entryPath: String(error.entryPath).replace(/[\r\n\t]/g, ' ').slice(0, 240) } : {}),
+    ...(error.innerFormat ? { innerFormat: String(error.innerFormat).toUpperCase() } : {}),
     ...(error.containerDetectedBySignature ? { containerDetectedBySignature: true } : {}),
     ...(error.metadataRecoveryAttempt?.attempted ? { metadataRecoveryAttempt: { ...error.metadataRecoveryAttempt } } : {}),
     ...(error.code === 'metadata_only_recovered' ? {
@@ -67,7 +68,8 @@ export function formatIndexingErrors(entries) {
       `Content-Range: ${event.contentRange || 'unavailable'}`, `Retry: ${event.retryResult}`,
       ...(event.encoding ? [`Encoding: ${event.encoding}`] : []),
       ...(event.containerType ? [`Container: ${event.containerType}`] : []),
-      ...(event.entryPath ? [`Inner FB2 entry: ${event.entryPath}`] : []),
+      ...(event.entryPath ? [`Inner entry: ${event.entryPath}`] : []),
+      ...(event.innerFormat ? [`Inner format: ${event.innerFormat}`] : []),
       ...(event.containerDetectedBySignature ? ['Container detected by signature: yes'] : []),
       ...(event.metadataRecoveryAttempt ? [`Metadata recovery attempted: yes`, `Metadata recovery result: ${event.metadataRecoveryAttempt.result}`,
         `Metadata recovery reason: ${event.metadataRecoveryAttempt.reason}`, `Description XML valid: ${event.metadataRecoveryAttempt.descriptionValid ? 'yes' : 'no'}`] : []),
