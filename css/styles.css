@@ -39,7 +39,8 @@ h1 { margin: 0; font: 750 clamp(2rem, 5vw, 3rem)/1.05 system-ui, sans-serif; whi
 }
 .branding h1 a:focus-visible { outline: 3px solid #8a623b; outline-offset: .2rem; }
 .subtitle { margin: .35rem 0 0; color: #6a6359; }
-.account-actions { display: flex; align-items: center; flex: none; gap: .65rem; }
+.account-actions { display: flex; align-items: center; flex: none; column-gap: .65rem; row-gap: .65rem; }
+.account-actions > .search-icon-button, .account-actions > .notification-controls, .account-actions > .user-controls { margin: 0; }
 .user-controls { position: relative; }
 .avatar-button {
   width: 2.7rem;
@@ -158,7 +159,7 @@ dd { margin: 0; font-weight: 750; font-variant-numeric: tabular-nums; }
 .library-tree { min-width: 0; }
 .tree-list { list-style: none; margin: 0; padding-left: 1.25rem; }
 .library-tree > .tree-list { padding-left: 0; }
-.tree-row { display: flex; align-items: center; min-width: 0; min-height: 1.9rem; }
+.tree-row { display: flex; align-items: center; width: 100%; max-width: 100%; min-width: 0; min-height: 1.9rem; flex-wrap: nowrap; overflow: hidden; }
 .folder-toggle {
   padding: .2rem .35rem;
   color: inherit;
@@ -177,9 +178,9 @@ dd { margin: 0; font-weight: 750; font-variant-numeric: tabular-nums; }
 .folder-content-count { flex: none; margin-left: .45rem; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .folder-note-edit { flex: none; padding: .15rem .32rem; margin-left: .28rem; color: #746b60; background: transparent; font-size: .9rem; line-height: 1; }
 .folder-note-edit:hover { background: #f4eee5; }
-.folder-note-viewport { position: relative; flex: 1 1 auto; min-width: 0; margin-left: .32rem; overflow: hidden; white-space: nowrap; cursor: grab; touch-action: pan-y; }
+.folder-note-viewport { position: relative; flex: 1 1 0; min-width: 0; max-width: 100%; margin-left: .32rem; overflow: hidden; white-space: nowrap; cursor: grab; touch-action: pan-y; user-select: none; -webkit-user-select: none; }
 .folder-note-viewport:active { cursor: grabbing; }
-.folder-note { display: inline-block; min-width: max-content; overflow: hidden; text-overflow: ellipsis; vertical-align: top; }
+.folder-note { display: inline-block; min-width: max-content; overflow: hidden; text-overflow: ellipsis; vertical-align: top; user-select: none; -webkit-user-select: none; }
 .folder-note-viewport.truncated::after { content: "…"; position: absolute; right: 0; top: 0; padding-left: .2rem; color: #8b8379; background: #fffdfa; pointer-events: none; }
 .empty-library { color: #746b60; }
 

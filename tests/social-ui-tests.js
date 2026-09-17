@@ -119,6 +119,7 @@ export async function runSocialUiTests(test, assert, equal) {
       const before = rect('#notifications-button');
       const search = rect('#book-search-button'); const avatar = rect('#avatar-button');
       assert(search.right <= before.left && before.right <= avatar.left, `search bell avatar order at ${width}`);
+      equal([before.left - search.right, avatar.left - before.right], [10.4, 10.4], 'search, bell and avatar have equal gaps');
       const center = (box) => box.top + box.height / 2;
       assert(Math.abs(center(search) - center(before)) < 1 && Math.abs(center(before) - center(avatar)) < 1, 'header controls vertically aligned');
       doc.querySelector('.app-header').classList.add('quick-search-open');

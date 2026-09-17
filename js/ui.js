@@ -409,7 +409,7 @@ export function renderLibrary(index, onDownload = async () => {}, { ownerIndex =
       row.append(button, counter);
       if (!readOnly) {
         const edit = document.createElement('button');
-        edit.type = 'button'; edit.className = 'folder-note-edit'; edit.textContent = '✒';
+        edit.type = 'button'; edit.className = 'folder-note-edit'; edit.textContent = '✍️';
         edit.title = 'Добавить или изменить заметку'; edit.setAttribute('aria-label', `Заметка к папке «${folder.name}»`);
         row.append(edit);
         edit.addEventListener('click', (event) => { event.stopPropagation(); void editFolderNote(folder); });

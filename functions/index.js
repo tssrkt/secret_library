@@ -30,7 +30,11 @@ function configuration() {
   return { host, port, user, pass, from };
 }
 
-export const inviteToLibrary = onCall({ region: 'europe-west1', secrets }, async (request) => {
+export const inviteToLibrary = onCall({
+  region: 'europe-west1',
+  invoker: 'public',
+  secrets,
+}, async (request) => {
   if (!request.auth?.uid || request.auth.token.email_verified !== true || request.auth.token.firebase?.sign_in_provider !== 'google.com') {
     throw new HttpsError('unauthenticated', 'Войдите через подтверждённый Google-аккаунт.');
   }

@@ -38,13 +38,14 @@ export async function runFolderTreeTests(test, assert, equal) {
     const row = document.createElement('div'); row.className = 'tree-row'; row.style.width = '180px';
     const name = document.createElement('button'); name.className = 'folder-toggle'; name.textContent = 'Папка';
     const count = document.createElement('span'); count.className = 'folder-content-count'; count.textContent = '0 / 0';
-    const edit = document.createElement('button'); edit.className = 'folder-note-edit'; edit.textContent = '✒';
+    const edit = document.createElement('button'); edit.className = 'folder-note-edit'; edit.textContent = '✍️';
     const viewport = document.createElement('span'); viewport.className = 'folder-note-viewport';
     const note = document.createElement('span'); note.className = 'folder-note'; note.textContent = 'Очень длинная заметка '.repeat(20);
     viewport.append(note); row.append(name, count, edit, viewport); document.body.append(row);
     try {
       const style = getComputedStyle(viewport);
-      assert(style.whiteSpace === 'nowrap' && style.overflow === 'hidden' && style.minWidth === '0px', 'long note stays inside a one-line, constrained viewport');
+      assert(style.whiteSpace === 'nowrap' && style.overflow === 'hidden' && style.minWidth === '0px' && style.flexBasis === '0px', 'long note stays inside a one-line, constrained viewport');
+      assert(getComputedStyle(note).userSelect === 'none', 'note text cannot be selected while dragging');
       assert(row.scrollWidth <= row.clientWidth, 'note does not create page/tree horizontal overflow');
     } finally { row.remove(); }
   });
