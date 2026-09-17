@@ -9,10 +9,15 @@ export function normalizeUserSettings(settings, index) {
   const excluded = settings?.version === 1 && settings.rootFolderId === index.rootFolderId
     && Array.isArray(settings.sharing?.excludedFolderIds) ? settings.sharing.excludedFolderIds : [];
   const ids = new Set(excluded.filter((id) => typeof id === 'string'));
+  const folderNotes = Object.fromEntries(Object.entries(settings?.folderNotes || {})
+    .filter(([folderId, note]) => typeof folderId === 'string' && typeof note === 'string' && note.trim())
+    .map(([folderId, note]) => [folderId, note.trim()]));
   return {
     version: 1,
     rootFolderId: index.rootFolderId,
     sharing: { excludedFolderIds: [...new Set(sharingFolders(index).map((folder) => folder.id))].filter((id) => ids.has(id)) },
+    // Notes deliberately live beside sharing preferences, not in the rebuilt Drive index.
+    folderNotes,
   };
 }
 

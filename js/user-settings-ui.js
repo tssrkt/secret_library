@@ -65,7 +65,7 @@ export function createUserSettingsController({ container, index, onError, clearE
       form.addEventListener('submit', async (event) => {
         event.preventDefault();
         if (saving || !isCurrent()) return;
-        const settings = { version: 1, rootFolderId: index.rootFolderId,
+        const settings = { ...saved.settings, version: 1, rootFolderId: index.rootFolderId,
           sharing: { excludedFolderIds: [...list.querySelectorAll('input')].filter((field) => !field.checked).map((field) => field.value) } };
         button.disabled = true;
         status.textContent = '';

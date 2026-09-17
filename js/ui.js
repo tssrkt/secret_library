@@ -15,7 +15,7 @@ import { mountFriends } from './friends-ui.js';
 import { createNotificationsController } from './notifications-ui.js';
 import { social } from './social-runtime.js';
 import { getAccessToken } from './auth.js';
-import { saveUserSettings } from './user-settings.js';
+import { loadUserSettings, saveUserSettings } from './user-settings.js';
 
 const genresRu = await loadGenreDictionary().catch(() => ({}));
 
@@ -237,12 +237,23 @@ export function renderLibrary(index, onDownload = async () => {}, { ownerIndex =
   elements.libraryPanel.hidden = false;
   const root = index.folders.find((folder) => folder.id === index.rootFolderId);
   const lookups = buildLibraryLookups(index);
+  let savedUserSettings = null;
+  let settingsLoad = loadUserSettings(ownerIndex).then((saved) => {
+    savedUserSettings = saved;
+    if (!readOnly) {
+      for (const [folderId, nodes] of noteNodes) for (const node of nodes) setFolderNote(node, saved.settings.folderNotes[folderId] || '');
+    }
+    return saved;
+  }).catch((error) => { reportSettingsError(error); return null; });
+  const noteNodes = new Map();
   const resultsState = { filter: null, page: 1 };
   settingsController = createUserSettingsController({
     container: elements.tree, index: ownerIndex, clearError,
+    load: async () => settingsLoad,
     save: async (settings, settingsIndex, fileId) => {
       await beforeSettingsSave();
       const saved = await saveUserSettings(settings, settingsIndex, fileId);
+      savedUserSettings = { fileId: saved, settings };
       try { await onSettingsSaved(settingsIndex, settings); }
       catch (error) { reportSettingsError(error); }
       return saved;
@@ -250,6 +261,59 @@ export function renderLibrary(index, onDownload = async () => {}, { ownerIndex =
     mountSections: (page) => mountFriends(page, social, retrySocial),
     onError: (error) => reportSettingsError(error),
   });
+
+  const setFolderNote = (node, note) => {
+    node.textContent = note;
+    node.hidden = !note;
+    node.title = note;
+    const viewport = node.parentElement;
+    requestAnimationFrame(() => viewport?.classList.toggle('truncated', !node.hidden && viewport.scrollWidth > viewport.clientWidth));
+  };
+  const registerFolderNote = (folderId, node) => {
+    const nodes = noteNodes.get(folderId) || [];
+    nodes.push(node); noteNodes.set(folderId, nodes);
+    setFolderNote(node, savedUserSettings?.settings.folderNotes[folderId] || '');
+  };
+  const enableNoteDrag = (viewport) => {
+    let pointerId = null; let startX = 0; let startScroll = 0; let dragging = false;
+    viewport.addEventListener('pointerdown', (event) => {
+      if (event.button !== undefined && event.button !== 0 || viewport.scrollWidth <= viewport.clientWidth) return;
+      pointerId = event.pointerId; startX = event.clientX; startScroll = viewport.scrollLeft; dragging = false;
+      viewport.setPointerCapture?.(pointerId);
+    });
+    viewport.addEventListener('pointermove', (event) => {
+      if (event.pointerId !== pointerId) return;
+      const distance = event.clientX - startX;
+      if (!dragging && Math.abs(distance) < 4) return;
+      dragging = true; event.preventDefault(); event.stopPropagation();
+      viewport.scrollLeft = startScroll - distance;
+    });
+    const finish = (event) => {
+      if (event.pointerId !== pointerId) return;
+      if (dragging) { event.preventDefault(); event.stopPropagation(); }
+      pointerId = null; dragging = false;
+      viewport.scrollLeft = 0;
+    };
+    viewport.addEventListener('pointerup', finish);
+    viewport.addEventListener('pointercancel', finish);
+  };
+  const editFolderNote = async (folder) => {
+    if (readOnly) return;
+    const current = savedUserSettings?.settings.folderNotes[folder.id] || '';
+    const note = window.prompt(`Заметка к папке «${folder.name}»`, current);
+    if (note === null) return;
+    const normalized = note.trim();
+    const base = savedUserSettings || await settingsLoad;
+    if (!base) return;
+    const folderNotes = { ...base.settings.folderNotes };
+    if (normalized) folderNotes[folder.id] = normalized; else delete folderNotes[folder.id];
+    const settings = { ...base.settings, folderNotes };
+    try {
+      const fileId = await saveUserSettings(settings, ownerIndex, base.fileId);
+      savedUserSettings = { fileId, settings };
+      for (const node of noteNodes.get(folder.id) || []) setFolderNote(node, normalized);
+    } catch (error) { reportSettingsError(error); }
+  };
   openSettings = () => {
     dropdown.close();
     annotationModal.close();
@@ -338,7 +402,24 @@ export function renderLibrary(index, onDownload = async () => {}, { ownerIndex =
       const hasChildren = folderHasLibraryChildren(lookups, folder.id);
       button.classList.toggle('empty', !hasChildren);
       button.setAttribute('aria-expanded', 'false');
-      row.append(button);
+      const count = lookups.contentCounts.get(folder.id) || { folderCount: 0, bookCount: 0 };
+      const counter = document.createElement('span');
+      counter.className = 'folder-content-count';
+      counter.textContent = `${count.folderCount} / ${count.bookCount}`;
+      row.append(button, counter);
+      if (!readOnly) {
+        const edit = document.createElement('button');
+        edit.type = 'button'; edit.className = 'folder-note-edit'; edit.textContent = '✒';
+        edit.title = 'Добавить или изменить заметку'; edit.setAttribute('aria-label', `Заметка к папке «${folder.name}»`);
+        row.append(edit);
+        edit.addEventListener('click', (event) => { event.stopPropagation(); void editFolderNote(folder); });
+      }
+      const noteViewport = document.createElement('span');
+      noteViewport.className = 'folder-note-viewport';
+      const note = document.createElement('span'); note.className = 'folder-note';
+      noteViewport.append(note); row.append(noteViewport);
+      registerFolderNote(folder.id, note);
+      enableNoteDrag(noteViewport);
       item.append(row);
       button.addEventListener('click', () => {
         const existing = item.querySelector(':scope > .tree-list');

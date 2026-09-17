@@ -158,7 +158,7 @@ dd { margin: 0; font-weight: 750; font-variant-numeric: tabular-nums; }
 .library-tree { min-width: 0; }
 .tree-list { list-style: none; margin: 0; padding-left: 1.25rem; }
 .library-tree > .tree-list { padding-left: 0; }
-.tree-row { display: flex; align-items: center; min-height: 1.9rem; }
+.tree-row { display: flex; align-items: center; min-width: 0; min-height: 1.9rem; }
 .folder-toggle {
   padding: .2rem .35rem;
   color: inherit;
@@ -170,6 +170,17 @@ dd { margin: 0; font-weight: 750; font-variant-numeric: tabular-nums; }
 .folder-toggle[aria-expanded="true"]::before { content: "▾"; }
 .folder-toggle.empty::before { content: "·"; }
 .folder-toggle:not(:disabled):hover { background: #f4eee5; }
+.avatar-menu-link { display: block; padding: .55rem .8rem; color: inherit; text-decoration: none; }
+.avatar-menu-link:hover { background: #f4eee5; }
+.avatar-menu-link:focus-visible { outline: 2px solid #8a623b; outline-offset: -2px; }
+.folder-content-count, .folder-note { color: #8b8379; font-size: .88em; }
+.folder-content-count { flex: none; margin-left: .45rem; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.folder-note-edit { flex: none; padding: .15rem .32rem; margin-left: .28rem; color: #746b60; background: transparent; font-size: .9rem; line-height: 1; }
+.folder-note-edit:hover { background: #f4eee5; }
+.folder-note-viewport { position: relative; flex: 1 1 auto; min-width: 0; margin-left: .32rem; overflow: hidden; white-space: nowrap; cursor: grab; touch-action: pan-y; }
+.folder-note-viewport:active { cursor: grabbing; }
+.folder-note { display: inline-block; min-width: max-content; overflow: hidden; text-overflow: ellipsis; vertical-align: top; }
+.folder-note-viewport.truncated::after { content: "…"; position: absolute; right: 0; top: 0; padding-left: .2rem; color: #8b8379; background: #fffdfa; pointer-events: none; }
 .empty-library { color: #746b60; }
 
 .book-grid-item { margin: .45rem 0 .9rem; }

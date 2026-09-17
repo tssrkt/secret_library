@@ -70,7 +70,13 @@ export function mountFriends(page, social, retry) {
     event.preventDefault();
     if (sending || snapshot.status !== 'ready') return;
     sending = true; submit.disabled = true; message.textContent = '';
-    try { const result = await social.shareWithEmail(form.elements.email.value); if (!closed) message.textContent = result; }
+    try {
+      const result = await social.shareWithEmail(form.elements.email.value);
+      if (!closed) {
+        message.textContent = result;
+        if (result === 'Приглашение отправлено.') form.reset();
+      }
+    }
     catch (error) { if (!closed) message.textContent = socialError(error); }
     finally { sending = false; if (!closed) submit.disabled = snapshot.status !== 'ready'; }
   });

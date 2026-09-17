@@ -138,6 +138,18 @@ test('pending invites claim atomically for own email; earliest inviter is perman
   await assertFails(sdk.updateDoc(sdk.doc(a.db, 'pendingInvites/new@gmail.com'), { firstOwnerUid: 'c' }));
 });
 
+test('clients cannot forge server-only invitation email delivery status', async () => {
+  const a = client('a'); await a.store.register();
+  await a.store.shareWithEmail('future@gmail.com');
+  await assertFails(sdk.updateDoc(sdk.doc(a.db, 'pendingInvites/future@gmail.com/shares/a'), {
+    emailStatus: 'sent', emailSentAt: sdk.serverTimestamp(),
+  }));
+  await assertFails(sdk.setDoc(sdk.doc(a.db, 'pendingInvites/other@gmail.com/shares/a'), {
+    ownerUid: 'a', inviteeEmail: 'other@gmail.com', active: true, createdAt: sdk.serverTimestamp(),
+    claimedUid: null, claimedAt: null, emailStatus: 'sent',
+  }));
+});
+
 test('read markers are private, reference actual events and regrant becomes unread again', async () => {
   const a = client('a'); const b = client('b'); await a.store.register(); await b.store.register();
   await a.store.setSharing('b');

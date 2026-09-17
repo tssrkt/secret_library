@@ -14,6 +14,7 @@ let store;
 let stop;
 let generation = 0;
 let shared;
+let invite = null;
 const catalogs = new Map();
 const catalogWatches = new Map();
 function clearCatalogs() {
@@ -48,6 +49,7 @@ export const social = {
       if (!session || current !== generation) return;
       store = createSocialStore(session);
       shared = createSharedLibraryStore(session);
+      invite = session.functionsSdk.httpsCallable(session.functions, 'inviteToLibrary');
       await store.register();
       if (current !== generation) return;
       emit({ status: 'ready', message: '' });
@@ -56,12 +58,15 @@ export const social = {
     } catch (error) { if (current === generation) emit({ status: 'error', message: socialError(error) }); }
   },
   disconnect() {
-    generation++; stop?.(); stop = null; store?.dispose(); store = null;
+    generation++; stop?.(); stop = null; store?.dispose(); store = null; invite = null;
     clearCatalogs(); shared?.dispose(); shared = null;
     emit({ status: 'idle', message: 'Войдите через Google.', friends: [], notifications: [], libraries: [] });
     void endFirebaseSession().catch(() => {});
   },
-  shareWithEmail(email) { if (!store || state.status !== 'ready') return Promise.reject(new Error(state.message)); return store.shareWithEmail(email); },
+  shareWithEmail(email) {
+    if (!invite || state.status !== 'ready') return Promise.reject(new Error(state.message));
+    return invite({ email }).then((result) => result.data.message);
+  },
   setSharing(uid, active) { if (!store || state.status !== 'ready') return Promise.reject(new Error(state.message)); return store.setSharing(uid, active); },
   markSeen(items) { if (!store || state.status !== 'ready') return Promise.resolve(); return store.markSeen(items); },
   syncKnownContacts() { if (!store || state.status !== 'ready') return Promise.resolve(); return store.syncKnownContacts(); },

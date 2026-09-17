@@ -23,6 +23,8 @@ import { filterBooksByDirectValue, russianBookCount } from '../js/direct-filter.
 import { seriesLabel } from '../js/book-series.js';
 import { runSearchTests } from './search-tests.js';
 import { runUserSettingsTests } from './user-settings-tests.js';
+import { runFolderTreeTests } from './folder-tree-tests.js';
+import { runPublicDocumentsTests } from './public-documents-tests.js';
 import { runIndexingErrorTests } from './indexing-errors-tests.js';
 import { runBinaryRecoveryTests } from './fb2-binary-recovery-tests.js';
 import { runIndexingRunTests } from './indexing-run-tests.js';
@@ -1503,6 +1505,8 @@ await test('direct result navigation uses all folders, current-page DOM, home an
 await (await import('./library-refresh-tests.js')).runLibraryRefreshTests(test, assert, equal);
 await runSearchTests(test, assert, equal);
 await runUserSettingsTests(test, assert, equal);
+await runFolderTreeTests(test, assert, equal);
+await runPublicDocumentsTests(test, assert, equal);
 await runIndexingErrorTests(test, assert, equal, makeZip);
 await runBinaryRecoveryTests(test, assert, equal);
 await (await import('./metadata-only-tests.js')).runMetadataOnlyTests(test, assert, equal, makeZip);

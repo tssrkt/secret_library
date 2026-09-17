@@ -13,8 +13,9 @@ export function startFirebaseSession(accessToken) {
       import('https://www.gstatic.com/firebasejs/12.19.0/firebase-app.js'),
       import('https://www.gstatic.com/firebasejs/12.19.0/firebase-auth.js'),
       import('https://www.gstatic.com/firebasejs/12.19.0/firebase-firestore.js'),
+      import('https://www.gstatic.com/firebasejs/12.19.0/firebase-functions.js'),
     ]).catch((error) => { modules = null; throw error; });
-    const [appSdk, authSdk, firestoreSdk] = await modules;
+    const [appSdk, authSdk, firestoreSdk, functionsSdk] = await modules;
     if (current !== generation) return null;
     const app = appSdk.getApps().find((item) => item.name === 'social') || appSdk.initializeApp(FIREBASE_CONFIG, 'social');
     auth = authSdk.getAuth(app);
@@ -22,7 +23,8 @@ export function startFirebaseSession(accessToken) {
     if (current !== generation) return null;
     const result = await authSdk.signInWithCredential(auth, authSdk.GoogleAuthProvider.credential(null, accessToken));
     if (current !== generation) { await authSdk.signOut(auth); return null; }
-    return { user: result.user, db: firestoreSdk.getFirestore(app), sdk: firestoreSdk };
+    return { user: result.user, db: firestoreSdk.getFirestore(app), sdk: firestoreSdk,
+      functions: functionsSdk.getFunctions(app, 'europe-west1'), functionsSdk };
   };
   queue = queue.catch(() => {}).then(operation);
   return queue;
