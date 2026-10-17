@@ -135,6 +135,7 @@ async function rebuildIndex() {
     if (!result) return;
     indexFileId = result.fileId;
     shareableIndex = result.index;
+    ui.showStats(currentIndex.folders.length, currentIndex.books.length);
     void publishLibrary(result.index).catch((error) => ui.showError(`Не удалось обновить каталог для друзей: ${error.message}`));
     ui.setStatus(`Библиотека обновлена: ${result.index.books.length.toLocaleString('ru-RU')} книг.`);
     await runMetadataIndexing({ refreshOnly: true });

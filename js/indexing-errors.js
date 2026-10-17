@@ -8,7 +8,7 @@ export function errorDetails(error, extra = {}) {
     stage: error.stage || (error.status ? 'download' : 'metadata-extraction'),
     status: error.status || null,
     code: error.code || error.name || 'error',
-    message: String(error.message || error).slice(0, 1000),
+    message: String(error.message || error.reason || error).slice(0, 1000),
     attempt: error.attempt || 1,
     range: error.range || null,
     contentRange: error.contentRange || null,
@@ -36,6 +36,7 @@ export function errorDetails(error, extra = {}) {
       metadataIndexed: error.metadataIndexed, coverRecovered: error.coverRecovered,
       previousCoverPreserved: error.previousCoverPreserved, bookSkipped: error.bookSkipped,
     } : {}),
+    ...(error.code === 'cover_extraction_failed' ? { format: error.format, coverExtractionReason: error.reason, metadataIndexed: error.metadataIndexed } : {}),
     ...extra,
   };
 }
@@ -44,7 +45,7 @@ export function recordIndexingError(index, book, events, { preserved = false, ou
   index.indexingErrors ||= [];
   const path = libraryFilePath(index, book);
   const entry = {
-    ...(outcome === 'recovered' ? events.find((event) => ['binary_corruption_recovered', 'metadata_only_recovered'].includes(event.code)) || events[0] : events.at(-1)), fileName: book.fileName || '', fileId: book.id || '',
+    ...(outcome === 'recovered' ? events.find((event) => ['binary_corruption_recovered', 'metadata_only_recovered', 'cover_extraction_failed'].includes(event.code)) || events[0] : events.at(-1)), fileName: book.fileName || '', fileId: book.id || '',
     retryResult: events.at(-1).retryResult, previousEntryPreserved: preserved, outcome, events,
     ...(path ? { path } : {}),
   };

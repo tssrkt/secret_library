@@ -308,7 +308,13 @@ function parseFullDocument(bytes, Parser) {
   if (!['image/jpeg', 'image/png', 'image/webp', 'image/gif'].includes(mimeType)) {
     return { ...metadata, metadataWarning: 'unsupported_cover_format' };
   }
-  return { ...metadata, cover: { mimeType, bytes: atStage('cover', () => decodeBase64(binary.textContent)) } };
+  try {
+    return { ...metadata, cover: { mimeType, bytes: decodeBase64(binary.textContent) } };
+  } catch (error) {
+    // A bad optional binary must not turn an otherwise readable FB2 into a
+    // failed book.  Keep a compact diagnostic for the indexing journal.
+    return { ...metadata, coverWarning: { code: 'cover_extraction_failed', format: 'fb2', reason: error.message } };
+  }
 }
 
 export function parseFb2Bytes(bytes, Parser = globalThis.DOMParser) {

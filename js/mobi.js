@@ -9,6 +9,50 @@ const ascii = (bytes) => String.fromCharCode(...bytes);
 const LANGUAGES = { 1: 'ar', 4: 'zh', 5: 'cs', 6: 'da', 7: 'de', 8: 'el', 9: 'en', 10: 'es', 11: 'fi', 12: 'fr',
   13: 'he', 14: 'hu', 16: 'it', 17: 'ja', 18: 'ko', 19: 'nl', 20: 'no', 21: 'pl', 22: 'pt', 24: 'ro', 25: 'ru', 29: 'sv', 31: 'tr', 34: 'uk' };
 
+function imageDimensions(bytes) {
+  if (bytes.length >= 24 && bytes[0] === 0x89 && ascii(bytes.subarray(1, 4)) === 'PNG') {
+    const data = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    return { width: data.getUint32(16), height: data.getUint32(20) };
+  }
+  if (bytes.length >= 10 && /^GIF8[79]a$/.test(ascii(bytes.subarray(0, 6)))) {
+    const data = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    return { width: data.getUint16(6, true), height: data.getUint16(8, true) };
+  }
+  if (bytes.length >= 30 && ascii(bytes.subarray(0, 4)) === 'RIFF' && ascii(bytes.subarray(8, 12)) === 'WEBP') {
+    const type = ascii(bytes.subarray(12, 16));
+    if (type === 'VP8X') return { width: 1 + bytes[24] + (bytes[25] << 8) + (bytes[26] << 16), height: 1 + bytes[27] + (bytes[28] << 8) + (bytes[29] << 16) };
+    if (type === 'VP8 ' && bytes.length >= 30 && bytes[23] === 0x9d && bytes[24] === 1 && bytes[25] === 0x2a) {
+      const data = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength); return { width: data.getUint16(26, true) & 0x3fff, height: data.getUint16(28, true) & 0x3fff };
+    }
+    if (type === 'VP8L' && bytes.length >= 25 && bytes[20] === 0x2f) {
+      const bits = bytes[21] | (bytes[22] << 8) | (bytes[23] << 16) | (bytes[24] << 24); return { width: (bits & 0x3fff) + 1, height: ((bits >>> 14) & 0x3fff) + 1 };
+    }
+  }
+  if (bytes[0] !== 0xff || bytes[1] !== 0xd8) return null;
+  for (let position = 2; position + 9 < bytes.length;) {
+    if (bytes[position] !== 0xff) { position += 1; continue; }
+    const marker = bytes[position + 1]; position += 2;
+    if (marker === 0xd8 || marker === 0xd9 || (marker >= 0xd0 && marker <= 0xd7)) continue;
+    if (position + 2 > bytes.length) return null;
+    const length = (bytes[position] << 8) | bytes[position + 1];
+    if (length < 2 || position + length > bytes.length) return null;
+    if ((marker >= 0xc0 && marker <= 0xc3) || (marker >= 0xc5 && marker <= 0xc7) || (marker >= 0xc9 && marker <= 0xcb) || (marker >= 0xcd && marker <= 0xcf)) {
+      return { height: (bytes[position + 3] << 8) | bytes[position + 4], width: (bytes[position + 5] << 8) | bytes[position + 6] };
+    }
+    position += length;
+  }
+  return null;
+}
+
+function coverScore(dimensions) {
+  if (!dimensions || dimensions.width < 120 || dimensions.height < 160 || dimensions.height <= dimensions.width) return null;
+  const ratio = dimensions.height / dimensions.width;
+  if (ratio < 1.15 || ratio > 3) return null;
+  // Area wins for equivalent cover-shaped images, while the ratio term keeps
+  // tall book art ahead of banners and other incidental illustrations.
+  return dimensions.width * dimensions.height * Math.min(ratio, 2);
+}
+
 function palmdoc(bytes, limit) {
   const out = [];
   for (let i = 0; i < bytes.length; i++) {
@@ -103,6 +147,22 @@ export async function extractMobiMetadata(book, { signal, fetchRange = downloadF
   if (coverOffset?.length === 4 && firstImage !== 0xffffffff) {
     const coverIndex = firstImage + new DataView(coverOffset.buffer, coverOffset.byteOffset, 4).getUint32(0);
     if (coverIndex > 0 && coverIndex < count) metadata.cover = await optionalResource(async () => usableCover(await record(coverIndex, BOOK_COVER_BYTES), signal));
+  }
+  // Older MOBI files often have image records but omit EXTH 201.  Examine a
+  // bounded run of those records and choose cover-like artwork, rather than
+  // assuming the first image is a cover (it is commonly a publisher logo).
+  if (!metadata.cover && firstImage !== 0xffffffff && firstImage > 0 && firstImage < count) {
+    let best = null;
+    for (let index = firstImage; index < Math.min(count, firstImage + 128); index += 1) {
+      const length = offsets[index + 1] - offsets[index];
+      if (length <= 0 || length > BOOK_COVER_BYTES) continue;
+      const candidate = await optionalResource(async () => {
+        const image = await record(index, BOOK_COVER_BYTES);
+        return { image, score: coverScore(imageDimensions(image)) };
+      });
+      if (candidate?.score != null && (!best || candidate.score > best.score)) best = candidate;
+    }
+    if (best) metadata.cover = await optionalResource(async () => usableCover(best.image, signal));
   }
   const compression = view.getUint16(0), textRecords = view.getUint16(8);
   const encrypted = view.getUint16(12) !== 0 || (headerLength >= 160 && view.getUint32(172) > 0);

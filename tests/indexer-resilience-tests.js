@@ -96,6 +96,8 @@ export async function runIndexerResilienceTests(test, assert, equal, makeZip) {
     await rejects(() => validateZipBudgets([{ uncompressedSize: 600 * 1024 * 1024 }], entry, 1000), 'zip_total_uncompressed_limit_exceeded');
     const large = { compressedSize: 1024 * 1024, uncompressedSize: 129 * 1024 * 1024 };
     await rejects(() => validateZipBudgets([large], large, 1024 * 1024), 'zip_uncompressed_limit_exceeded');
+    const streamed = { compressedSize: 65 * 1024 * 1024, uncompressedSize: 130 * 1024 * 1024 };
+    validateZipBudgets([streamed], streamed, 140 * 1024 * 1024, { allowLargeEntry: true });
     const bomb = await makeZip([{ name: 'bomb.fb2', method: 8, bytes: utf8('x'.repeat(1024 * 1024)) }]);
     const Native = globalThis.DecompressionStream;
     let inflations = 0;

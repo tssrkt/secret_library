@@ -3,11 +3,11 @@ import {
   ZIP_MAX_COMPRESSED_ENTRY_SIZE,
   ZIP_MAX_BOOK_ENTRY_SIZE, BOOK_SOURCE_TYPES,
   ZIP_MAX_TOTAL_UNCOMPRESSED_BYTES, ZIP_MAX_COMPRESSION_RATIO, ZIP_MAX_ENTRY_COUNT,
-  ZIP_PARALLEL_ENTRY_BUDGET,
+  ZIP_PARALLEL_ENTRY_BUDGET, ZIP_MAX_DESCRIPTION_BYTES,
   ZIP_TAIL_SIZE,
 } from './config.js';
 import { downloadFileRange } from './drive.js';
-import { Fb2Error, parseFullFb2 } from './fb2.js';
+import { Fb2Error, decodeFb2, descriptionEnd, parseFb2Metadata, parseFullFb2 } from './fb2.js';
 
 const EOCD_SIGNATURE = 0x06054b50;
 const CENTRAL_SIGNATURE = 0x02014b50;
@@ -51,7 +51,7 @@ class ZipRanges {
     this.regions = [];
   }
 
-  async read(start, end, signal) {
+  async read(start, end, signal, { cache = true } = {}) {
     assertRange(start, end, this.fileSize);
     const cached = this.regions.find((region) => start >= region.start && end <= region.end);
     if (cached) return cached.bytes.subarray(start - cached.start, end - cached.start + 1);
@@ -59,7 +59,7 @@ class ZipRanges {
     const response = await this.fetchRange(this.fileId, start, end, signal, { requirePartial: !wholeFile });
     const expected = end - start + 1;
     if (response.bytes.length !== expected) throw new ZipError('malformed_zip', 'ZIP Range response has an unexpected length.');
-    this.regions.push({ start, end, bytes: response.bytes });
+    if (cache) this.regions.push({ start, end, bytes: response.bytes });
     return response.bytes;
   }
 }
@@ -120,15 +120,15 @@ export function parseCentralDirectory(bytes, expectedEntries, fileSize) {
   return entries;
 }
 
-export function validateZipBudgets(entries, entry, fileSize) {
+export function validateZipBudgets(entries, entry, fileSize, { allowLargeEntry = false } = {}) {
   const total = entries.reduce((sum, item) => sum + item.uncompressedSize, 0);
   if (total > ZIP_MAX_TOTAL_UNCOMPRESSED_BYTES) throw new ZipError('zip_total_uncompressed_limit_exceeded', 'ZIP declares more than 512 MiB across its entries.');
   if (entry.uncompressedSize / Math.max(1, entry.compressedSize) > ZIP_MAX_COMPRESSION_RATIO
       || total / Math.max(1, fileSize) > ZIP_MAX_COMPRESSION_RATIO) {
     throw new ZipError('zip_suspicious_compression_ratio', 'ZIP compression ratio exceeds 500:1.');
   }
-  if (entry.compressedSize > ZIP_MAX_COMPRESSED_ENTRY_SIZE) throw new ZipError('zip_compressed_limit_exceeded', 'Selected ZIP entry exceeds the 64 MiB input budget.');
-  if (entry.uncompressedSize > ZIP_MAX_BOOK_ENTRY_SIZE) throw new ZipError('zip_uncompressed_limit_exceeded', 'Selected book entry exceeds the 128 MiB output budget.');
+  if (!allowLargeEntry && entry.compressedSize > ZIP_MAX_COMPRESSED_ENTRY_SIZE) throw new ZipError('zip_compressed_limit_exceeded', 'Selected ZIP entry exceeds the 64 MiB input budget.');
+  if (!allowLargeEntry && entry.uncompressedSize > ZIP_MAX_BOOK_ENTRY_SIZE) throw new ZipError('zip_uncompressed_limit_exceeded', 'Selected book entry exceeds the 128 MiB output budget.');
 }
 
 const ZIP_BOOK_FORMATS = BOOK_SOURCE_TYPES.filter((type) => type !== 'zip');
@@ -210,21 +210,79 @@ export async function openZip(book, { signal, fetchRange = downloadFileRange } =
       }
       return inflateFb2(compressed, entry.uncompressedSize, signal);
     },
+    // Stream only the initial FB2 metadata.  This is the escape hatch for
+    // image-heavy books: no full compressed entry, XML string or DOM is held.
+    async readFb2Description(entry) {
+      signal?.throwIfAborted();
+      if (!entries.includes(entry)) throw new ZipError('malformed_zip');
+      if (entry.flags & 1) throw new ZipError('encrypted_zip', 'Encrypted ZIP entries are unsupported.');
+      if (![0, 8].includes(entry.method)) throw new ZipError('unsupported_compression');
+      validateZipBudgets(entries, entry, fileSize, { allowLargeEntry: true });
+      const local = await ranges.read(entry.localHeaderOffset, entry.localHeaderOffset + 29, signal);
+      if (u32(local, 0) !== LOCAL_SIGNATURE || u16(local, 8) !== entry.method) throw new ZipError('malformed_zip');
+      const dataOffset = entry.localHeaderOffset + 30 + u16(local, 26) + u16(local, 28);
+      if (!entry.compressedSize || dataOffset + entry.compressedSize > eocd.centralOffset) throw new ZipError('malformed_zip');
+      let cursor = 0;
+      const input = new ReadableStream({
+        async pull(controller) {
+          if (cursor >= entry.compressedSize) { controller.close(); return; }
+          const size = Math.min(1024 * 1024, entry.compressedSize - cursor);
+          try { controller.enqueue(await ranges.read(dataOffset + cursor, dataOffset + cursor + size - 1, signal, { cache: false })); cursor += size; }
+          catch (error) { controller.error(error); }
+        },
+      });
+      let stream = input;
+      if (entry.method === 8) {
+        if (typeof DecompressionStream !== 'function') throw new ZipError('unsupported_compression', 'Deflate is unsupported by this browser.');
+        try { stream = input.pipeThrough(new DecompressionStream('deflate-raw')); }
+        catch { throw new ZipError('unsupported_compression', 'Raw Deflate is unsupported by this browser.'); }
+      }
+      const reader = stream.getReader(); const chunks = []; let length = 0;
+      try {
+        while (true) {
+          signal?.throwIfAborted();
+          const next = await reader.read();
+          if (next.done) break;
+          if (length + next.value.length > ZIP_MAX_DESCRIPTION_BYTES) throw new ZipError('description_scan_limit_exceeded', 'FB2 description exceeds the 8 MiB streaming metadata budget.');
+          chunks.push(next.value); length += next.value.length;
+          const text = decodeFb2(concatChunks(chunks, length));
+          const end = descriptionEnd(text);
+          if (end >= 0) return text.slice(0, end);
+        }
+      } catch (error) {
+        if (error?.name === 'AbortError' || error instanceof Fb2Error || error instanceof ZipError) throw error;
+        throw new ZipError('malformed_zip', 'Deflate stream is damaged.');
+      } finally { await reader.cancel().catch(() => {}); reader.releaseLock(); }
+      throw new ZipError('description_missing', 'FB2 description is absent from the archive entry.');
+    },
   };
 }
 
 export async function extractZipBook(book, options = {}) {
   const archive = await openZip(book, options);
   const candidates = suitableBookEntries(archive.entries);
-  if (!candidates.length) throw new ZipError('zip_no_supported_book', 'ZIP contains no supported book format.');
+  const explicitFb2Zip = /\.fb2\.zip$/i.test(book.fileName || '');
+  const eligible = explicitFb2Zip ? candidates.filter((item) => zipBookFormat(item.name.replaceAll('\\', '/')) === 'fb2') : candidates;
+  if (!eligible.length) throw new ZipError(explicitFb2Zip ? 'zip_no_fb2' : 'zip_no_supported_book', explicitFb2Zip ? 'FB2 ZIP contains no FB2 entry.' : 'ZIP contains no supported book format.');
   const preferred = /\.(fb2|epub|mobi)\.zip$/i.exec(book.fileName || '')?.[1].toLowerCase();
-  const entry = candidates.find((item) => zipBookFormat(item.name.replaceAll('\\', '/')) === preferred) || candidates[0];
+  const entry = eligible.find((item) => zipBookFormat(item.name.replaceAll('\\', '/')) === preferred) || eligible[0];
   return withEntryMemoryBudget(entry, options.signal, async () => {
+    if (zipBookFormat(entry.name.replaceAll('\\', '/')) === 'fb2'
+        && (entry.compressedSize > ZIP_MAX_COMPRESSED_ENTRY_SIZE || entry.uncompressedSize > ZIP_MAX_BOOK_ENTRY_SIZE)) {
+      return { description: await archive.readFb2Description(entry), entryPath: entry.name.replaceAll('\\', '/'), innerFormat: 'fb2',
+        metadataWarning: 'large_fb2_zip_metadata_only' };
+    }
     const bytes = await archive.readEntry(entry);
     return { bytes, entryPath: entry.name.replaceAll('\\', '/'), innerFormat: zipBookFormat(entry.name.replaceAll('\\', '/')),
-      ...(candidates.length > 1 ? { metadataWarning: 'multiple_supported_book_entries',
-        metadataWarningDetails: { candidatePaths: candidates.map((item) => item.name.replaceAll('\\', '/')), selectedEntry: entry.name.replaceAll('\\', '/') } } : {}) };
+      ...(eligible.length > 1 ? { metadataWarning: 'multiple_supported_book_entries',
+        metadataWarningDetails: { candidatePaths: eligible.map((item) => item.name.replaceAll('\\', '/')), selectedEntry: entry.name.replaceAll('\\', '/') } } : {}) };
   });
+}
+
+function concatChunks(chunks, length) {
+  const result = new Uint8Array(length); let offset = 0;
+  for (const chunk of chunks) { result.set(chunk, offset); offset += chunk.length; }
+  return result;
 }
 
 // Compatibility export for external callers during the ZIP-container migration.
@@ -233,7 +291,7 @@ export async function extractZipFb2(book, options = {}) {
   const selected = await extractZipBook(book, options);
   if (selected.innerFormat !== 'fb2') throw new ZipError('zip_no_supported_book', 'ZIP selected a non-FB2 book entry.');
   try {
-    const metadata = parseFullFb2(selected.bytes, options.Parser);
+    const metadata = selected.description ? parseFb2Metadata(selected.description, options.Parser) : parseFullFb2(selected.bytes, options.Parser);
     if (metadata.binaryRecovery) Object.assign(metadata.binaryRecovery, { containerType: 'ZIP', entryPath: selected.entryPath });
     return { ...metadata, entryPath: selected.entryPath,
       ...(selected.metadataWarning ? { metadataWarning: selected.metadataWarning, metadataWarningDetails: selected.metadataWarningDetails } : {}) };

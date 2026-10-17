@@ -1,4 +1,4 @@
-import { extractFb2Metadata } from './fb2.js';
+import { extractFb2Metadata, parseFb2Metadata } from './fb2.js';
 import { extractZipBook, ZipError } from './zip.js';
 import { downloadDriveFile, downloadFileRange } from './drive.js';
 import { extractEpubMetadata } from './epub.js';
@@ -17,6 +17,8 @@ async function dispatchZip(book, options) {
   let selected;
   try { selected = await extractZipBook(book, options); }
   catch (error) { error.containerType ||= 'ZIP'; throw error; }
+  if (selected.description) return { ...parseFb2Metadata(selected.description, options.Parser), entryPath: selected.entryPath, innerFormat: 'fb2',
+    metadataWarning: selected.metadataWarning, metadataWarningDetails: { coverSkipped: true, reason: 'large_fb2_zip_streamed_description' } };
   const innerBook = { ...book, id: `${book.id}:${selected.entryPath}`, fileName: selected.entryPath,
     sourceType: selected.innerFormat, extension: selected.innerFormat, size: selected.bytes.length };
   try {

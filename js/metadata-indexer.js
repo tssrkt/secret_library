@@ -62,6 +62,7 @@ export async function indexPendingBooks(index, {
         return;
       }
       const recovery = metadata.binaryRecovery;
+      const coverWarning = metadata.coverWarning;
       const previous = previousBooks.get(book.id);
       const preserveFull = Boolean(recovery?.code === 'metadata_only_recovered' && previous
         && previous.metadataWarning !== 'metadata_only_recovered');
@@ -80,6 +81,7 @@ export async function indexPendingBooks(index, {
       delete metadata.cover;
       delete metadata.coverId;
       delete metadata.binaryRecovery;
+      delete metadata.coverWarning;
       if (preserveFull) {
         for (const key of Object.keys(book)) delete book[key];
         Object.assign(book, previousRecord(previous, sources.get(previous.id)));
@@ -88,10 +90,11 @@ export async function indexPendingBooks(index, {
       delete book.metadataErrorMessage;
       if (!preserveFull && !Object.hasOwn(metadata, 'metadataWarning')) delete book.metadataWarning;
       clearReport();
-      if (recovery) {
+      if (recovery || coverWarning) {
         stats.recovered += 1;
-        onIssue({ ...recovery, metadataIndexed: true, coverRecovered: !recovery.coverDamaged && Boolean(coverFields.coverFileId),
-          previousCoverPreserved: preserveCover, previousFullEntryPreserved: preserveFull, bookSkipped: false });
+        onIssue(recovery ? { ...recovery, metadataIndexed: true, coverRecovered: !recovery.coverDamaged && Boolean(coverFields.coverFileId),
+          previousCoverPreserved: preserveCover, previousFullEntryPreserved: preserveFull, bookSkipped: false }
+          : { ...coverWarning, stage: 'cover', metadataIndexed: true, coverRecovered: false });
       } else stats.succeeded += 1;
       if (issues.size) {
         const events = [...issues.values()].map((event) => ({ ...event, retryResult: event.retryResult === 'retrying' ? 'success-after-backoff' : event.retryResult }));

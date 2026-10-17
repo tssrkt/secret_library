@@ -19,7 +19,7 @@ const ranges = (data, calls = []) => async (id, start, end, signal) => {
 };
 const pending = (id, sourceType) => ({ id, parentId: 'root', fileName: `${id}.${sourceType}`, sourceType, extension: sourceType, metadataStatus: 'pending' });
 
-export function makeMobi({ annotation = true, cover = true, compression = 1, encrypted = false, exth = true, extraFlags = 0 } = {}) {
+export function makeMobi({ annotation = true, cover = true, compression = 1, encrypted = false, exth = true, extraFlags = 0, imageRecords = null } = {}) {
   const text = bytes('<p>First normal paragraph of this book, suitable for a preview.</p><script>window.mobiExecuted=true</script>');
   const title = bytes('MOBI full title');
   const records = [[100, bytes('Author One')], [100, bytes('Author Two')], [503, bytes('MOBI title')],
@@ -32,14 +32,15 @@ export function makeMobi({ annotation = true, cover = true, compression = 1, enc
   view.setUint16(0, compression); view.setUint32(4, text.length); view.setUint16(8, 1); view.setUint16(10, 4096); view.setUint16(12, encrypted ? 2 : 0);
   zero.set(bytes('MOBI'), 16); view.setUint32(20, 232); view.setUint32(24, 2); view.setUint32(28, 65001);
   view.setUint32(36, 6); view.setUint32(84, 248 + exthLength); view.setUint32(88, title.length); view.setUint32(92, 0x419);
-  view.setUint32(108, cover ? 2 : 0xffffffff); view.setUint32(128, exth ? 0x40 : 0); view.setUint16(242, extraFlags);
+  view.setUint32(108, (cover || imageRecords?.length) ? 2 : 0xffffffff); view.setUint32(128, exth ? 0x40 : 0); view.setUint16(242, extraFlags);
   if (exth) {
     zero.set(bytes('EXTH'), 248); view.setUint32(252, exthLength); view.setUint32(256, records.length);
     let cursor = 260;
     for (const [type, value] of records) { view.setUint32(cursor, type); view.setUint32(cursor + 4, 8 + value.length); zero.set(value, cursor + 8); cursor += value.length + 8; }
   }
   zero.set(title, 248 + exthLength);
-  const parts = cover ? [zero, text, PNG] : [zero, text];
+  const images = imageRecords || (cover ? [PNG] : []);
+  const parts = [zero, text, ...images];
   const headerLength = 78 + parts.length * 8 + 2;
   const file = new Uint8Array(headerLength + parts.reduce((sum, part) => sum + part.length, 0));
   file.set(bytes('BOOKMOBI'), 60);
@@ -74,6 +75,8 @@ export async function runBookFormatTests(test, assert, equal, makeZip) {
     for (const type of ['epub', 'mobi']) equal(classifyLibraryItem({ name: `book.${type}`, mimeType: 'application/zip' }), type, 'generic MIME cannot steal new format');
     equal(classifyLibraryItem({ name: 'no extension', mimeType: 'application/epub+zip' }), 'epub', 'EPUB MIME');
     equal(classifyLibraryItem({ name: 'no extension', mimeType: 'application/x-mobipocket-ebook' }), 'mobi', 'MOBI MIME');
+    equal(classifyLibraryItem({ name: 'archive.zip', mimeType: 'application/zip' }), 'other', 'ordinary ZIP ignored');
+    equal(classifyLibraryItem({ name: 'book.fb2.zip', mimeType: 'application/zip' }), 'zip', 'explicit FB2 ZIP supported');
     for (const extension of ['azw', 'azw3', 'pdf', 'txt', 'docx', 'djvu']) equal(classifyLibraryItem({ name: `book.${extension}` }), 'other', 'no other formats');
     equal(classifyLibraryItem({ name: 'book.azw3', mimeType: 'application/x-mobipocket-ebook' }), 'other', 'AZW3 not added through MIME');
   });
@@ -116,6 +119,21 @@ export async function runBookFormatTests(test, assert, equal, makeZip) {
     const fallback = await extractMobiMetadata({ id: 'fallback', size: data.length }, { fetchRange: ranges(data) });
     equal([fallback.title, fallback.authors, fallback.language], ['MOBI full title', [], 'ru'], 'full-name/header fallback');
   });
+  await test('MOBI chooses a large vertical cover when EXTH 201 is absent', async () => {
+    const png = (width, height) => {
+      const image = new Uint8Array(24); image.set(PNG.subarray(0, Math.min(PNG.length, image.length)));
+      const view = new DataView(image.buffer); view.setUint32(16, width); view.setUint32(20, height); return image;
+    };
+    const Native = globalThis.createImageBitmap;
+    globalThis.createImageBitmap = async () => ({ close() {} });
+    try {
+      const data = makeMobi({ cover: false, imageRecords: [png(220, 60), png(94, 140), png(456, 679)] });
+      const result = await extractMobiMetadata({ id: 'mobi-fallback-cover', size: data.length }, { fetchRange: ranges(data) });
+      assert(result.cover?.bytes?.length === 24, 'fallback keeps the selected image');
+      const selected = new DataView(result.cover.bytes.buffer, result.cover.bytes.byteOffset, result.cover.bytes.byteLength);
+      equal([selected.getUint32(16), selected.getUint32(20)], [456, 679], 'large vertical image wins over logo and thumbnail');
+    } finally { globalThis.createImageBitmap = Native; }
+  });
   await test('MOBI optional preview supports plain/PalmDOC and skips DRM/HUFF/trailing data', async () => {
     for (const options of [{ compression: 1 }, { compression: 2 }, { compression: 17480 }, { encrypted: true }, { extraFlags: 1 }]) {
       const data = makeMobi({ ...options, annotation: false, cover: false });
@@ -139,7 +157,7 @@ export async function runBookFormatTests(test, assert, equal, makeZip) {
     const fb2Result = await extractZip('archive.zip', [{ name: 'book.fb2', bytes: fb2Data }]);
     equal([fb2Result.title, fb2Result.innerFormat], ['ZIP FB2', 'fb2'], 'ZIP to FB2 remains supported');
     const preferred = await extractZip('choice.fb2.zip', [{ name: 'first.epub', bytes: epubData }, { name: 'wanted.fb2', bytes: fb2Data }, { name: 'third.mobi', bytes: mobiData }]);
-    equal([preferred.title, preferred.entryPath, preferred.metadataWarning], ['ZIP FB2', 'wanted.fb2', 'multiple_supported_book_entries'], 'outer format preference wins over central-directory order');
+    equal([preferred.title, preferred.entryPath, preferred.metadataWarning], ['ZIP FB2', 'wanted.fb2', undefined], 'explicit FB2 ZIP ignores unrelated nested formats');
     const ordinary = await extractZip('ordinary.zip', [{ name: 'first.mobi', bytes: mobiData }, { name: 'second.epub', bytes: epubData }]);
     equal(ordinary.entryPath, 'first.mobi', 'ordinary ZIP uses stable central-directory order');
     const epubPreferred = await extractZip('choice.epub.zip', [{ name: 'first.mobi', bytes: mobiData }, { name: 'wanted.epub', bytes: epubData }]);
@@ -152,6 +170,8 @@ export async function runBookFormatTests(test, assert, equal, makeZip) {
     let error;
     try { await extractBookMetadata({ id: 'none', fileName: 'none.zip', sourceType: 'zip', size: noBook.length }, { fetchRange: ranges(noBook) }); } catch (caught) { error = caught; }
     equal([error?.code, error?.containerType], ['zip_no_supported_book', 'ZIP'], 'generic missing-book error');
+    try { await extractBookMetadata({ id: 'none-fb2', fileName: 'none.fb2.zip', sourceType: 'zip', size: noBook.length }, { fetchRange: ranges(noBook) }); } catch (caught) { error = caught; }
+    equal([error?.code, error?.containerType], ['zip_no_fb2', 'ZIP'], 'explicit FB2 ZIP without FB2 is an error');
     const brokenEpub = await makeZip([{ name: 'book.epub', bytes: await epub({ broken: true }) }]);
     try { await extractBookMetadata({ id: 'broken-epub', fileName: 'broken.zip', sourceType: 'zip', size: brokenEpub.length }, { fetchRange: ranges(brokenEpub) }); } catch (caught) { error = caught; }
     equal([error?.code, error?.containerType, error?.innerFormat], ['invalid_epub', 'ZIP', 'epub'], 'broken nested EPUB preserves EPUB error');
