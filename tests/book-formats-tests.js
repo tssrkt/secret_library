@@ -71,7 +71,10 @@ export async function runBookFormatTests(test, assert, equal, makeZip) {
     { name: 'unused.bin', bytes: new Uint8Array(90000).fill(37) },
   ]);
   await test('scanner classifies four formats, EPUB and MOBI before ZIP MIME', () => {
-    for (const type of BOOK_SOURCE_TYPES) for (const extension of [type, type.toUpperCase()]) equal(classifyLibraryItem({ name: `book.${extension}` }), type, 'extension');
+    for (const type of BOOK_SOURCE_TYPES) for (const extension of [type, type.toUpperCase()]) {
+      const name = type === 'zip' ? `book.fb2.${extension}` : `book.${extension}`;
+      equal(classifyLibraryItem({ name }), type, 'supported extension');
+    }
     for (const type of ['epub', 'mobi']) equal(classifyLibraryItem({ name: `book.${type}`, mimeType: 'application/zip' }), type, 'generic MIME cannot steal new format');
     equal(classifyLibraryItem({ name: 'no extension', mimeType: 'application/epub+zip' }), 'epub', 'EPUB MIME');
     equal(classifyLibraryItem({ name: 'no extension', mimeType: 'application/x-mobipocket-ebook' }), 'mobi', 'MOBI MIME');

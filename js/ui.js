@@ -238,18 +238,36 @@ export function renderLibrary(index, onDownload = async () => {}, { ownerIndex =
   const root = index.folders.find((folder) => folder.id === index.rootFolderId);
   const lookups = buildLibraryLookups(index);
   let savedUserSettings = null;
-  let settingsLoad = loadUserSettings(ownerIndex).then((saved) => {
-    savedUserSettings = saved;
-    if (!readOnly) {
-      for (const [folderId, nodes] of noteNodes) for (const node of nodes) setFolderNote(node, saved.settings.folderNotes[folderId] || '');
+  let settingsLoad = null;
+  let settingsLoadError = null;
+  const loadSettings = () => {
+    if (!settingsLoad) {
+      settingsLoad = loadUserSettings(ownerIndex).then((saved) => {
+        savedUserSettings = saved;
+        settingsLoadError = null;
+        if (!readOnly) {
+          for (const [folderId, nodes] of noteNodes) for (const node of nodes) setFolderNote(node, saved.settings.folderNotes[folderId] || '');
+        }
+        return saved;
+      }).catch((error) => {
+        settingsLoadError = error;
+        settingsLoad = null;
+        reportSettingsError(error);
+        return null;
+      });
     }
-    return saved;
-  }).catch((error) => { reportSettingsError(error); return null; });
+    return settingsLoad;
+  };
   const noteNodes = new Map();
+  void loadSettings();
   const resultsState = { filter: null, page: 1 };
   settingsController = createUserSettingsController({
     container: elements.tree, index: ownerIndex, clearError,
-    load: async () => settingsLoad,
+    load: async () => {
+      const saved = await loadSettings();
+      if (saved) return saved;
+      throw settingsLoadError || new Error('Не удалось загрузить настройки.');
+    },
     save: async (settings, settingsIndex, fileId) => {
       await beforeSettingsSave();
       const saved = await saveUserSettings(settings, settingsIndex, fileId);
@@ -303,7 +321,7 @@ export function renderLibrary(index, onDownload = async () => {}, { ownerIndex =
     const note = window.prompt(`Заметка к папке «${folder.name}»`, current);
     if (note === null) return;
     const normalized = note.trim();
-    const base = savedUserSettings || await settingsLoad;
+    const base = savedUserSettings || await loadSettings();
     if (!base) return;
     const folderNotes = { ...base.settings.folderNotes };
     if (normalized) folderNotes[folder.id] = normalized; else delete folderNotes[folder.id];

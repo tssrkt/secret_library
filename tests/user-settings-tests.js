@@ -42,7 +42,7 @@ export async function runUserSettingsTests(test, assert, equal) {
     const initial = await loadUserSettings(index, api);
     equal(initial, { fileId: null, settings: normalizeUserSettings(null, index) }, 'missing file defaults');
     const fileId = await saveUserSettings(settings(), index, initial.fileId, api);
-    equal(file, { version: 1, rootFolderId: 'root', sharing: { excludedFolderIds: ['sf'] } }, 'only current exclusions and required fields stored');
+    equal(file, { version: 1, rootFolderId: 'root', sharing: { excludedFolderIds: ['sf'] }, folderNotes: {} }, 'current settings include normalized folder notes');
     const loaded = await loadUserSettings(index, api);
     equal(loaded.fileId, fileId, 'load preserves file ID');
     await saveUserSettings(loaded.settings, index, loaded.fileId, api);
@@ -133,16 +133,12 @@ export async function runUserSettingsTests(test, assert, equal) {
     const ui = await import(`../js/ui.js?settings-test=${Date.now()}`);
     const index = makeIndex();
     const before = JSON.stringify(index);
-    ui.renderLibrary(index);
-    ui.setAuthorized(true);
-    const noop = () => {};
-    ui.bindActions({ home: ui.showLibraryHome, signIn: noop, refresh: noop, indexMetadata: noop,
-      retryMetadata: noop, stopMetadata: noop, signOut: noop, rebuild: noop });
-    restoreAuthSession({ session: { getItem: () => JSON.stringify({ accessToken: 'test-only', expiresAt: Date.now() + 3600000 }) } });
     const nativeFetch = window.fetch;
     const requests = [];
     let stored = null;
     let failWrite = false;
+    let lookups = 0;
+    restoreAuthSession({ session: { getItem: () => JSON.stringify({ accessToken: 'test-only', expiresAt: Date.now() + 3600000 }) } });
     window.fetch = async (url, options = {}) => {
       requests.push({ url: String(url), method: options.method || 'GET' });
       const parsed = new URL(url);
@@ -159,8 +155,14 @@ export async function runUserSettingsTests(test, assert, equal) {
         return new Response(JSON.stringify({ id: 'settings-id' }), { status: 200 });
       }
       assert(parsed.searchParams.get('spaces') === 'appDataFolder' && parsed.searchParams.get('q').includes(USER_SETTINGS_FILE_NAME), 'only settings lookup is allowed; no scan, book or permissions calls');
+      if (++lookups === 1) return new Response('{}', { status: 403 });
       return new Response(JSON.stringify({ files: [] }), { status: 200 });
     };
+    ui.renderLibrary(index);
+    ui.setAuthorized(true);
+    const noop = () => {};
+    ui.bindActions({ home: ui.showLibraryHome, signIn: noop, refresh: noop, indexMetadata: noop,
+      retryMetadata: noop, stopMetadata: noop, signOut: noop, rebuild: noop });
     const click = (selector) => fixture.querySelector(selector).click();
     const tree = fixture.querySelector('#library-tree');
     try {
@@ -169,6 +171,10 @@ export async function runUserSettingsTests(test, assert, equal) {
       click('#avatar-button');
       click('#settings-button');
       for (let i = 0; i < 100 && !tree.querySelector('.sharing-settings-form') && fixture.querySelector('#error-panel').hidden; i++) await tick();
+      assert(!tree.querySelector('.sharing-settings-form') && !fixture.querySelector('#error-panel').hidden,
+        'temporary settings load error is shown before retry');
+      tree.querySelector('.user-settings-page section > button[type="button"]').click();
+      for (let i = 0; i < 100 && !tree.querySelector('.sharing-settings-form'); i++) await tick();
       assert(tree.querySelector('.sharing-settings-form'), `settings loaded: ${fixture.querySelector('#error-text').textContent}`);
       assert(fixture.querySelector('#avatar-menu').hidden && tree.querySelector('h2').textContent === 'Настройки', 'menu closes and settings opens');
       assert([...tree.querySelectorAll('input[type=checkbox]')].every((field) => field.checked), 'missing settings selects all');
@@ -212,7 +218,7 @@ export async function runUserSettingsTests(test, assert, equal) {
       equal(stored.sharing.excludedFolderIds, ['sf', 'history'], 'retry saves the same draft');
       assert(fixture.querySelector('#error-panel').hidden, 'retry clears old error');
       click('#library-home-link');
-      equal(requests.map((request) => request.method), ['GET', 'POST', 'PATCH', 'PATCH'], 'one lookup, one create, update and retry; no scans or book requests');
+      equal(requests.map((request) => request.method), ['GET', 'GET', 'POST', 'PATCH', 'PATCH'], 'failed settings lookup retries once; no scans or book requests');
       equal(JSON.stringify(index), before, 'index and metadata versions unchanged');
     } finally {
       window.fetch = nativeFetch;

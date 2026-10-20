@@ -539,9 +539,10 @@ await test('folders are expandable from indexed children, independently of files
   assert(!folderHasLibraryChildren(lookups, 'empty'), 'truly empty folder');
 });
 
-await test('Drive scan classification includes ZIP case-insensitively and ignores unrelated files', () => {
-  equal(classifyLibraryItem({ name: 'BOOK.ZiP', mimeType: 'application/octet-stream' }), 'zip', 'ZIP extension');
-  equal(classifyLibraryItem({ name: 'book', mimeType: 'application/zip' }), 'zip', 'ZIP MIME');
+await test('Drive scan recognizes explicit FB2 ZIP case-insensitively and ignores ordinary ZIP files', () => {
+  equal(classifyLibraryItem({ name: 'BOOK.FB2.ZiP', mimeType: 'application/octet-stream' }), 'zip', 'explicit FB2 ZIP extension');
+  equal(classifyLibraryItem({ name: 'book', mimeType: 'application/zip' }), 'other', 'generic ZIP MIME is not a book');
+  equal(classifyLibraryItem({ name: 'BOOK.ZiP', mimeType: 'application/octet-stream' }), 'other', 'ordinary ZIP extension');
   equal(classifyLibraryItem({ name: 'book.FB2', mimeType: 'application/octet-stream' }), 'fb2', 'FB2 extension');
   equal(classifyLibraryItem({ name: 'document.pdf', mimeType: 'application/pdf' }), 'other', 'irrelevant file');
   equal(classifyLibraryItem({ name: 'nested', mimeType: 'application/vnd.google-apps.folder' }), 'folder', 'folder unaffected');
