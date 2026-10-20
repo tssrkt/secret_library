@@ -1,7 +1,7 @@
 import { setupDropdown } from './dropdown.js';
 import { buildLibraryLookups, folderHasLibraryChildren } from './library-view-model.js';
 import { accountIdentity, createAvatarController } from './avatar.js';
-import { createBookCard } from './book-card.js';
+import { createBookCard, hasPreviousVersionMetadataFailure } from './book-card.js';
 import { createAnnotationModalController } from './annotation-modal.js';
 import { loadCover } from './cover-cache.js';
 import { loadGenreDictionary } from './genre-labels.js';
@@ -327,6 +327,7 @@ export function renderLibrary(index, onDownload = async () => {}, { ownerIndex =
 
   const createCard = (book) => createBookCard(book, onDownload, document, {
     onAnnotation: (details, trigger) => annotationModal.open(details, trigger),
+    previousVersionMetadata: hasPreviousVersionMetadataFailure(book, index.indexingErrors),
     genresRu,
     onAuthorFilter,
     onGenreFilter,

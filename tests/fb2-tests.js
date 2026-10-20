@@ -15,7 +15,7 @@ import { extractZipFb2, findEocd, parseCentralDirectory, ZipError } from '../js/
 import { setupDropdown } from '../js/dropdown.js';
 import { accountIdentity, applyDriveAvatar, createAvatarController } from '../js/avatar.js';
 import { downloadDriveFile, getCurrentDriveUser } from '../js/drive.js';
-import { bookCardView, createBookCard } from '../js/book-card.js';
+import { bookCardView, createBookCard, hasPreviousVersionMetadataFailure } from '../js/book-card.js';
 import { createAnnotationModalController, formatModalAuthors, modalCoverWidth } from '../js/annotation-modal.js';
 import { genreLabels, loadGenreDictionary } from '../js/genre-labels.js';
 import { BOOKS_PER_PAGE, createPaginator, paginateItems, paginationTokens } from '../js/pagination.js';
@@ -801,6 +801,28 @@ await test('book card uses ready metadata and placeholder fields', () => {
   equal(pending, {
     author: 'Автор не указан', title: 'pending', genreLine: 'Жанр не указан', annotation: 'Аннотация отсутствует',
   }, 'pending card');
+});
+
+await test('book card labels preserved previous-version metadata only for its matching failed Drive ID', () => {
+  const book = { id: 'drive-book', fileName: 'book.fb2', metadataStatus: 'ready',
+    title: 'Previous title', authors: ['Previous author'], annotation: 'Previous annotation' };
+  const failed = [{ fileId: 'drive-book', outcome: 'failed', previousEntryPreserved: true }];
+  const card = createBookCard(book, async () => {}, document, {
+    previousVersionMetadata: hasPreviousVersionMetadataFailure(book, failed),
+  });
+  document.body.append(card);
+  equal([card.querySelector('.book-card-title').textContent, card.querySelector('.book-card-author').textContent,
+    card.querySelector('.book-card-annotation').textContent, card.querySelector('.book-card-metadata-warning')?.textContent],
+  ['Previous title', 'Previous author', 'Previous annotation',
+    'Не удалось обновить метаданные; показаны данные предыдущей версии файла.'],
+  'card retains old searchable display metadata and explains its provenance');
+  assert(hasPreviousVersionMetadataFailure(book, failed), 'matching Drive ID with a preserved final failure is flagged');
+  assert(!hasPreviousVersionMetadataFailure({ ...book, id: 'another-drive-book' }, failed), 'another Drive ID is unaffected');
+  assert(!hasPreviousVersionMetadataFailure(book, [{ ...failed[0], outcome: 'recovered' }]), 'successful recovery clears the warning');
+  assert(!hasPreviousVersionMetadataFailure(book, [{ ...failed[0], previousEntryPreserved: false }]), 'unpreserved failures do not claim old metadata');
+  const ordinary = createBookCard(book, async () => {}, document);
+  assert(!ordinary.querySelector('.book-card-metadata-warning'), 'ordinary ready card has no warning');
+  card.remove();
 });
 
 await test('book card displays preview only when the real annotation is absent', () => {

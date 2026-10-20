@@ -4,6 +4,11 @@ function textOrFallback(value, fallback) {
   return typeof value === 'string' && value.trim() ? value.trim() : fallback;
 }
 
+export function hasPreviousVersionMetadataFailure(book, indexingErrors = []) {
+  return Boolean(book?.id && Array.isArray(indexingErrors) && indexingErrors.some((entry) =>
+    entry.fileId === book.id && entry.previousEntryPreserved === true && entry.outcome === 'failed'));
+}
+
 export function bookCardView(book, genresRu = {}) {
   const ready = book.metadataStatus === 'ready';
   const genre = Array.isArray(book.genres)
@@ -62,6 +67,13 @@ export function createBookCard(book, onDownload, documentRef = document, options
 
   const body = documentRef.createElement('div');
   body.className = 'book-card-body';
+  if (options.previousVersionMetadata) {
+    const warning = documentRef.createElement('p');
+    warning.className = 'book-card-metadata-warning';
+    warning.setAttribute('role', 'note');
+    warning.textContent = 'Не удалось обновить метаданные; показаны данные предыдущей версии файла.';
+    body.append(warning);
+  }
   const author = documentRef.createElement('p');
   author.className = 'book-card-author';
   const authors = Array.isArray(book.authors)

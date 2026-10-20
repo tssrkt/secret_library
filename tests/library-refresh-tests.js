@@ -9,7 +9,7 @@ import { prepareIndexingRun, createRetryEligibilityCheck } from '../js/indexing-
 import { extractBookMetadata } from '../js/book-metadata.js';
 import { sharedLibraryIndex } from '../js/shared-library.js';
 import { buildLibraryLookups } from '../js/library-view-model.js';
-import { bookCardView } from '../js/book-card.js';
+import { bookCardView, hasPreviousVersionMetadataFailure } from '../js/book-card.js';
 import { searchBooks } from '../js/book-search.js';
 import { failedBookIds } from '../js/indexing-state.js';
 
@@ -157,6 +157,10 @@ export async function runLibraryRefreshTests(test, assert, equal, makeZip) {
     equal([book.id, book.metadataStatus, book.title, book.authors, book.genres, book.modifiedTime],
       ['0', 'ready', 'Title 0', ['Author'], [], 'changed'], 'same Drive ID keeps old searchable metadata and current Drive version');
     equal([...completed.indexingErrors].map((entry) => entry.outcome), ['failed'], 'failed update remains reported as an error');
+    assert(hasPreviousVersionMetadataFailure(book, completed.indexingErrors), 'card provenance state is linked to the failed update by Drive ID');
+    equal(searchBooks(completed.books, { title: 'Title 0' }).map((item) => item.id), ['0'], 'previous title remains searchable after final processing error');
+    equal(searchBooks(completed.books, { author: 'Author' }).map((item) => item.id), ['0'], 'previous author remains searchable after final processing error');
+    equal(searchBooks(completed.books, { title: 'Updated Title 0', author: 'Updated Author' }), [], 'failed extraction does not invent new metadata');
 
     const transientBuild = prepareBuildingIndex(active, { mode: 'refresh', previousIndex: old });
     let paused = false;
@@ -342,6 +346,8 @@ export async function runLibraryRefreshTests(test, assert, equal, makeZip) {
       searchBooks(recovered.books, { title: 'Recovered New Book', author: 'Retry Author' }).map((book) => book.id),
       failedBookIds(recovered).has('new-error')],
     [['0', 'new-error', 'new-good'], 'ready', ['new-error'], false], 'successful retry restores search and clears its failure while retaining all books');
+    assert(!hasPreviousVersionMetadataFailure(recovered.books.find((book) => book.id === 'new-error'), recovered.indexingErrors),
+      'successful retry does not leave the previous-version warning');
   });
   await test('new book with metadata failure survives retry when Drive omits parent metadata', async () => {
     const scanned = await scanTree({ root: [folder('A')], A: [file('new-book')] });
