@@ -12,8 +12,8 @@ export function scanFailureMessage(error) {
     + ' Старая версия библиотеки сохранена.';
 }
 
-// Keep the old catalog until scan completes; publish the entire new structure,
-// then save it. Cache cleanup must never block publication or precede saving.
+// Keep the old catalog active until the complete scan has been persisted.
+// Cache cleanup must never block publication or precede saving.
 export function createLibraryRefresher({ scan = scanLibrary, save, apply, removeCovers,
   onProgress = () => {}, onPhase = () => {}, onCleanupError = () => {} }) {
   let running = false;
@@ -27,9 +27,9 @@ export function createLibraryRefresher({ scan = scanLibrary, save, apply, remove
         const index = preserveBookMetadata(scanned, activeIndex);
         validateIndex(index, rootFolderId);
         const obsolete = staleCoverFileIds(index, activeIndex);
-        apply(index);
         onPhase('saving');
         const savedId = await save(index, fileId);
+        apply(index);
         const cleanup = obsolete.length ? Promise.resolve().then(() => removeCovers(obsolete)).catch(onCleanupError) : Promise.resolve();
         return { index, fileId: savedId, cleanup };
       } finally { running = false; }

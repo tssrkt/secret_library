@@ -2,6 +2,7 @@ import { prepareIndexingRun, createRetryEligibilityCheck } from '../js/indexing-
 import { validateCompletedIndex, updateBuildProgress, canResumeBuildingIndex } from '../js/index-build.js';
 import { failedBookIds, metadataActionLabels } from '../js/indexing-state.js';
 import { indexPendingBooks } from '../js/metadata-indexer.js';
+import { searchBooks } from '../js/book-search.js';
 import { METADATA_VERSION, INDEX_VERSION } from '../js/config.js';
 
 const book = (id) => ({ id: String(id), parentId: 'root', fileName: `${id}.fb2`, sourceType: 'fb2',
@@ -118,8 +119,8 @@ export async function runIndexingRunTests(test, assert, equal) {
     equal(JSON.stringify(active), snapshot, 'scan failure retains active');
   });
 
-  await test('retry download 404 leaves queue but cover-cache 404 remains a book failure', async () => {
-    const active = library([book('gone'), book('cover')]);
+  await test('retry download 404 preserves the prior record and cover-cache 404 remains a book failure', async () => {
+    const active = library([book('gone'), book('cover')].map((item) => ({ ...item, authors: ['Author'] })));
     active.indexingErrors = active.books.map((item) => failure(item.id));
     const retry = await prepareIndexingRun(active, { mode: 'retry' });
     await indexPendingBooks(retry, { previousIndex: active, extract: async (item) => {
@@ -127,8 +128,29 @@ export async function runIndexingRunTests(test, assert, equal) {
       return metadata();
     }, onCover: async () => { throw Object.assign(new Error('Cover cache missing'), { status: 404 }); } });
     const completed = validateCompletedIndex(retry, active);
-    equal(completed.books, [active.books[1]], 'preserved good record for cover error only');
-    equal([...failedBookIds(completed)], ['cover'], '404 from cover storage does not remove the book');
+    equal(completed.books.map((item) => item.id), ['gone', 'cover'], 'both prior records survive errors');
+    equal(completed.books.map((item) => item.metadataStatus), ['ready', 'ready'], 'prior searchable metadata survives');
+    equal([...failedBookIds(completed)], ['gone', 'cover'], 'download and cover 404s remain failures');
+    equal(searchBooks(completed.books, { title: 'Book gone' }).map((item) => item.id), ['gone'], 'preserved record remains searchable by title');
+    equal(searchBooks(completed.books, { author: 'Author' }).map((item) => item.id), ['gone', 'cover'], 'preserved records remain searchable by author');
+  });
+
+  await test('retry parse failure preserves ready metadata and temporary Drive failure keeps its record pending', async () => {
+    const active = library([book('parse'), book('temporary')]);
+    active.indexingErrors = active.books.map((item) => failure(item.id));
+    const snapshot = JSON.stringify(active);
+    const retry = await prepareIndexingRun(active, { mode: 'retry' });
+    let paused = false;
+    try {
+      await indexPendingBooks(retry, { previousIndex: active, concurrency: 1, extract: async (item) => {
+        if (item.id === 'parse') throw Object.assign(new Error('Malformed FB2'), { code: 'invalid_xml', stage: 'parse' });
+        throw Object.assign(new Error('Drive temporarily unavailable'), { status: 503, retryable: true, stage: 'download' });
+      } });
+    } catch (error) { paused = error.retryable; }
+    assert(paused, 'temporary Drive failure pauses the retry for later resumption');
+    equal([retry.books[0].id, retry.books[0].metadataStatus, retry.books[0].title], ['parse', 'ready', 'Book parse'], 'parse failure restores the whole prior record');
+    equal([retry.books[1].id, retry.books[1].metadataStatus, retry.books[1].title], ['temporary', 'pending', 'Book temporary'], 'temporary API failure retains ID and metadata');
+    equal(JSON.stringify(active), snapshot, 'failed retry never mutates the active index');
   });
 
   await test('retry checks only target ancestry, removes deleted/outside files and caches shared ancestors', async () => {
@@ -138,7 +160,7 @@ export async function runIndexingRunTests(test, assert, equal) {
     const calls = [];
     const getFile = async (id) => {
       calls.push(id);
-      if (id === 'deleted') throw Object.assign(new Error('Gone'), { status: 404 });
+      if (id === 'deleted') throw Object.assign(new Error('Drive did not disclose this file'), { status: 404 });
       if (id === 'outside') return { id, name: 'outside.fb2', parents: ['elsewhere'] };
       if (id === 'elsewhere') return { id, name: 'Elsewhere', mimeType: 'application/vnd.google-apps.folder', parents: [] };
       if (id === 'nested') return { id, name: 'Nested', mimeType: 'application/vnd.google-apps.folder', parents: ['root'] };
@@ -149,10 +171,11 @@ export async function runIndexingRunTests(test, assert, equal) {
       extract: async (item) => { extracted.push(item.id); return metadata(); } });
     updateBuildProgress(retry, stats);
     const completed = validateCompletedIndex(retry, active);
-    equal([stats.excluded, stats.failed, failedBookIds(completed).size], [2, 0, 0], 'missing files no longer retried');
+    equal([stats.excluded, stats.failed, failedBookIds(completed).size], [1, 1, 1], 'only affirmative outside-root result is excluded');
     equal(extracted.sort(), ['inside1', 'inside2'], 'only eligible target downloads');
     equal(calls.filter((id) => id === 'nested').length, 1, 'shared ancestor fetched once');
-    equal(completed.books.map((item) => item.parentId), ['nested', 'nested'], 'current in-root location applied');
+    equal(completed.books.map((item) => item.id).sort(), ['deleted', 'inside1', 'inside2'], 'uncertain lookup preserves prior record');
+    equal(completed.books.find((item) => item.id === 'inside1').parentId, 'nested', 'current in-root location applied');
     equal(active.books.length, 4, 'active survives until commit');
   });
 }

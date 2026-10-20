@@ -14,13 +14,14 @@ export async function prepareIndexingRun(active, { mode, building = null, scan =
 
 export function createRetryEligibilityCheck(index, { getFile = getLibraryFile, signal } = {}) {
   const folders = new Map();
+  const folderKeys = new Map((index.folders || []).map((item) => [item.id, item.resourceKey]));
   const folder = (id) => {
-    if (!folders.has(id)) folders.set(id, getFile(id, signal).catch((error) => { folders.delete(id); throw error; }));
+    if (!folders.has(id)) folders.set(id, getFile(id, signal, folderKeys.get(id)).catch((error) => { folders.delete(id); throw error; }));
     return folders.get(id);
   };
   return async (book) => {
     try {
-      const file = await getFile(book.id, signal);
+      const file = await getFile(book.id, signal, book.resourceKey);
       if (file.trashed || !BOOK_SOURCE_TYPES.includes(classifyLibraryItem(file))) return false;
       const ancestors = [];
       let parent = file.parents?.[0];
@@ -29,7 +30,8 @@ export function createRetryEligibilityCheck(index, { getFile = getLibraryFile, s
         visited.add(parent);
         const item = await folder(parent);
         if (item.trashed || classifyLibraryItem(item) !== 'folder') return false;
-        ancestors.push({ id: item.id, name: item.name, parentId: item.parents?.[0] || null });
+        ancestors.push({ id: item.id, name: item.name, parentId: item.parents?.[0] || null,
+          ...(item.resourceKey ? { resourceKey: item.resourceKey } : {}) });
         parent = item.parents?.[0];
       }
       if (parent !== index.rootFolderId) return false;
@@ -40,12 +42,16 @@ export function createRetryEligibilityCheck(index, { getFile = getLibraryFile, s
       Object.assign(book, { parentId: file.parents[0], fileName: file.name, size: file.size == null ? null : Number(file.size),
         modifiedTime: file.modifiedTime || null, md5Checksum: file.md5Checksum || null,
         sourceType: classifyLibraryItem(file), extension: classifyLibraryItem(file) });
+      if (file.resourceKey) book.resourceKey = file.resourceKey;
+      else delete book.resourceKey;
       const path = libraryFilePath(index, { ...book, path: null });
       if (path) book.path = path;
       else delete book.path;
       return true;
     } catch (error) {
-      if (error.status === 404 || (error.status === 403 && !error.retryable)) return false;
+      // Drive's 404 can mean either deleted or not visible to this account.
+      // Keep the indexed record unless Drive returned affirmative metadata
+      // proving that it is trashed or outside the configured library.
       throw error;
     }
   };

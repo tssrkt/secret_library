@@ -1,8 +1,0 @@
-============================= test session starts =============================
-platform win32 -- Python 3.11.9, pytest-9.1.1, pluggy-1.6.0 -- C:\Users\tssrk\AppData\Local\Programs\Python\Python311\python.exe
-cachedir: .pytest_cache
-rootdir: D:\PROJECTS\Secret_Library
-plugins: anyio-4.14.1
-collecting ... collected 0 items
-
-====================== no tests ran in 68.81s (0:01:08) =======================

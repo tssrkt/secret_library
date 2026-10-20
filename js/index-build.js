@@ -100,8 +100,13 @@ export function validateCompletedIndex(candidate, activeIndex, manifest = candid
       continue;
     }
     if (!['ready', 'error'].includes(book.metadataStatus)) throw new Error('Built index is not complete.');
-    const unchangedPrevious = preservedIds.has(book.id) && oldBooks.get(book.id)?.metadataStatus === 'ready'
-      && JSON.stringify(book) === JSON.stringify(previousRecord(oldBooks.get(book.id), sources.get(book.id)));
+    const oldBook = oldBooks.get(book.id);
+    const previousReady = oldBook?.metadataStatus === 'ready' ? oldBook
+      : oldBook?.metadataStatus === 'pending' && oldBook.metadataVersion != null
+        && Object.hasOwn(oldBook, 'title') && Array.isArray(oldBook.authors)
+        ? { ...oldBook, metadataStatus: 'ready' } : null;
+    const unchangedPrevious = preservedIds.has(book.id) && previousReady
+      && JSON.stringify(book) === JSON.stringify(previousRecord(previousReady, sources.get(book.id)));
     if (preservedIds.has(book.id) && !unchangedPrevious) throw new Error('Preserved index entry differs from the previous good record.');
     if (book.metadataStatus === 'ready' && book.metadataVersion !== METADATA_VERSION && !unchangedPrevious) {
       throw new Error('Built index contains stale metadata.');
@@ -130,7 +135,7 @@ export function validateCompletedIndex(candidate, activeIndex, manifest = candid
 // Preserve good metadata while retaining the freshly scanned location/source identity.
 export function previousRecord(previous, source) {
   const result = cloneIndex(previous);
-  if (source) for (const field of ['id', 'parentId', 'fileName', 'extension', 'size', 'modifiedTime', 'md5Checksum', 'sourceType', 'path']) {
+  if (source) for (const field of ['id', 'parentId', 'fileName', 'extension', 'size', 'modifiedTime', 'md5Checksum', 'sourceType', 'path', 'resourceKey']) {
     if (Object.hasOwn(source, field)) result[field] = source[field];
   }
   return result;

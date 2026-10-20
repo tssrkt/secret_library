@@ -17,7 +17,7 @@ import {
 import { prepareIndexingRun, createRetryEligibilityCheck } from './indexing-run.js';
 import * as ui from './ui.js';
 import { errorDetails, recordIndexingError } from './indexing-errors.js';
-import { social } from './social-runtime.js';
+import { social, socialError } from './social-runtime.js';
 import { getAccessToken } from './auth.js';
 import { checkpointKey, loadCheckpoint, saveCheckpoint, deleteCheckpoint, commitCheckpoint } from './indexing-checkpoint.js';
 import { createLibraryTabs } from './library-tabs.js';
@@ -68,7 +68,7 @@ social.subscribe((state) => {
   if (state.status !== 'ready') { publishingFor = null; return; }
   if (shareableIndex && publishingFor !== shareableIndex) {
     publishingFor = shareableIndex;
-    void publishLibrary(shareableIndex).catch((error) => { ui.showError(`Не удалось обновить каталог для друзей: ${error.message}`); });
+    void publishLibrary(shareableIndex).catch((error) => { ui.showError(`Не удалось обновить каталог для друзей: ${socialError(error)}`); });
   }
 });
 
@@ -105,7 +105,8 @@ function readableError(error) {
 
 async function downloadBook(book) {
   try {
-    ui.saveDownloadedFile(await downloadDriveFile(book.id), book.fileName);
+    ui.saveDownloadedFile(await downloadDriveFile(book.id, undefined, undefined,
+      { resourceKey: book.resourceKey }), book.fileName);
   } catch (error) {
     ui.showError(readableError(error));
   }
@@ -136,7 +137,7 @@ async function rebuildIndex() {
     indexFileId = result.fileId;
     shareableIndex = result.index;
     ui.showStats(currentIndex.folders.length, currentIndex.books.length);
-    void publishLibrary(result.index).catch((error) => ui.showError(`Не удалось обновить каталог для друзей: ${error.message}`));
+    void publishLibrary(result.index).catch((error) => ui.showError(`Не удалось обновить каталог для друзей: ${socialError(error)}`));
     ui.setStatus(`Библиотека обновлена: ${result.index.books.length.toLocaleString('ru-RU')} книг.`);
     await runMetadataIndexing({ refreshOnly: true });
   } catch (error) {
@@ -238,7 +239,7 @@ async function runMetadataIndexing({ retryErrors = false, refreshOnly = false, r
       currentIndex = committed.index;
       shareableIndex = currentIndex;
       renderLibrary(currentIndex);
-      void publishLibrary(currentIndex).catch((error) => ui.showError(`Не удалось обновить каталог для друзей: ${error.message}`));
+      void publishLibrary(currentIndex).catch((error) => ui.showError(`Не удалось обновить каталог для друзей: ${socialError(error)}`));
       const obsoleteCovers = staleActiveCoverIds(activeIndex, currentIndex);
       const completedBuildingFileId = buildingIndexFileId;
       buildingIndex = null;
@@ -328,7 +329,7 @@ async function afterAuthorization() {
         throw error;
       }
       renderLibrary(currentIndex);
-      void publishLibrary(currentIndex).catch((error) => ui.showError(`Не удалось обновить каталог для друзей: ${error.message}`));
+      void publishLibrary(currentIndex).catch((error) => ui.showError(`Не удалось обновить каталог для друзей: ${socialError(error)}`));
       ui.updateIndexingErrors(buildingIndex?.indexingErrors || currentIndex.indexingErrors || []);
       const coverIndex = buildingIndex
         ? { books: [...currentIndex.books, ...buildingIndex.books] }

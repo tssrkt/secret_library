@@ -70,7 +70,10 @@ export const social = {
   setSharing(uid, active) { if (!store || state.status !== 'ready') return Promise.reject(new Error(state.message)); return store.setSharing(uid, active); },
   markSeen(items) { if (!store || state.status !== 'ready') return Promise.resolve(); return store.markSeen(items); },
   syncKnownContacts() { if (!store || state.status !== 'ready') return Promise.resolve(); return store.syncKnownContacts(); },
-  publishLibrary(index, settings) { if (!shared || state.status !== 'ready') return Promise.resolve(); return shared.publish(index, settings); },
+  publishLibrary(index, settings) {
+    if (!shared || state.status !== 'ready') return Promise.reject(new Error(state.message || 'Firebase connection is not ready; the friend catalog was not synchronized.'));
+    return shared.publish(index, settings);
+  },
   get ready() { return state.status === 'ready'; },
   unpublishLibrary() { if (!shared || state.status !== 'ready') return Promise.reject(new Error('Для изменения доступа подключите социальную часть.')); return shared.unpublish(); },
   loadLibrary(uid, revision) {

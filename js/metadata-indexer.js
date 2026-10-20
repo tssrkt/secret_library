@@ -39,7 +39,10 @@ export async function indexPendingBooks(index, {
   const selected = retry ? new Set(index.buildState.selectedIds) : null;
   const pending = index.books.filter((book) => book.metadataStatus === 'pending' && (!selected || selected.has(book.id)));
   const stats = { total: pending.length, processed: 0, succeeded: 0, recovered: 0, skipped: index.books.length - pending.length, failed: 0, excluded: 0 };
-  const previousBooks = new Map((previousIndex?.books || []).filter((book) => book.metadataStatus === 'ready').map((book) => [book.id, book]));
+  const previousBooks = new Map((previousIndex?.books || []).filter((book) => book.metadataStatus === 'ready'
+    || (book.metadataStatus === 'pending' && book.metadataVersion != null
+      && Object.hasOwn(book, 'title') && Array.isArray(book.authors)))
+    .map((book) => [book.id, book.metadataStatus === 'ready' ? book : { ...book, metadataStatus: 'ready' }]));
   index.indexingErrors ||= [];
   const sources = new Map((index.buildState?.sourceBooks || []).map((book) => [book.id, book]));
 
@@ -116,7 +119,7 @@ export async function indexPendingBooks(index, {
       onIssue(error);
       const diagnosticBook = { ...book };
       const previous = previousBooks.get(book.id);
-      if (retry && (error.code === 'no_longer_eligible' || (error.status === 404 && (!error.stage || error.stage === 'download' || error.stage === 'metadata')))) {
+      if (retry && error.code === 'no_longer_eligible') {
         index.books = index.books.filter((item) => item.id !== book.id);
         index.buildState.removedBookIds.push(book.id);
         clearReport();
@@ -125,7 +128,7 @@ export async function indexPendingBooks(index, {
       } else {
         if (previous) {
           for (const key of Object.keys(book)) delete book[key];
-          Object.assign(book, previousRecord(previous, sources.get(previous.id)));
+          Object.assign(book, previousRecord(previous, sources.get(previous.id) || diagnosticBook));
         } else {
           book.metadataStatus = 'error';
           book.metadataError = error?.status === 403 ? 'insufficient_permissions'

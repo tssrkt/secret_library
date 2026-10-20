@@ -59,10 +59,13 @@ export async function extractBookMetadata(book, options = {}) {
 
 async function extractWithRangeFallback(book, options) {
   const diagnostics = { ...options.diagnostics, onIssue: options.onIssue, stage: 'download' };
-  const download = options.downloadFile || ((id, signal, extra = {}) => downloadDriveFile(id, signal, undefined, { ...diagnostics, ...extra }));
+  const resourceKey = (id) => id === book.id ? book.resourceKey : undefined;
+  const download = options.downloadFile || ((id, signal, extra = {}) => downloadDriveFile(id, signal, undefined,
+    { ...diagnostics, ...extra, resourceKey: resourceKey(id) }));
   const extractOptions = {
     ...options, downloadFile: download,
-    fetchRange: options.fetchRange || ((id, start, end, signal, rangeOptions) => downloadFileRange(id, start, end, signal, { ...rangeOptions, diagnostics })),
+    fetchRange: options.fetchRange || ((id, start, end, signal, rangeOptions) => downloadFileRange(id, start, end, signal,
+      { ...rangeOptions, diagnostics, resourceKey: resourceKey(id) })),
   };
   try {
     return await dispatch(book, extractOptions);

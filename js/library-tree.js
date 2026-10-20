@@ -62,14 +62,14 @@ export async function scanLibrary(rootFolderId, onProgress = () => {}, {
     scanEvents: events.get(folder.id) || [] });
   const readFolder = async (folder) => {
     try {
-      const children = await listChildren(folder.id, { signal: scanSignal, diagnostics: diagnostics(folder) });
+      const children = await listChildren(folder.id, { signal: scanSignal, diagnostics: diagnostics(folder), resourceKey: folder.resourceKey });
       scanSignal.throwIfAborted();
       for (const item of children) {
         const parentId = folder.id;
         const itemType = classifyLibraryItem(item);
         if (itemType === 'folder' && !seenFolders.has(item.id)) {
           seenFolders.add(item.id);
-          const child = { id: item.id, parentId, name: item.name };
+          const child = { id: item.id, parentId, name: item.name, ...(item.resourceKey ? { resourceKey: item.resourceKey } : {}) };
           folderPaths.set(child.id, `${folderPaths.get(parentId)} / ${item.name}`);
           folders.push(child); queue.push(child);
         } else if (BOOK_SOURCE_TYPES.includes(itemType) && !seenBooks.has(item.id)) {
@@ -78,6 +78,7 @@ export async function scanLibrary(rootFolderId, onProgress = () => {}, {
             path: `${folderPaths.get(parentId)} / ${item.name}`,
             size: item.size == null ? null : Number(item.size), modifiedTime: item.modifiedTime || null,
             md5Checksum: item.md5Checksum || null, sourceType: itemType,
+            ...(item.resourceKey ? { resourceKey: item.resourceKey } : {}),
             ...(itemType === 'zip' ? { entryPath: null } : {}), metadataStatus: 'pending' });
         }
       }
@@ -94,7 +95,8 @@ export async function scanLibrary(rootFolderId, onProgress = () => {}, {
     try { root = await getRoot(rootFolderId, { signal: scanSignal, diagnostics: diagnostics({ id: rootFolderId }) }); }
     catch (error) { throw folderError(error, { id: rootFolderId }); }
     scanSignal.throwIfAborted();
-    const rootFolder = { id: root.id, parentId: null, name: root.name };
+    const rootFolder = { id: root.id, parentId: null, name: root.name,
+      ...(root.resourceKey ? { resourceKey: root.resourceKey } : {}) };
     folderPaths.set(root.id, root.name);
     folders.push(rootFolder); queue.push(rootFolder); readingRoot = false;
     while (queue.length || running.size) {
@@ -134,7 +136,21 @@ export function preserveBookMetadata(currentIndex, previousIndex) {
   const previousBooks = new Map(previousIndex.books.map((book) => [book.id, book]));
   for (const book of currentIndex.books) {
     const previous = previousBooks.get(book.id);
-    if (!previous || !isUnchanged(book, previous)) continue;
+    if (!previous) continue;
+    if (!isUnchanged(book, previous)) {
+      // Keep the last good metadata while the changed Drive version is pending.
+      // Its cached cover is invalidated below because it belongs to old content.
+      const hasLastGoodMetadata = previous.metadataStatus === 'ready'
+        || (previous.metadataStatus === 'pending' && previous.metadataVersion != null
+          && Object.hasOwn(previous, 'title') && Array.isArray(previous.authors));
+      if (!hasLastGoodMetadata) continue;
+      for (const field of METADATA_FIELDS) {
+        if (['metadataStatus', 'coverFileId', 'coverMimeType'].includes(field)) continue;
+        if (Object.hasOwn(previous, field)) book[field] = previous[field];
+      }
+      book.metadataStatus = 'pending';
+      continue;
+    }
     for (const field of METADATA_FIELDS) {
       if (Object.hasOwn(previous, field)) book[field] = previous[field];
     }

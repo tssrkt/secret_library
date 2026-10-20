@@ -105,3 +105,7 @@ cover, index-write. Журнал получает только ошибки оп
 
 HTTP-семантика сверена с [RFC 9110, раздел 14](https://www.rfc-editor.org/rfc/rfc9110.html#section-14).
 Использование Range для blob-файлов Drive описано в [документации Google Drive](https://developers.google.com/workspace/drive/api/guides/manage-downloads).
+
+## Retry eligibility and Drive 404
+
+A Drive `404` from a file or ancestor metadata lookup is inconclusive: Drive may also hide a file that the current account cannot access. Retry keeps the prior index record and journals the failure. A record is excluded only after returned metadata proves it is trashed, unsupported, or outside the root. A download or metadata `404` also never removes a record, leaving its last searchable metadata available for a later retry.

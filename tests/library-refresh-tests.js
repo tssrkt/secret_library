@@ -3,6 +3,13 @@ import { createLibraryRefresher, scanStatus, scanFailureMessage } from '../js/li
 import { listFolderChildren } from '../js/drive.js';
 import { restoreAuthSession, clearAccessToken } from '../js/auth.js';
 import { INDEX_VERSION, METADATA_VERSION, FOLDER_MIME_TYPE } from '../js/config.js';
+import { prepareBuildingIndex, validateCompletedIndex } from '../js/index-build.js';
+import { indexPendingBooks } from '../js/metadata-indexer.js';
+import { prepareIndexingRun, createRetryEligibilityCheck } from '../js/indexing-run.js';
+import { sharedLibraryIndex } from '../js/shared-library.js';
+import { buildLibraryLookups } from '../js/library-view-model.js';
+import { bookCardView } from '../js/book-card.js';
+import { searchBooks } from '../js/book-search.js';
 
 const folder = (id, name = id) => ({ id, name, mimeType: FOLDER_MIME_TYPE });
 const file = (id) => ({ id, name: `${id}.fb2`, size: '17', modifiedTime: 'same' });
@@ -108,11 +115,151 @@ export async function runLibraryRefreshTests(test, assert, equal) {
     const args = { activeIndex: oldIndex(), rootFolderId: 'root' };
     const first = refresh.run(args);
     equal(await refresh.run(args), null, 'duplicate ignored'); equal(scans, 1, 'one traversal');
-    scanning.resolve(); await tick(); equal(order, ['apply', 'save'], 'no early deletion');
+    scanning.resolve(); await tick(); equal(order, ['save'], 'new snapshot is persisted before publication');
     saving.resolve(); const result = await first;
     assert(!refresh.running, 'cleanup does not block refresh');
-    equal(order, ['apply', 'save', 'cleanup'], 'cleanup follows persisted index');
+    equal(order, ['save', 'apply', 'cleanup'], 'publication and cleanup follow persisted index');
     cleaning.resolve(); await result.cleanup;
+  });
+  await test('failed refresh save does not publish a partial scan over the active index', async () => {
+    const old = oldIndex(); let applied = null; let attempted = null;
+    const refresh = createLibraryRefresher({
+      scan: () => scanTree({ root: [folder('A')], A: [file('new-book')] }),
+      apply: (index) => { applied = index; },
+      save: async (index) => { attempted = index; throw new Error('save failed'); },
+      removeCovers: async () => {},
+    });
+    let error;
+    try { await refresh.run({ activeIndex: old, rootFolderId: 'root' }); } catch (caught) { error = caught; }
+    assert(error && attempted.books.some((book) => book.id === 'new-book'), 'save attempted with the discovered Drive record');
+    equal(applied, null, 'failed persistence leaves the in-memory active snapshot unchanged');
+    assert(old.books.some((book) => book.id === '0' && book.metadataStatus === 'ready'), 'previous ready record remains active');
+  });
+  await test('refresh processing failure preserves prior ready metadata for a changed Drive file', async () => {
+    const old = oldIndex(); old.books[0].genres = []; let active = old;
+    const changed = { ...file('0'), modifiedTime: 'changed' };
+    const refresh = createLibraryRefresher({
+      scan: () => scanTree({ root: [folder('A')], A: [changed] }),
+      apply: (index) => { active = index; },
+      save: async () => 'index',
+      removeCovers: async () => {},
+    });
+    await refresh.run({ activeIndex: old, rootFolderId: 'root' });
+    const building = prepareBuildingIndex(active, { mode: 'refresh' });
+    await indexPendingBooks(building, {
+      previousIndex: active,
+      extract: async () => { throw Object.assign(new Error('Updated FB2 cannot be read yet'), { code: 'invalid_xml', stage: 'parse' }); },
+    });
+    const completed = validateCompletedIndex(building, active);
+    const book = completed.books.find((item) => item.id === '0');
+    equal([book.id, book.metadataStatus, book.title, book.authors, book.genres, book.modifiedTime],
+      ['0', 'ready', 'Title 0', ['Author'], [], 'changed'], 'same Drive ID keeps old searchable metadata and current Drive version');
+    equal([...completed.indexingErrors].map((entry) => entry.outcome), ['failed'], 'failed update remains reported as an error');
+
+    const transientBuild = prepareBuildingIndex(active, { mode: 'refresh' });
+    let paused = false;
+    try {
+      await indexPendingBooks(transientBuild, { previousIndex: active,
+        extract: async () => { throw Object.assign(new Error('Drive temporarily unavailable'), { status: 503, retryable: true }); } });
+    } catch (error) { paused = Boolean(error.retryable); }
+    const pending = transientBuild.books.find((item) => item.id === '0');
+    assert(paused, 'temporary processing error remains a retryable interruption');
+    equal([pending.id, pending.metadataStatus, pending.title, pending.authors, pending.modifiedTime],
+      ['0', 'pending', 'Title 0', ['Author'], 'changed'], 'temporary error keeps prior metadata and the current Drive ID/version');
+
+    let refreshedAgain = null;
+    const secondRefresh = createLibraryRefresher({
+      scan: () => scanTree({ root: [folder('A')], A: [{ ...changed, modifiedTime: 'changed-again' }] }),
+      apply: (index) => { refreshedAgain = index; }, save: async () => 'index', removeCovers: async () => {},
+    });
+    await secondRefresh.run({ activeIndex: active, rootFolderId: 'root' });
+    const afterSecondRefresh = refreshedAgain.books.find((item) => item.id === '0');
+    equal([afterSecondRefresh.id, afterSecondRefresh.metadataStatus, afterSecondRefresh.title,
+      afterSecondRefresh.authors, afterSecondRefresh.modifiedTime],
+    ['0', 'pending', 'Title 0', ['Author'], 'changed-again'], 'another changed scan retains last good metadata');
+  });
+  await test('new Drive books reach the catalog despite metadata errors and ambiguous retry 404s', async () => {
+    const old = oldIndex(); old.books[0].genres = [];
+    let active = null; let saved = null;
+    const refresh = createLibraryRefresher({
+      scan: () => scanTree({ root: [folder('A')], A: [file('0'), file('new-error'), file('new-good')] }),
+      apply: (index) => { active = index; },
+      save: async (index) => { saved = structuredClone(index); return 'index'; },
+      removeCovers: async () => {},
+    });
+    await refresh.run({ activeIndex: old, rootFolderId: 'root' });
+    assert(saved.books.some((book) => book.id === 'new-error' && book.metadataStatus === 'pending'),
+      'new Drive file is persisted before metadata extraction');
+
+    const building = prepareBuildingIndex(active, { mode: 'refresh' });
+    await indexPendingBooks(building, { previousIndex: active, extract: async (book) => {
+      if (book.id === 'new-error') throw Object.assign(new Error('Invalid FB2'), { code: 'invalid_xml', stage: 'parse' });
+      return { title: 'New Good', authors: ['New Author'], genres: [] };
+    } });
+    const completed = validateCompletedIndex(building, active);
+    equal(completed.books.map((book) => book.id).sort(), ['0', 'new-error', 'new-good'], 'scan additions survive completion');
+    equal([completed.books.find((book) => book.id === 'new-error').metadataStatus,
+      completed.books.find((book) => book.id === 'new-good').title], ['error', 'New Good'], 'metadata error is retained while successful metadata is indexed');
+    equal(completed.books.find((book) => book.id === '0').title, 'Title 0', 'existing successful metadata survives refresh');
+    const catalog = sharedLibraryIndex(completed, { sharing: { excludedFolderIds: [] } });
+    equal(catalog.books.map((book) => book.id).sort(), ['0', 'new-error', 'new-good'], 'catalog projection includes new books with errors');
+    const ownBooks = buildLibraryLookups(completed).booksByParent.get('A');
+    assert(ownBooks.some((book) => book.id === 'new-error'), 'owner catalog keeps failed book in folder list');
+    equal(bookCardView(ownBooks.find((book) => book.id === 'new-error')).title, 'new-error', 'failed book card uses its filename instead of hiding the entry');
+    equal(searchBooks(ownBooks, { query: 'new-error' }).map((book) => book.id), ['new-error'], 'failed book remains searchable by filename');
+
+    const retry = await prepareIndexingRun(completed, { mode: 'retry' });
+    await indexPendingBooks(retry, { previousIndex: completed, extract: async () => {
+      throw Object.assign(new Error('Ambiguous Drive response'), { status: 404, stage: 'download' });
+    } });
+    const retried = validateCompletedIndex(retry, completed);
+    equal(retried.books.map((book) => book.id).sort(), ['0', 'new-error', 'new-good'], 'ambiguous retry response does not remove books');
+    equal(retried.books.find((book) => book.id === '0').title, 'Title 0', 'existing metadata remains intact after retry failure');
+    equal(retry.buildState.removedBookIds, [], 'no removal without positive ineligibility evidence');
+  });
+  await test('scanned per-file resource key reaches Drive download and new book catalog entry', async () => {
+    const originalFetch = window.fetch;
+    restoreAuthSession({ session: { getItem: () => JSON.stringify({ accessToken: 'test-only', expiresAt: Date.now() + 3600000 }) } });
+    const headers = []; let listing = 0;
+    const fb2 = `<?xml version="1.0"?><FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0"><description><title-info><book-title>Resource Key Book</book-title><author><first-name>Test Author</first-name></author></title-info></description><body><section><p>Readable test book content.</p></section></body></FictionBook>`;
+    window.fetch = async (url, options) => {
+      headers.push(options.headers['X-Goog-Drive-Resource-Keys'] || '');
+      if (String(url).includes('/files?')) {
+        listing++;
+        return new Response(JSON.stringify({ files: listing === 1
+          ? [{ id: 'A', name: 'A', mimeType: FOLDER_MIME_TYPE, resourceKey: 'folder-key' }]
+          : [{ id: 'new-secure', name: 'new-secure.fb2', size: '17', modifiedTime: 'same', resourceKey: 'resource-token' }] }));
+      }
+      return new Response(new Blob([fb2]), { status: 200 });
+    };
+    try {
+      const scanned = await scanLibrary('root', () => {}, { getRoot: async () => folder('root'),
+        listChildren: (id, options) => listFolderChildren(id, options) });
+      equal(scanned.books.map((book) => [book.id, book.resourceKey]), [['new-secure', 'resource-token']], 'scan retains the Drive resource key');
+      const active = { ...oldIndex(0), folders: scanned.folders, books: scanned.books };
+      const building = prepareBuildingIndex(active, { mode: 'incremental' });
+      await indexPendingBooks(building, { previousIndex: active, onCover: async () => ({}) });
+      const completed = validateCompletedIndex(building, active);
+      const book = completed.books.find((item) => item.id === 'new-secure');
+      equal([book.metadataStatus, book.title, book.authors], ['ready', 'Resource Key Book', ['Test Author']], 'new supported file is indexed from its authorized content');
+      equal(headers, ['', 'A/folder-key', 'new-secure/resource-token'], 'nested folder listing and metadata download send their target resource keys');
+      equal(buildLibraryLookups(completed).booksByParent.get('A').map((item) => item.id), ['new-secure'], 'successfully indexed book appears in the owner catalog');
+      equal(sharedLibraryIndex(completed, { sharing: { excludedFolderIds: [] } }).books.map((item) => item.id), ['new-secure'], 'successfully indexed book appears in the shared catalog projection');
+    } finally { window.fetch = originalFetch; clearAccessToken(); }
+  });
+  await test('retry eligibility reuses indexed resource keys for the file and its parent folders', async () => {
+    const book = { ...file('secured'), parentId: 'A', resourceKey: 'file-key', metadataStatus: 'error' };
+    const index = { rootFolderId: 'root', folders: [{ id: 'A', parentId: 'root', name: 'A', resourceKey: 'folder-key' }], books: [book] };
+    const calls = [];
+    const check = createRetryEligibilityCheck(index, { getFile: async (id, _signal, key) => {
+      calls.push([id, key]);
+      return id === 'secured'
+        ? { id, name: 'secured.fb2', mimeType: 'application/fb2', parents: ['A'], resourceKey: 'file-key' }
+        : { id: 'A', name: 'A', mimeType: FOLDER_MIME_TYPE, parents: ['root'], resourceKey: 'folder-key' };
+    } });
+    assert(await check(book), 'book remains eligible after positive Drive metadata');
+    equal(calls, [['secured', 'file-key'], ['A', 'folder-key']], 'eligibility requests use the keys discovered during scan');
+    equal(book.resourceKey, 'file-key', 'refresh retains the file key for a later content retry');
   });
   await test('failed index save keeps old covers intact', async () => {
     let removed = false;

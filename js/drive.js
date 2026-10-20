@@ -32,14 +32,17 @@ const delay = (milliseconds, signal) => new Promise((resolve, reject) => {
   if (signal?.aborted) abort(); else signal?.addEventListener('abort', abort, { once: true });
 });
 
-function resourceKeyHeaders() {
-  return ROOT_FOLDER_RESOURCE_KEY
-    ? { 'X-Goog-Drive-Resource-Keys': `${ROOT_FOLDER_ID}/${ROOT_FOLDER_RESOURCE_KEY}` }
-    : {};
+function resourceKeyHeaders(resourceKey) {
+  const keys = ROOT_FOLDER_RESOURCE_KEY ? [`${ROOT_FOLDER_ID}/${ROOT_FOLDER_RESOURCE_KEY}`] : [];
+  if (resourceKey?.fileId && resourceKey.key) {
+    const value = `${resourceKey.fileId}/${resourceKey.key}`;
+    if (!keys.includes(value)) keys.push(value);
+  }
+  return keys.length ? { 'X-Goog-Drive-Resource-Keys': keys.join(',') } : {};
 }
 
 export async function driveFetch(path, options = {}, retry = 0, apiRoot = API_ROOT, authRetried = false) {
-  const { diagnostics = {}, readJson = false, ...requestOptions } = options;
+  const { diagnostics = {}, readJson = false, resourceKey, ...requestOptions } = options;
   options.signal?.throwIfAborted();
   const pause = (ms) => diagnostics.sleep ? diagnostics.sleep(ms) : delay(ms, options.signal);
   const report = (error, retryResult) => {
@@ -60,7 +63,7 @@ export async function driveFetch(path, options = {}, retry = 0, apiRoot = API_RO
     response = await fetch(`${apiRoot}${path}`, {
       ...requestOptions,
       signal: requestSignal,
-      headers: { Authorization: `Bearer ${token}`, ...resourceKeyHeaders(), ...options.headers },
+      headers: { Authorization: `Bearer ${token}`, ...resourceKeyHeaders(resourceKey), ...options.headers },
     });
     // Folder listing must retry body-read timeouts/network failures too, not
     // only failures before the HTTP headers arrive.
@@ -120,15 +123,16 @@ export async function driveFetch(path, options = {}, retry = 0, apiRoot = API_RO
 }
 
 export async function getFolder(folderId, { signal, diagnostics = {} } = {}) {
-  const params = new URLSearchParams({ fields: 'id,name,mimeType,parents', supportsAllDrives: 'true' });
+  const params = new URLSearchParams({ fields: 'id,name,mimeType,parents,resourceKey', supportsAllDrives: 'true' });
   const folder = await driveFetch(`/files/${encodeURIComponent(folderId)}?${params}`, { signal, readJson: true, diagnostics });
   if (folder.mimeType !== FOLDER_MIME_TYPE) throw new DriveError('Настроенный rootFolderId не является папкой Google Drive.', { code: 'not_folder' });
   return folder;
 }
 
-export async function getLibraryFile(fileId, signal) {
-  const params = new URLSearchParams({ fields: 'id,name,mimeType,parents,size,modifiedTime,md5Checksum,trashed', supportsAllDrives: 'true' });
-  return driveFetch(`/files/${encodeURIComponent(fileId)}?${params}`, { signal, readJson: true, diagnostics: { stage: 'metadata', fileId } });
+export async function getLibraryFile(fileId, signal, key) {
+  const params = new URLSearchParams({ fields: 'id,name,mimeType,parents,size,modifiedTime,md5Checksum,trashed,resourceKey', supportsAllDrives: 'true' });
+  return driveFetch(`/files/${encodeURIComponent(fileId)}?${params}`, { signal, readJson: true,
+    resourceKey: key ? { fileId, key } : undefined, diagnostics: { stage: 'metadata', fileId } });
 }
 
 export async function getCurrentDriveUser(request = driveFetch) {
@@ -137,7 +141,7 @@ export async function getCurrentDriveUser(request = driveFetch) {
   return (await response.json()).user || {};
 }
 
-export async function listFolderChildren(folderId, { signal, diagnostics = {} } = {}) {
+export async function listFolderChildren(folderId, { signal, diagnostics = {}, resourceKey } = {}) {
   const files = [];
   let pageToken = '';
   const seenTokens = new Set();
@@ -152,7 +156,9 @@ export async function listFolderChildren(folderId, { signal, diagnostics = {} } 
       includeItemsFromAllDrives: 'true',
     });
     if (pageToken) params.set('pageToken', pageToken);
-    const page = await driveFetch(`/files?${params}`, { signal, readJson: true, diagnostics: { ...diagnostics, stage: 'list', fileId: folderId } });
+    const page = await driveFetch(`/files?${params}`, { signal, readJson: true,
+      resourceKey: resourceKey ? { fileId: folderId, key: resourceKey } : undefined,
+      diagnostics: { ...diagnostics, stage: 'list', fileId: folderId } });
     if (page.incompleteSearch) throw Object.assign(new DriveError('Google Drive вернул неполный список папки.', { code: 'incomplete_folder_list' }), { stage: 'list', fileId: folderId });
     if (!Array.isArray(page.files)) throw Object.assign(new DriveError('Некорректный ответ списка папки.', { code: 'invalid_folder_response' }), { stage: 'list', fileId: folderId });
     files.push(...page.files);
@@ -200,11 +206,12 @@ export async function downloadAppDataFile(fileId) {
 
 export async function downloadDriveFile(fileId, signal, request = driveFetch, diagnostics = {}) {
   const params = new URLSearchParams({ alt: 'media', supportsAllDrives: 'true' });
-  const response = await request(`/files/${encodeURIComponent(fileId)}?${params}`, { signal, diagnostics });
+  const response = await request(`/files/${encodeURIComponent(fileId)}?${params}`, { signal, diagnostics,
+    resourceKey: diagnostics.resourceKey ? { fileId, key: diagnostics.resourceKey } : undefined });
   return readDownloadBody(response, 'blob', signal);
 }
 
-export async function downloadFileRange(fileId, start, end, signal, { requirePartial = false, diagnostics = {} } = {}) {
+export async function downloadFileRange(fileId, start, end, signal, { requirePartial = false, diagnostics = {}, resourceKey } = {}) {
   if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || end < start) {
     throw Object.assign(new DriveError('Некорректный диапазон байтов.', { code: 'invalid_range' }), { stage: 'download' });
   }
@@ -212,6 +219,7 @@ export async function downloadFileRange(fileId, start, end, signal, { requirePar
   const response = await driveFetch(`/files/${encodeURIComponent(fileId)}?${params}`, {
     headers: { Range: `bytes=${start}-${end}` },
     signal,
+    resourceKey: resourceKey ? { fileId, key: resourceKey } : undefined,
     diagnostics,
   });
   if (requirePartial && response.status === 200) {
