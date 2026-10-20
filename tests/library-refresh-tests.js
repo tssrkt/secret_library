@@ -3,9 +3,10 @@ import { createLibraryRefresher, scanStatus, scanFailureMessage } from '../js/li
 import { listFolderChildren } from '../js/drive.js';
 import { restoreAuthSession, clearAccessToken } from '../js/auth.js';
 import { INDEX_VERSION, METADATA_VERSION, FOLDER_MIME_TYPE } from '../js/config.js';
-import { prepareBuildingIndex, validateCompletedIndex } from '../js/index-build.js';
+import { canResumeBuildingIndex, prepareBuildingIndex, previousRecord, validateCompletedIndex } from '../js/index-build.js';
 import { indexPendingBooks } from '../js/metadata-indexer.js';
 import { prepareIndexingRun, createRetryEligibilityCheck } from '../js/indexing-run.js';
+import { extractBookMetadata } from '../js/book-metadata.js';
 import { sharedLibraryIndex } from '../js/shared-library.js';
 import { buildLibraryLookups } from '../js/library-view-model.js';
 import { bookCardView } from '../js/book-card.js';
@@ -26,7 +27,7 @@ const oldIndex = (count = 1) => ({ version: INDEX_VERSION, rootFolderId: 'root',
     title: `Title ${i}`, authors: ['Author'], coverFileId: `cover${i}` })),
 });
 
-export async function runLibraryRefreshTests(test, assert, equal) {
+export async function runLibraryRefreshTests(test, assert, equal, makeZip) {
   await test('incomplete or repeating Drive pages fail explicitly instead of publishing partial folders', async () => {
     const original = window.fetch;
     restoreAuthSession({ session: { getItem: () => JSON.stringify({ accessToken: 'test-only', expiresAt: Date.now() + 3600000 }) } });
@@ -146,7 +147,7 @@ export async function runLibraryRefreshTests(test, assert, equal) {
       removeCovers: async () => {},
     });
     await refresh.run({ activeIndex: old, rootFolderId: 'root' });
-    const building = prepareBuildingIndex(active, { mode: 'refresh' });
+    const building = prepareBuildingIndex(active, { mode: 'refresh', previousIndex: old });
     await indexPendingBooks(building, {
       previousIndex: active,
       extract: async () => { throw Object.assign(new Error('Updated FB2 cannot be read yet'), { code: 'invalid_xml', stage: 'parse' }); },
@@ -157,7 +158,7 @@ export async function runLibraryRefreshTests(test, assert, equal) {
       ['0', 'ready', 'Title 0', ['Author'], [], 'changed'], 'same Drive ID keeps old searchable metadata and current Drive version');
     equal([...completed.indexingErrors].map((entry) => entry.outcome), ['failed'], 'failed update remains reported as an error');
 
-    const transientBuild = prepareBuildingIndex(active, { mode: 'refresh' });
+    const transientBuild = prepareBuildingIndex(active, { mode: 'refresh', previousIndex: old });
     let paused = false;
     try {
       await indexPendingBooks(transientBuild, { previousIndex: active,
@@ -167,17 +168,130 @@ export async function runLibraryRefreshTests(test, assert, equal) {
     assert(paused, 'temporary processing error remains a retryable interruption');
     equal([pending.id, pending.metadataStatus, pending.title, pending.authors, pending.modifiedTime],
       ['0', 'pending', 'Title 0', ['Author'], 'changed'], 'temporary error keeps prior metadata and the current Drive ID/version');
+    let incompleteRejected = false;
+    try { validateCompletedIndex(transientBuild, active); } catch { incompleteRejected = true; }
+    assert(incompleteRejected, 'paused refresh cannot be committed as a complete index');
+
+    const resumed = await prepareIndexingRun(active, { mode: 'refresh', building: structuredClone(transientBuild) });
+    await indexPendingBooks(resumed, { extract: async () => {
+      throw Object.assign(new Error('Updated FB2 still cannot be parsed'), { code: 'invalid_xml', stage: 'parse' });
+    } });
+    equal(validateCompletedIndex(resumed, active).books.find((item) => item.id === '0').title, 'Title 0',
+      'refresh checkpoint retains the separate last-good metadata fallback');
 
     let refreshedAgain = null;
     const secondRefresh = createLibraryRefresher({
       scan: () => scanTree({ root: [folder('A')], A: [{ ...changed, modifiedTime: 'changed-again' }] }),
       apply: (index) => { refreshedAgain = index; }, save: async () => 'index', removeCovers: async () => {},
     });
-    await secondRefresh.run({ activeIndex: active, rootFolderId: 'root' });
+    await secondRefresh.run({ activeIndex: completed, rootFolderId: 'root' });
     const afterSecondRefresh = refreshedAgain.books.find((item) => item.id === '0');
     equal([afterSecondRefresh.id, afterSecondRefresh.metadataStatus, afterSecondRefresh.title,
       afterSecondRefresh.authors, afterSecondRefresh.modifiedTime],
-    ['0', 'pending', 'Title 0', ['Author'], 'changed-again'], 'another changed scan retains last good metadata');
+    ['0', 'pending', undefined, undefined, 'changed-again'], 'changed scan does not attach metadata to the previous file contents');
+  });
+  await test('legacy refresh checkpoint without previousBooks preserves metadata available in its active record only', async () => {
+    const previous = oldIndex();
+    previous.books[0].path = 'Root / A / 0.fb2';
+    const scanned = await scanTree({ root: [folder('A')], A: [{ ...file('0'), name: 'renamed.fb2', size: '31', modifiedTime: 'changed' }] });
+    const legacyActive = { ...scanned, books: scanned.books.map((source) => ({
+      ...previousRecord(previous.books.find((book) => book.id === source.id), source), metadataStatus: 'pending',
+    })) };
+    const legacy = prepareBuildingIndex(legacyActive, { mode: 'refresh' });
+    delete legacy.buildState.previousBooks;
+    const checkpoint = JSON.parse(JSON.stringify(legacy));
+    assert(!Object.hasOwn(checkpoint.buildState, 'previousBooks'), 'fixture matches checkpoint format before previousBooks');
+    assert(canResumeBuildingIndex(checkpoint, legacyActive, { mode: 'refresh' }), 'legacy checkpoint remains resumable');
+    const resumed = await prepareIndexingRun(legacyActive, { mode: 'refresh', building: checkpoint });
+    try {
+      await indexPendingBooks(resumed, { previousIndex: legacyActive, extract: async () => {
+        throw Object.assign(new Error('Temporary ZIP read failure'), { status: 503, retryable: true });
+      } });
+    } catch (error) { assert(error.retryable, 'temporary failure remains an interruption'); }
+    const retained = resumed.books.find((book) => book.id === '0');
+    equal([retained.id, retained.modifiedTime, retained.fileName, retained.path, retained.title, retained.authors, retained.metadataStatus],
+      ['0', 'changed', 'renamed.fb2', 'root / A / renamed.fb2', 'Title 0', ['Author'], 'pending'],
+      'legacy active entry supplies old metadata while current source fields remain authoritative');
+    let incompleteRejected = false;
+    try { validateCompletedIndex(resumed, legacyActive); } catch { incompleteRejected = true; }
+    assert(incompleteRejected, 'interrupted legacy checkpoint is not accepted as complete');
+
+    const noMetadataActive = JSON.parse(JSON.stringify(legacyActive));
+    for (const field of ['title', 'authors', 'genres', 'metadataVersion', 'entryPath']) delete noMetadataActive.books[0][field];
+    const noMetadataBuild = prepareBuildingIndex(noMetadataActive, { mode: 'refresh' });
+    const noMetadataCheckpoint = JSON.parse(JSON.stringify(noMetadataBuild));
+    assert(!Object.hasOwn(noMetadataCheckpoint.buildState, 'previousBooks'), 'second fixture also uses legacy checkpoint format');
+    assert(canResumeBuildingIndex(noMetadataCheckpoint, noMetadataActive, { mode: 'refresh' }), 'legacy checkpoint without old metadata remains resumable');
+    const noMetadataResumed = await prepareIndexingRun(noMetadataActive, { mode: 'refresh', building: noMetadataCheckpoint });
+    try {
+      await indexPendingBooks(noMetadataResumed, { previousIndex: noMetadataActive, extract: async () => {
+        throw Object.assign(new Error('Temporary ZIP read failure'), { status: 503, retryable: true });
+      } });
+    } catch (error) { assert(error.retryable, 'missing fallback does not hide the temporary error'); }
+    const unavailable = noMetadataResumed.books[0];
+    equal([unavailable.id, unavailable.modifiedTime, unavailable.fileName, unavailable.path,
+      Object.hasOwn(unavailable, 'title'), unavailable.metadataStatus],
+    ['0', 'changed', 'renamed.fb2', 'root / A / renamed.fb2', false, 'pending'],
+    'absent metadata is neither invented nor reported as restored');
+    incompleteRejected = false;
+    try { validateCompletedIndex(noMetadataResumed, noMetadataActive); } catch { incompleteRejected = true; }
+    assert(incompleteRejected, 'legacy checkpoint without a successful result remains incomplete');
+  });
+  await test('changed ZIP resumes from a temporary error and indexes the new local FB2 entry', async () => {
+    assert(typeof makeZip === 'function', 'shared ZIP fixture builder is available');
+    const encoder = new TextEncoder();
+    const fb2 = (title, firstName, lastName) => encoder.encode(`<?xml version="1.0" encoding="UTF-8"?>
+      <FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0"><description><title-info>
+      <book-title>${title}</book-title><author><first-name>${firstName}</first-name><last-name>${lastName}</last-name></author>
+      </title-info></description><body><section><p>Local ZIP fixture content.</p></section></body></FictionBook>`);
+    const oldZip = await makeZip([{ name: 'old/inside.fb2', bytes: fb2('Old ZIP Title', 'Old', 'Author') }]);
+    const newZip = await makeZip([{ name: 'new/inside.fb2', bytes: fb2('New ZIP Title', 'New', 'Author') }]);
+    const oldRequestedIds = [];
+    const oldMetadata = await extractBookMetadata({ id: 'drive-zip-id', fileName: 'book.fb2.zip', sourceType: 'zip', size: oldZip.length }, {
+      fetchRange: async (id, start, end) => {
+        oldRequestedIds.push(id);
+        return { bytes: oldZip.slice(start, end + 1), status: 206, isComplete: end + 1 >= oldZip.length };
+      },
+    });
+    equal([oldMetadata.title, oldMetadata.authors, oldMetadata.entryPath],
+      ['Old ZIP Title', ['Old Author'], 'old/inside.fb2'], 'old record is derived from parsing the old ZIP fixture');
+    const old = oldIndex(0);
+    old.books = [{ id: 'drive-zip-id', parentId: 'A', fileName: 'book.fb2.zip', sourceType: 'zip', extension: 'zip',
+      path: 'Root / A / book.fb2.zip', size: oldZip.length, modifiedTime: 'old-version', ...oldMetadata,
+      metadataStatus: 'ready', metadataVersion: METADATA_VERSION }];
+    assert(oldRequestedIds.length > 0 && oldRequestedIds.every((id) => id === 'drive-zip-id'),
+      'old ZIP fixture is also read only by its outer Drive ID');
+    let refreshed;
+    const refresh = createLibraryRefresher({
+      scan: () => scanTree({ root: [folder('A')], A: [{ id: 'drive-zip-id', name: 'book.fb2.zip', mimeType: 'application/zip',
+        size: String(newZip.length), modifiedTime: 'new-version' }] }),
+      apply: (index) => { refreshed = index; }, save: async () => 'index', removeCovers: async () => {},
+    });
+    const result = await refresh.run({ activeIndex: old, rootFolderId: 'root' });
+    const building = prepareBuildingIndex(refreshed, { mode: 'refresh', previousIndex: result.previousIndex });
+    try {
+      await indexPendingBooks(building, { previousIndex: refreshed, extract: async () => {
+        throw Object.assign(new Error('Drive temporarily unavailable'), { status: 503, retryable: true });
+      } });
+    } catch (error) { assert(error.retryable, 'first ZIP attempt is interrupted by a temporary failure'); }
+    const checkpoint = JSON.parse(JSON.stringify(building));
+    const resumed = await prepareIndexingRun(refreshed, { mode: 'refresh', building: checkpoint });
+    const requestedIds = [];
+    await indexPendingBooks(resumed, { extract: (book) => extractBookMetadata(book, {
+      fetchRange: async (id, start, end) => {
+        requestedIds.push(id);
+        return { bytes: newZip.slice(start, end + 1), status: 206, isComplete: end + 1 >= newZip.length };
+      },
+    }) });
+    const completed = validateCompletedIndex(resumed, refreshed);
+    const book = completed.books.find((item) => item.id === 'drive-zip-id');
+    equal([book.id, book.modifiedTime, book.fileName, book.title, book.authors, book.entryPath, book.metadataStatus],
+      ['drive-zip-id', 'new-version', 'book.fb2.zip', 'New ZIP Title', ['New Author'], 'new/inside.fb2', 'ready'],
+      'successful retry indexes new ZIP metadata and inner path under the external Drive ID');
+    assert(requestedIds.length > 0 && requestedIds.every((id) => id === 'drive-zip-id'),
+      'ZIP byte requests use only the outer Drive ID, never a composite inner path');
+    assert(!completed.indexingErrors.some((entry) => entry.fileId === 'drive-zip-id' && entry.outcome === 'failed'),
+      'successful retry clears the temporary error outcome');
   });
   await test('new Drive books reach the catalog despite metadata errors and ambiguous retry 404s', async () => {
     const old = oldIndex(); old.books[0].genres = [];

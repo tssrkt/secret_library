@@ -137,20 +137,7 @@ export function preserveBookMetadata(currentIndex, previousIndex) {
   for (const book of currentIndex.books) {
     const previous = previousBooks.get(book.id);
     if (!previous) continue;
-    if (!isUnchanged(book, previous)) {
-      // Keep the last good metadata while the changed Drive version is pending.
-      // Its cached cover is invalidated below because it belongs to old content.
-      const hasLastGoodMetadata = previous.metadataStatus === 'ready'
-        || (previous.metadataStatus === 'pending' && previous.metadataVersion != null
-          && Object.hasOwn(previous, 'title') && Array.isArray(previous.authors));
-      if (!hasLastGoodMetadata) continue;
-      for (const field of METADATA_FIELDS) {
-        if (['metadataStatus', 'coverFileId', 'coverMimeType'].includes(field)) continue;
-        if (Object.hasOwn(previous, field)) book[field] = previous[field];
-      }
-      book.metadataStatus = 'pending';
-      continue;
-    }
+    if (!isUnchanged(book, previous)) continue;
     for (const field of METADATA_FIELDS) {
       if (Object.hasOwn(previous, field)) book[field] = previous[field];
     }

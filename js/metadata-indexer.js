@@ -39,10 +39,13 @@ export async function indexPendingBooks(index, {
   const selected = retry ? new Set(index.buildState.selectedIds) : null;
   const pending = index.books.filter((book) => book.metadataStatus === 'pending' && (!selected || selected.has(book.id)));
   const stats = { total: pending.length, processed: 0, succeeded: 0, recovered: 0, skipped: index.books.length - pending.length, failed: 0, excluded: 0 };
-  const previousBooks = new Map((previousIndex?.books || []).filter((book) => book.metadataStatus === 'ready'
+  const previousBooks = new Map((index.buildState?.previousBooks || []).map((book) => [book.id,
+    book.metadataStatus === 'ready' ? book : { ...book, metadataStatus: 'ready' }]));
+  for (const book of (previousIndex?.books || []).filter((book) => book.metadataStatus === 'ready'
     || (book.metadataStatus === 'pending' && book.metadataVersion != null
-      && Object.hasOwn(book, 'title') && Array.isArray(book.authors)))
-    .map((book) => [book.id, book.metadataStatus === 'ready' ? book : { ...book, metadataStatus: 'ready' }]));
+      && Object.hasOwn(book, 'title') && Array.isArray(book.authors)))) {
+    if (!previousBooks.has(book.id)) previousBooks.set(book.id, book.metadataStatus === 'ready' ? book : { ...book, metadataStatus: 'ready' });
+  }
   index.indexingErrors ||= [];
   const sources = new Map((index.buildState?.sourceBooks || []).map((book) => [book.id, book]));
 
@@ -109,7 +112,12 @@ export async function indexPendingBooks(index, {
         return;
       }
       if (error?.status === 401 || error?.code === 'unauthorized' || error?.retryable) {
-        book.metadataStatus = 'pending';
+        const previous = previousBooks.get(book.id);
+        if (previous) {
+          const source = sources.get(book.id) || { ...book };
+          for (const key of Object.keys(book)) delete book[key];
+          Object.assign(book, previousRecord(previous, source), { metadataStatus: 'pending' });
+        } else book.metadataStatus = 'pending';
         onIssue(error);
         recordIndexingError(index, book, [...issues.values()], { outcome: 'interrupted' });
         error.indexingLogged = true;

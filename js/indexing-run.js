@@ -4,12 +4,12 @@ import { canResumeBuildingIndex, prepareBuildingIndex } from './index-build.js';
 import { BOOK_SOURCE_TYPES, FOLDER_MIME_TYPE } from './config.js';
 import { libraryFilePath } from './library-path.js';
 
-export async function prepareIndexingRun(active, { mode, building = null, scan = scanLibrary, signal, onScan = () => {} }) {
+export async function prepareIndexingRun(active, { mode, building = null, scan = scanLibrary, signal, onScan = () => {}, previousIndex = null }) {
   if (!['full', 'retry', 'refresh'].includes(mode)) throw new Error('Unknown indexing mode.');
   const scannedIndex = mode === 'full' ? await scan(active.rootFolderId, onScan, { signal }) : undefined;
   signal?.throwIfAborted();
   return canResumeBuildingIndex(building, active, { mode, scannedIndex }) ? building
-    : prepareBuildingIndex(active, { mode, scannedIndex });
+    : prepareBuildingIndex(active, { mode, scannedIndex, previousIndex });
 }
 
 export function createRetryEligibilityCheck(index, { getFile = getLibraryFile, signal } = {}) {

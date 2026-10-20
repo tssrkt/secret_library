@@ -139,7 +139,7 @@ async function rebuildIndex() {
     ui.showStats(currentIndex.folders.length, currentIndex.books.length);
     void publishLibrary(result.index).catch((error) => ui.showError(`Не удалось обновить каталог для друзей: ${socialError(error)}`));
     ui.setStatus(`Библиотека обновлена: ${result.index.books.length.toLocaleString('ru-RU')} книг.`);
-    await runMetadataIndexing({ refreshOnly: true });
+    await runMetadataIndexing({ refreshOnly: true, previousIndex: result.previousIndex });
   } catch (error) {
     reportOperationError(currentIndex || {}, error, error.stage || 'list', error.folderId || ROOT_FOLDER_ID);
     if (error.status === 401 || error.code === 'unauthorized') ui.showError(readableError(error));
@@ -150,7 +150,7 @@ async function rebuildIndex() {
   }
 }
 
-async function runMetadataIndexing({ retryErrors = false, refreshOnly = false, resume = false } = {}) {
+async function runMetadataIndexing({ retryErrors = false, refreshOnly = false, resume = false, previousIndex = null } = {}) {
   if (!currentIndex || metadataController || (libraryRefresher.running && !refreshOnly)) return;
   if (buildingIndex && !resume) {
     showUnfinishedOperation();
@@ -175,6 +175,7 @@ async function runMetadataIndexing({ retryErrors = false, refreshOnly = false, r
   try {
     buildingIndex = resume ? buildingIndex : await prepareIndexingRun(activeIndex, {
       mode, building: buildingIndex, signal: metadataController.signal,
+      previousIndex,
       onScan: (stats) => ui.setStatus(scanStatus(stats)),
     });
     prepared = true;

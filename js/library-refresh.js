@@ -31,7 +31,7 @@ export function createLibraryRefresher({ scan = scanLibrary, save, apply, remove
         const savedId = await save(index, fileId);
         apply(index);
         const cleanup = obsolete.length ? Promise.resolve().then(() => removeCovers(obsolete)).catch(onCleanupError) : Promise.resolve();
-        return { index, fileId: savedId, cleanup };
+        return { index, fileId: savedId, previousIndex: activeIndex, cleanup };
       } finally { running = false; }
     },
   };

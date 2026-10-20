@@ -12,7 +12,7 @@ function activeSignature(index) {
 }
 
 export function prepareBuildingIndex(activeIndex, { retryErrors = false, mode = retryErrors ? 'retry' : 'incremental', scannedIndex,
-  now = () => new Date().toISOString() } = {}) {
+  previousIndex = null, now = () => new Date().toISOString() } = {}) {
   if (mode === 'full' && (!scannedIndex || scannedIndex.rootFolderId !== activeIndex.rootFolderId)) throw new Error('Full reindex requires a fresh scan of the same root.');
   const building = cloneIndex(mode === 'full' ? scannedIndex : activeIndex);
   const previousFailures = failedBookIds(activeIndex);
@@ -44,6 +44,9 @@ export function prepareBuildingIndex(activeIndex, { retryErrors = false, mode = 
     bookIds: building.books.map((book) => book.id),
     removedBookIds: [],
     ...(mode === 'full' ? { sourceBooks: cloneIndex(scannedIndex.books) } : {}),
+    ...(mode === 'refresh' && previousIndex ? { previousBooks: cloneIndex(previousIndex.books.filter((book) => selectedIds.includes(book.id)
+      && (book.metadataStatus === 'ready' || (book.metadataStatus === 'pending' && book.metadataVersion != null
+        && Object.hasOwn(book, 'title') && Array.isArray(book.authors))))) } : {}),
     total,
     retryErrors: mode === 'retry',
     progress: { processed: 0, succeeded: 0, recovered: 0, failed: 0, excluded: 0 },
@@ -101,12 +104,15 @@ export function validateCompletedIndex(candidate, activeIndex, manifest = candid
     }
     if (!['ready', 'error'].includes(book.metadataStatus)) throw new Error('Built index is not complete.');
     const oldBook = oldBooks.get(book.id);
-    const previousReady = oldBook?.metadataStatus === 'ready' ? oldBook
+    const fallbackBook = sources.get(book.id);
+    const previousBook = oldBook?.metadataStatus === 'ready' ? oldBook
       : oldBook?.metadataStatus === 'pending' && oldBook.metadataVersion != null
         && Object.hasOwn(oldBook, 'title') && Array.isArray(oldBook.authors)
         ? { ...oldBook, metadataStatus: 'ready' } : null;
+    const previousReady = previousBook || (manifest?.mode === 'refresh'
+      ? (manifest.previousBooks || []).find((item) => item.id === book.id) || null : null);
     const unchangedPrevious = preservedIds.has(book.id) && previousReady
-      && JSON.stringify(book) === JSON.stringify(previousRecord(previousReady, sources.get(book.id)));
+      && JSON.stringify(book) === JSON.stringify(previousRecord(previousReady, fallbackBook || oldBook));
     if (preservedIds.has(book.id) && !unchangedPrevious) throw new Error('Preserved index entry differs from the previous good record.');
     if (book.metadataStatus === 'ready' && book.metadataVersion !== METADATA_VERSION && !unchangedPrevious) {
       throw new Error('Built index contains stale metadata.');
