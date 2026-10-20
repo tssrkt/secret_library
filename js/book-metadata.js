@@ -19,10 +19,13 @@ async function dispatchZip(book, options) {
   catch (error) { error.containerType ||= 'ZIP'; throw error; }
   if (selected.description) return { ...parseFb2Metadata(selected.description, options.Parser), entryPath: selected.entryPath, innerFormat: 'fb2',
     metadataWarning: selected.metadataWarning, metadataWarningDetails: { coverSkipped: true, reason: 'large_fb2_zip_streamed_description' } };
-  const innerBook = { ...book, id: `${book.id}:${selected.entryPath}`, fileName: selected.entryPath,
+  const innerBook = { ...book, fileName: selected.entryPath,
     sourceType: selected.innerFormat, extension: selected.innerFormat, size: selected.bytes.length };
   try {
-    const metadata = await dispatch(innerBook, { ...options, fetchRange: memoryRanges(selected.bytes) });
+    const metadata = await dispatch(innerBook, { ...options,
+      downloadFile: async () => new Blob([selected.bytes]),
+      fetchRange: memoryRanges(selected.bytes),
+    });
     if (metadata.binaryRecovery) Object.assign(metadata.binaryRecovery, { containerType: 'ZIP', entryPath: selected.entryPath, innerFormat: selected.innerFormat });
     return { ...metadata, entryPath: selected.entryPath, innerFormat: selected.innerFormat,
       ...(selected.metadataWarning ? { metadataWarning: selected.metadataWarning, metadataWarningDetails: selected.metadataWarningDetails } : {}) };

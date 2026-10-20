@@ -111,6 +111,48 @@ export async function runIndexingErrorTests(test, assert, equal, makeZip) {
       equal(index.indexingErrors[0].retryResult, 'success-after-backoff', 'recovered outcome');
     });
   });
+  await test('small FB2 inside ZIP is parsed from extracted bytes without a synthetic Drive download', async () => {
+    const id = 'outer-zip';
+    const bytes = await makeZip([{ name: 'inside.fb2', bytes: new TextEncoder().encode(fb2) }]);
+    await withDrive((call) => {
+      equal(decodeURIComponent(call.fileId), id, 'only the outer Drive ID is requested');
+      return new Response(bytes);
+    }, async (calls) => {
+      const index = { books: [{ ...pendingBook(id, bytes.length), sourceType: 'zip', fileName: 'archive.zip' }] };
+      const stats = await indexPendingBooks(index);
+      equal([stats.succeeded, stats.failed, calls.length, index.books[0].title, index.books[0].authors,
+        index.books[0].entryPath, index.books[0].innerFormat], [1, 0, 1, 'Good', ['Author'], 'inside.fb2', 'fb2'],
+      'inner FB2 metadata and archive entry are indexed');
+      equal(calls.map((call) => decodeURIComponent(call.fileId)), [id], 'inner entry never causes a Drive request');
+      equal(index.books[0].id, id, 'index retains the external ZIP Drive ID');
+    });
+  });
+  await test('outer ZIP 404 preserves its previous ready record and never requests an inner ID', async () => {
+    const id = 'existing-zip';
+    const old = { ...pendingBook(id, 900), sourceType: 'zip', fileName: 'archive.zip', metadataStatus: 'ready',
+      metadataVersion: METADATA_VERSION, title: 'Prior title', authors: ['Prior author'], genres: ['sf'],
+      annotation: 'Prior annotation', preview: 'Prior preview', entryPath: 'old.fb2', innerFormat: 'fb2' };
+    const active = { version: 4, rootFolderId: 'root', folders: [], books: [old] };
+    const building = structuredClone(active);
+    building.books[0].metadataStatus = 'pending';
+    await withDrive(() => new Response('', { status: 404 }), async (calls) => {
+      const stats = await indexPendingBooks(building, { previousIndex: active, concurrency: 1 });
+      equal([stats.failed, calls.length, decodeURIComponent(calls[0].fileId)], [1, 1, id], '404 is for the outer Drive file only');
+      equal(building.books[0], old, 'previous ready metadata and the original Drive ID survive the failed refresh');
+      equal([building.indexingErrors[0].status, building.indexingErrors[0].previousEntryPreserved,
+        building.indexingErrors[0].fileId], [404, true, id], '404 remains diagnostic and does not mean deletion');
+    });
+  });
+  await test('outer ZIP 404 without a prior record remains an error, not fabricated ready metadata', async () => {
+    const id = 'new-zip';
+    await withDrive(() => new Response('', { status: 404 }), async (calls) => {
+      const index = { books: [{ ...pendingBook(id), sourceType: 'zip', fileName: 'new.zip' }] };
+      const stats = await indexPendingBooks(index);
+      equal([stats.failed, calls.length, decodeURIComponent(calls[0].fileId)], [1, 1, id], 'no synthetic inner request');
+      equal([index.books[0].id, index.books[0].metadataStatus, index.books[0].title,
+        index.indexingErrors[0].previousEntryPreserved], [id, 'error', undefined, false], 'new failed record stays visible and honest');
+    });
+  });
   await test('stale ZIP size reproduces 416 and full retry resets all ZIP offsets', async () => {
     const bytes = await makeZip([{ name: 'inside.fb2', bytes: new TextEncoder().encode(fb2) }]);
     await withDrive((call) => call.range ? new Response('', { status: 416, headers: { 'Content-Range': `bytes */${bytes.length}` } }) : new Response(bytes), async (calls) => {
