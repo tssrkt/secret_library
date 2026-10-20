@@ -61,7 +61,7 @@ export async function runDriveErrorJournalTests(test, assert, equal) {
     controller.reset(); root.remove();
   });
 
-  await test('traversal supplies path to errors without per-file lookups and refresh removes deleted failures', async () => {
+  await test('traversal supplies paths and an ambiguous retry 404 preserves the indexed failure', async () => {
     const calls = [];
     const folder = (id, name) => ({ id, name, mimeType: 'application/vnd.google-apps.folder' });
     const children = { root: [folder('author', 'Чехов')], author: [folder('stories', 'Рассказы')],
@@ -77,6 +77,8 @@ export async function runDriveErrorJournalTests(test, assert, equal) {
       getFile: async () => { throw Object.assign(new Error('Removed'), { status: 404 }); },
     }), extract: async () => { throw new Error('Deleted book must not download'); } });
     const completed = validateCompletedIndex(building, index);
-    equal([completed.books.length, failedBookIds(completed).size], [0, 0], 'retry removal is no longer failed');
+    equal([completed.books.map((book) => book.id), failedBookIds(completed).size,
+      building.buildState.removedBookIds], [['broken'], 1, []],
+    '404 without positive deletion evidence retains the book and its actionable failure');
   });
 }

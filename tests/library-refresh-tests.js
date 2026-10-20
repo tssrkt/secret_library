@@ -1,4 +1,4 @@
-import { scanLibrary } from '../js/library-tree.js';
+import { preserveBookMetadata, scanLibrary } from '../js/library-tree.js';
 import { createLibraryRefresher, scanStatus, scanFailureMessage } from '../js/library-refresh.js';
 import { listFolderChildren } from '../js/drive.js';
 import { restoreAuthSession, clearAccessToken } from '../js/auth.js';
@@ -10,6 +10,7 @@ import { sharedLibraryIndex } from '../js/shared-library.js';
 import { buildLibraryLookups } from '../js/library-view-model.js';
 import { bookCardView } from '../js/book-card.js';
 import { searchBooks } from '../js/book-search.js';
+import { failedBookIds } from '../js/indexing-state.js';
 
 const folder = (id, name = id) => ({ id, name, mimeType: FOLDER_MIME_TYPE });
 const file = (id) => ({ id, name: `${id}.fb2`, size: '17', modifiedTime: 'same' });
@@ -207,6 +208,7 @@ export async function runLibraryRefreshTests(test, assert, equal) {
     assert(ownBooks.some((book) => book.id === 'new-error'), 'owner catalog keeps failed book in folder list');
     equal(bookCardView(ownBooks.find((book) => book.id === 'new-error')).title, 'new-error', 'failed book card uses its filename instead of hiding the entry');
     equal(searchBooks(ownBooks, { query: 'new-error' }).map((book) => book.id), ['new-error'], 'failed book remains searchable by filename');
+    equal(searchBooks(ownBooks, { title: 'New Good', author: 'New Author' }).map((book) => book.id), ['new-good'], 'successful new metadata is searchable by title and author');
 
     const retry = await prepareIndexingRun(completed, { mode: 'retry' });
     await indexPendingBooks(retry, { previousIndex: completed, extract: async () => {
@@ -216,6 +218,39 @@ export async function runLibraryRefreshTests(test, assert, equal) {
     equal(retried.books.map((book) => book.id).sort(), ['0', 'new-error', 'new-good'], 'ambiguous retry response does not remove books');
     equal(retried.books.find((book) => book.id === '0').title, 'Title 0', 'existing metadata remains intact after retry failure');
     equal(retry.buildState.removedBookIds, [], 'no removal without positive ineligibility evidence');
+
+    const retryAgain = await prepareIndexingRun(retried, { mode: 'retry' });
+    await indexPendingBooks(retryAgain, { previousIndex: retried, extract: async (book) => ({
+      title: 'Recovered New Book', authors: ['Retry Author'], genres: [],
+    }) });
+    const recovered = validateCompletedIndex(retryAgain, retried);
+    equal([recovered.books.map((book) => book.id).sort(), recovered.books.find((book) => book.id === 'new-error').metadataStatus,
+      searchBooks(recovered.books, { title: 'Recovered New Book', author: 'Retry Author' }).map((book) => book.id),
+      failedBookIds(recovered).has('new-error')],
+    [['0', 'new-error', 'new-good'], 'ready', ['new-error'], false], 'successful retry restores search and clears its failure while retaining all books');
+  });
+  await test('new book with metadata failure survives retry when Drive omits parent metadata', async () => {
+    const scanned = await scanTree({ root: [folder('A')], A: [file('new-book')] });
+    const active = preserveBookMetadata(scanned, oldIndex(0));
+    const firstRun = prepareBuildingIndex(active, { mode: 'refresh' });
+    await indexPendingBooks(firstRun, { previousIndex: active, extract: async () => {
+      throw Object.assign(new Error('FB2 parse failed'), { code: 'invalid_xml', stage: 'parse' });
+    } });
+    const errored = validateCompletedIndex(firstRun, active);
+    equal([errored.books.map((book) => book.id), errored.books[0]?.metadataStatus,
+      failedBookIds(errored).has('new-book')], [['new-book'], 'error', true],
+    'discovered new book is kept as a retryable catalog entry after parsing fails');
+
+    const retry = await prepareIndexingRun(errored, { mode: 'retry' });
+    const stats = await indexPendingBooks(retry, { previousIndex: errored,
+      checkEligibility: createRetryEligibilityCheck(retry, { getFile: async () => ({ id: 'new-book', name: 'new-book.fb2' }) }),
+      extract: async () => { throw new Error('must not download before eligibility metadata is complete'); },
+    });
+    const retried = validateCompletedIndex(retry, errored);
+    equal([stats.excluded, retry.buildState.removedBookIds, retried.books.map((book) => book.id),
+      retried.books[0]?.metadataStatus, failedBookIds(retried).has('new-book')],
+    [0, [], ['new-book'], 'error', true],
+    'incomplete ancestry is an indexing error, not confirmation that the scanned book was removed');
   });
   await test('scanned per-file resource key reaches Drive download and new book catalog entry', async () => {
     const originalFetch = window.fetch;

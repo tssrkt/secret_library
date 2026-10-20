@@ -123,7 +123,7 @@ try {
   await evaluate(`window.testUi.updateMetadataActions({books: Array.from({length: 303}, (_, i) => ({id: String(i), metadataStatus: 'error'})), lastFullScan: {totalEligible: 9257}});
     document.querySelector('#metadata-button').click(); document.querySelector('#retry-metadata-button').click();`);
   assert.deepEqual(await evaluate('window.indexActions'), ['full', 'retry'], 'menu actions remain independent');
-  assert.equal(await evaluate("document.querySelector('#metadata-button').textContent"), `Переиндексировать все книги (${(9257).toLocaleString('ru-RU')})`);
+  assert.equal(await evaluate("document.querySelector('#metadata-button').textContent"), `Переиндексировать все книги (${(303).toLocaleString('ru-RU')})`);
   assert.equal(await evaluate("document.querySelector('#retry-metadata-button').textContent"), 'Повторить ошибки (303)');
   await evaluate('window.testUi.updateMetadataActions({books: []})');
   assert.equal(await evaluate("document.querySelector('#metadata-button').hidden"), false, 'full available without errors');

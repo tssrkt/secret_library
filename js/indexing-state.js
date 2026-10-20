@@ -14,7 +14,7 @@ export function indexingCounts(index) {
   const warnings = new Set((index.indexingErrors || []).filter((entry) => entry.outcome === 'recovered').map((entry) => entry.fileId));
   const ready = index.books.filter((book) => book.metadataStatus === 'ready' && !failed.has(book.id));
   const recoveredBooks = ready.filter((book) => warnings.has(book.id) || ['binary_corruption_recovered', 'metadata_only_recovered'].includes(book.metadataWarning)).length;
-  return { totalEligibleBooks: Number.isInteger(index.lastFullScan?.totalEligible) ? index.lastFullScan.totalEligible : null,
+  return { totalEligibleBooks: Array.isArray(index.books) ? index.books.length : 0,
     failedBooks: failed.size, recoveredBooks, successBooks: ready.length - recoveredBooks };
 }
 
