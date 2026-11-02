@@ -4,15 +4,17 @@ import { libraryFilePath } from './library-path.js';
 
 export function classifyLibraryItem(file) {
   if (file.mimeType === FOLDER_MIME_TYPE) return 'folder';
-  // A ZIP by itself is not a book.  Only the explicit .fb2.zip convention is
-  // a supported container, so ordinary archives never enter the error log.
-  if (/\.fb2\.zip$/i.test(file.name)) return 'zip';
+  // Inspect every ZIP archive; the metadata pipeline selects supported book entries.
+
+
   const extension = /\.(fb2|epub|mobi)$/i.exec(file.name)?.[1].toLowerCase();
   if (extension) return extension;
+  // Inspect every ZIP archive; the metadata pipeline selects supported book entries.
+  if (/\.zip$/i.test(file.name) || ['application/zip', 'application/x-zip-compressed'].includes(file.mimeType)) return 'zip';
   if (/\.(azw3?|pdf|djvu|docx?|txt)$/i.test(file.name)) return 'other';
   if (file.mimeType === 'application/epub+zip') return 'epub';
   if (file.mimeType === 'application/x-mobipocket-ebook') return 'mobi';
-  if (/\.zip$/i.test(file.name) || ['application/zip', 'application/x-zip-compressed'].includes(file.mimeType)) return 'other';
+
   return 'other';
 }
 

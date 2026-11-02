@@ -78,8 +78,12 @@ export async function runBookFormatTests(test, assert, equal, makeZip) {
     for (const type of ['epub', 'mobi']) equal(classifyLibraryItem({ name: `book.${type}`, mimeType: 'application/zip' }), type, 'generic MIME cannot steal new format');
     equal(classifyLibraryItem({ name: 'no extension', mimeType: 'application/epub+zip' }), 'epub', 'EPUB MIME');
     equal(classifyLibraryItem({ name: 'no extension', mimeType: 'application/x-mobipocket-ebook' }), 'mobi', 'MOBI MIME');
-    equal(classifyLibraryItem({ name: 'archive.zip', mimeType: 'application/zip' }), 'other', 'ordinary ZIP ignored');
-    equal(classifyLibraryItem({ name: 'book.fb2.zip', mimeType: 'application/zip' }), 'zip', 'explicit FB2 ZIP supported');
+    equal(classifyLibraryItem({ name: 'archive.zip', mimeType: 'application/zip' }), 'zip', 'arbitrary ZIP is inspected');
+    equal(classifyLibraryItem({ name: 'book.fb2.zip', mimeType: 'application/zip' }), 'zip', 'dot FB2 ZIP suffix supported');
+    equal(classifyLibraryItem({ name: 'rejchel_svejbi_52_upryamie_zhenshini_uchenie_63839bf6102dd_fb2.zip', mimeType: 'application/zip' }), 'zip', 'underscore FB2 ZIP suffix supported');
+    equal(classifyLibraryItem({ name: 'book-final-fb2.zip', mimeType: 'application/octet-stream' }), 'zip', 'hyphen FB2 ZIP suffix supported');
+    equal(classifyLibraryItem({ name: 'BOOK.ZIP', mimeType: 'application/octet-stream' }), 'zip', 'ZIP extension is case-insensitive');
+    equal(classifyLibraryItem({ name: 'no extension', mimeType: 'application/zip' }), 'zip', 'ZIP MIME is inspected without extension');
     for (const extension of ['azw', 'azw3', 'pdf', 'txt', 'docx', 'djvu']) equal(classifyLibraryItem({ name: `book.${extension}` }), 'other', 'no other formats');
     equal(classifyLibraryItem({ name: 'book.azw3', mimeType: 'application/x-mobipocket-ebook' }), 'other', 'AZW3 not added through MIME');
   });
