@@ -540,6 +540,10 @@ dd { margin: 0; font-weight: 750; font-variant-numeric: tabular-nums; }
 .notifications-panel li + li { margin-top: 1rem; border-top: 1px solid #e5dbce; padding-top: .75rem; }
 .notifications-panel p { overflow-wrap: anywhere; }
 .notifications-panel small, .friends-table small { color: #6a6359; }
+.app-footer { display: flex; justify-content: center; gap: 1.25rem; flex-wrap: wrap; margin-top: 2rem; color: #6a6359; font-size: .9rem; }
+.app-footer a { color: inherit; text-underline-offset: .15em; }
+.app-footer a:hover { color: #342c24; }
+
 .social-section { margin-top: 2rem; }
 .social-share-form { display: flex; align-items: stretch; gap: .75rem; flex-wrap: wrap; }
 .social-share-form .settings-save-button { height: auto; min-height: 34px; }
