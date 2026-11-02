@@ -586,3 +586,32 @@ dd { margin: 0; font-weight: 750; font-variant-numeric: tabular-nums; }
   .app-header { align-items: flex-start; flex-direction: column; }
   .account-actions { align-self: flex-end; }
 }
+
+.root-folder-dialog {
+  display: flex;
+  width: min(620px, 100%);
+  max-height: min(720px, 90vh);
+  flex-direction: column;
+  gap: .75rem;
+  padding: 1.2rem;
+  border: 1px solid #d6c9b8;
+  border-radius: .7rem;
+  background: #fffdf9;
+  box-shadow: 0 10px 32px rgb(45 32 20 / 20%);
+}
+.root-folder-dialog header, .root-folder-dialog footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: .75rem;
+}
+.root-folder-dialog h2 { margin: 0; font-size: 1.2rem; }
+.root-folder-description, .root-folder-status { margin: 0; color: #6a6359; }
+.root-folder-breadcrumb { display: flex; flex-wrap: wrap; gap: .35rem; align-items: center; }
+.root-folder-crumb { padding: .2rem .35rem; color: #4f3825; background: transparent; }
+.root-folder-crumb:disabled { color: #746b60; cursor: default; }
+.root-folder-list { min-height: 7rem; max-height: 48vh; overflow: auto; margin: 0; padding: .25rem; list-style: none; border: 1px solid #e5dbce; border-radius: .4rem; }
+.root-folder-entry { width: 100%; padding: .65rem .75rem; color: #342c24; background: transparent; text-align: left; font-weight: 500; overflow-wrap: anywhere; }
+.root-folder-entry:hover, .root-folder-entry:focus-visible { background: #f2eadf; }
+.root-folder-dialog footer { justify-content: flex-end; flex-wrap: wrap; }
+.root-folder-dialog button:focus-visible { outline: 2px solid #8a623b; outline-offset: 2px; }

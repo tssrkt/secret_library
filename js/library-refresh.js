@@ -20,11 +20,11 @@ export function createLibraryRefresher({ scan = scanLibrary, save, apply, remove
   let running = false;
   return {
     get running() { return running; },
-    async run({ activeIndex, rootFolderId, fileId }) {
+    async run({ activeIndex, rootFolderId, rootResourceKey = '', fileId }) {
       if (running) return null;
       running = true;
       try {
-        const scanned = await scan(rootFolderId, onProgress);
+        const scanned = await scan(rootFolderId, onProgress, { rootResourceKey });
         const index = preserveBookMetadata(scanned, activeIndex);
         validateIndex(index, rootFolderId);
         const obsolete = staleCoverFileIds(index, activeIndex);

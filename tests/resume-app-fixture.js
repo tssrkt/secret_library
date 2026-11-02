@@ -43,7 +43,7 @@ const client = { requestAccessToken(options) {
     : client.callback({ access_token: 'fixture-renewed', expires_in: 3600 }));
 } };
 window.google = { accounts: { oauth2: { initTokenClient: () => client } } };
-const files = new Map([['active-index', active]]);
+const files = new Map([['active-index', active], ['user-settings', { version: 1, activeRootFolderId: ROOT_FOLDER_ID, activeRootFolderResourceKey: '' }]]);
 const realFetch = window.fetch;
 window.fetch = async (input, options = {}) => {
   const url = new URL(input, location.href);
@@ -65,6 +65,7 @@ window.fetch = async (input, options = {}) => {
   }
   if (id && files.has(id)) return json(files.get(id));
   const query = url.searchParams.get('q') || '';
+  if (query.includes("name = 'secret-library-user-settings.json'")) return json({ files: [{ id: 'user-settings' }] });
   if (query.includes("name = 'secret-library-index.json'")) return json({ files: [{ id: 'active-index' }] });
   return json({ files: [] });
 };

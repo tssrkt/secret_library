@@ -46,6 +46,7 @@ const elements = {
   signIn: document.querySelector('#sign-in-button'),
   home: document.querySelector('#library-home-link'),
   refresh: document.querySelector('#refresh-button'),
+  changeRootFolder: document.querySelector('#change-root-folder-button'),
   metadata: document.querySelector('#metadata-button'),
   retryMetadata: document.querySelector('#retry-metadata-button'),
   stop: document.querySelector('#stop-button'),
@@ -132,6 +133,7 @@ export function bindActions(actions) {
   });
   elements.signIn.addEventListener('click', actions.signIn);
   elements.refresh.addEventListener('click', actions.refresh);
+  elements.changeRootFolder?.addEventListener('click', () => actions.changeRootFolder?.());
   elements.metadata.addEventListener('click', actions.indexMetadata);
   elements.retryMetadata.addEventListener('click', actions.retryMetadata);
   elements.stop.addEventListener('click', actions.stopMetadata);
@@ -144,6 +146,7 @@ export function setAuthorized(authorized) {
   if (controls) controls.hidden = !authorized;
   document.querySelector('.app-header')?.classList.toggle('social-header', authorized);
   if (elements.settings) elements.settings.disabled = !authorized;
+  if (elements.changeRootFolder) elements.changeRootFolder.disabled = !authorized;
   elements.signIn.hidden = authorized;
   elements.userControls.hidden = !authorized;
   elements.signOut.hidden = !authorized;
@@ -163,6 +166,7 @@ export function setAuthorized(authorized) {
 export function setBusy(busy) {
   elements.signIn.disabled = busy;
   elements.refresh.disabled = busy;
+  if (elements.changeRootFolder) elements.changeRootFolder.disabled = busy;
   elements.signOut.disabled = busy;
   elements.retry.disabled = busy;
   elements.metadata.disabled = busy;

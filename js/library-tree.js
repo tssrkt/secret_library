@@ -19,7 +19,7 @@ export function classifyLibraryItem(file) {
 }
 
 export async function scanLibrary(rootFolderId, onProgress = () => {}, {
-  signal, getRoot = getFolder, listChildren = listFolderChildren, heartbeatMs = 1000, now = Date.now,
+  signal, rootResourceKey = '', getRoot = getFolder, listChildren = listFolderChildren, heartbeatMs = 1000, now = Date.now,
 } = {}) {
   const controller = new AbortController();
   const scanSignal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
@@ -94,7 +94,7 @@ export async function scanLibrary(rootFolderId, onProgress = () => {}, {
     scanSignal.throwIfAborted();
     emit();
     let root;
-    try { root = await getRoot(rootFolderId, { signal: scanSignal, diagnostics: diagnostics({ id: rootFolderId }) }); }
+    try { root = await getRoot(rootFolderId, { signal: scanSignal, resourceKey: rootResourceKey, diagnostics: diagnostics({ id: rootFolderId }) }); }
     catch (error) { throw folderError(error, { id: rootFolderId }); }
     scanSignal.throwIfAborted();
     const rootFolder = { id: root.id, parentId: null, name: root.name,

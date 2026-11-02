@@ -1,4 +1,4 @@
-import { loadUserSettings, saveUserSettings, normalizeUserSettings, sharingFolders } from '../js/user-settings.js';
+import { loadUserSettings, saveUserSettings, normalizeUserSettings, sharingFolders, loadRootFolderPreference, loadRootFolderResourceKey, saveRootFolderPreference } from '../js/user-settings.js';
 import { createUserSettingsController } from '../js/user-settings-ui.js';
 import { USER_SETTINGS_FILE_NAME, INDEX_VERSION, METADATA_VERSION } from '../js/config.js';
 import { restoreAuthSession, clearAccessToken } from '../js/auth.js';
@@ -42,7 +42,7 @@ export async function runUserSettingsTests(test, assert, equal) {
     const initial = await loadUserSettings(index, api);
     equal(initial, { fileId: null, settings: normalizeUserSettings(null, index) }, 'missing file defaults');
     const fileId = await saveUserSettings(settings(), index, initial.fileId, api);
-    equal(file, { version: 1, rootFolderId: 'root', sharing: { excludedFolderIds: ['sf'] }, folderNotes: {} }, 'current settings include normalized folder notes');
+    equal(file, { version: 1, rootFolderId: 'root', activeRootFolderId: null, activeRootFolderResourceKey: '', sharing: { excludedFolderIds: ['sf'] }, folderNotes: {} }, 'current settings include normalized folder notes');
     const loaded = await loadUserSettings(index, api);
     equal(loaded.fileId, fileId, 'load preserves file ID');
     await saveUserSettings(loaded.settings, index, loaded.fileId, api);
@@ -60,6 +60,21 @@ export async function runUserSettingsTests(test, assert, equal) {
     equal(JSON.stringify(index), before, 'storage never mutates index or book metadata');
   });
 
+  await test('active root folder preference is stored in the existing appData settings file', async () => {
+    let file = null;
+    const api = {
+      list: async () => file ? [{ id: 'settings-id' }] : [],
+      download: async () => ({ json: async () => file }),
+      create: async (_name, json) => { file = JSON.parse(json); return { id: 'settings-id' }; },
+      update: async (_id, json) => { file = JSON.parse(json); return { id: 'settings-id' }; },
+    };
+    equal(await loadRootFolderPreference(api), null, 'first-time users must select their own root folder');
+    await saveRootFolderPreference('chosen-folder', 'folder-key', api);
+    equal(await loadRootFolderPreference(api), 'chosen-folder', 'selected root survives reload');
+    equal(await loadRootFolderResourceKey(api), 'folder-key', 'resource key survives reload');
+    await saveUserSettings(normalizeUserSettings({ ...file, folderNotes: { chosen: 'note' } }, makeIndex()), makeIndex(), 'settings-id', api);
+    equal([file.activeRootFolderId, file.activeRootFolderResourceKey], ['chosen-folder', 'folder-key'], 'ordinary settings saves preserve root and resource key');
+  });
   await test('settings page preserves drafts on failure, prevents duplicate writes and discards unsaved changes', async () => {
     const container = document.createElement('div');
     document.body.append(container);

@@ -2,8 +2,7 @@ import {
   clearAccessToken, clearPersistedAuth, createAuthAttemptGuard,
   initializeAuth, persistAuthSession, recoverAuthSession, requestAccessToken,
 } from './auth.js';
-import { ROOT_FOLDER_ID } from './config.js';
-import { downloadDriveFile, getCurrentDriveUser } from './drive.js';
+import { downloadDriveFile, getCurrentDriveUser, getFolder, listFolderChildren } from './drive.js';
 import { removeCovers, removeOrphanCovers, storeCover } from './cover-cache.js';
 import {
   deleteBuildingIndex, IndexError, loadBuildingIndex, loadIndex, readIndexFile,
@@ -22,7 +21,8 @@ import { getAccessToken } from './auth.js';
 import { checkpointKey, loadCheckpoint, saveCheckpoint, deleteCheckpoint, commitCheckpoint } from './indexing-checkpoint.js';
 import { createLibraryTabs } from './library-tabs.js';
 import { createLibrarySelection } from './library-selection.js';
-import { loadUserSettings } from './user-settings.js';
+import { loadUserSettings, loadRootFolderPreference, loadRootFolderResourceKey, saveRootFolderPreference } from './user-settings.js';
+import { chooseRootFolder } from './root-folder-picker.js';
 import { firebaseConfigured } from './firebase-config.js';
 
 function reportOperationError(index, error, stage, fileId = '', fileName = '') {
@@ -42,6 +42,8 @@ let buildingIndexFileId = null;
 let metadataController = null;
 let localCheckpointKey = null;
 let authorizedOwner = null;
+let activeRootFolderId = null;
+let activeRootFolderResourceKey = '';
 let reconnectRequired = false;
 let refreshCommitUncertain = false;
 const authAttempts = createAuthAttemptGuard();
@@ -138,6 +140,7 @@ const libraryRefresher = createLibraryRefresher({
 });
 
 async function rebuildIndex() {
+  if (!activeRootFolderId) { ui.showError('Сначала выберите корневую папку Google Drive через личное меню.'); return; }
   if (refreshCommitUncertain) {
     ui.showError('Не удалось подтвердить, сохранено ли обновление. Перезагрузите страницу, чтобы сверить индекс и checkpoint перед продолжением.');
     return;
@@ -148,7 +151,7 @@ async function rebuildIndex() {
   ui.setBusy(true);
   ui.setStatus('Сканирование библиотеки… Обработано папок: 0. В очереди: 1. Найдено книг: 0.');
   try {
-    const result = await libraryRefresher.run({ activeIndex: currentIndex, rootFolderId: ROOT_FOLDER_ID, fileId: indexFileId });
+    const result = await libraryRefresher.run({ activeIndex: currentIndex, rootFolderId: activeRootFolderId, rootResourceKey: activeRootFolderResourceKey, fileId: indexFileId });
     if (!result) return;
     indexFileId = result.fileId;
     shareableIndex = result.index;
@@ -157,7 +160,7 @@ async function rebuildIndex() {
     ui.setStatus(`Библиотека обновлена: ${result.index.books.length.toLocaleString('ru-RU')} книг.`);
     if (buildingIndex) await runMetadataIndexing({ resume: true });
   } catch (error) {
-    reportOperationError(currentIndex || {}, error, error.stage || 'list', error.folderId || ROOT_FOLDER_ID);
+    reportOperationError(currentIndex || {}, error, error.stage || 'list', error.folderId || activeRootFolderId);
     if (refreshCommitUncertain) ui.showError('Не удалось подтвердить, сохранено ли обновление. Перезагрузите страницу; до сверки индекса обработка заблокирована.');
     else if (error.status === 401 || error.code === 'unauthorized') ui.showError(readableError(error));
     else ui.showError(error.stage === 'index-write' ? readableError(error) : scanFailureMessage(error), { canRebuild: true });
@@ -327,12 +330,26 @@ async function afterAuthorization() {
     selection.reset(); tabsRoot.hidden = true; ui.resetUi();
   }
   authorizedOwner = user.emailAddress;
-  localCheckpointKey = checkpointKey(authorizedOwner, ROOT_FOLDER_ID);
+  activeRootFolderId = await loadRootFolderPreference();
+  activeRootFolderResourceKey = activeRootFolderId ? await loadRootFolderResourceKey() : '';
+  persistAuthSession(user);
+  if (!activeRootFolderId) {
+    ui.setAuthorized(true);
+    ui.setStatus('Выберите корневую папку вашей библиотеки.');
+    const folder = await chooseRootFolder({ listChildren: listFolderChildren, getFolder });
+    if (!folder) {
+      ui.setStatus('Корневая папка не выбрана. Выберите её через личное меню.');
+      return;
+    }
+    await saveRootFolderPreference(folder.id, folder.resourceKey);
+    activeRootFolderId = folder.id;
+    activeRootFolderResourceKey = folder.resourceKey;
+  }
+  localCheckpointKey = checkpointKey(authorizedOwner, activeRootFolderId);
   reconnectRequired = false;
   ui.setReconnectRequired(false);
   ui.setAuthorized(true);
   void social.connect(getAccessToken());
-  persistAuthSession(user);
   void ui.setUserAvatar(user);
   ui.clearError();
   if (sameOwner && currentIndex) {
@@ -346,7 +363,7 @@ async function afterAuthorization() {
   ui.setIndexingContinuation(null);
   ui.setStatus('Проверяем сохраненный индекс…');
   try {
-    const saved = await loadIndex(ROOT_FOLDER_ID);
+    const saved = await loadIndex(activeRootFolderId);
     indexFileId = saved.fileId;
     if (saved.index) {
       currentIndex = saved.index;
@@ -358,7 +375,7 @@ async function afterAuthorization() {
       shareableIndex = currentIndex;
       const local = await loadCheckpoint(localCheckpointKey);
       try {
-        const draft = local ? { index: local, fileId: null } : await loadBuildingIndex(ROOT_FOLDER_ID);
+        const draft = local ? { index: local, fileId: null } : await loadBuildingIndex(activeRootFolderId);
         buildingIndexFileId = draft.fileId;
         const mode = draft.index?.buildState?.mode || 'incremental';
         buildingIndex = canResumeBuildingIndex(draft.index, currentIndex, { mode }) ? draft.index : null;
@@ -387,6 +404,24 @@ async function afterAuthorization() {
     if (error.fileId) indexFileId = error.fileId;
     ui.showError(readableError(error), { canRebuild });
     ui.setStatus(canRebuild ? 'Сохраненный индекс недоступен. Можно построить его заново.' : 'Не удалось открыть библиотеку.');
+  }
+}
+
+async function changeRootFolder() {
+  if (!authorizedOwner || metadataController || libraryRefresher.running) return;
+  ui.clearError();
+  try {
+    const folder = await chooseRootFolder({ listChildren: listFolderChildren, getFolder });
+    if (!folder || folder.id === activeRootFolderId) return;
+    if (!window.confirm(`Сменить корневую папку на «${folder.name}»? Текущий каталог останется сохранён, а для новой папки будет создан отдельный индекс.`)) return;
+    await saveRootFolderPreference(folder.id, folder.resourceKey);
+    const url = new URL(window.location.href);
+    url.searchParams.delete('library');
+    window.history.replaceState(null, '', url);
+    ui.setStatus(`Корневая папка изменена на «${folder.name}». Загружаем её библиотеку…`);
+    window.location.reload();
+  } catch (error) {
+    ui.showError(readableError(error));
   }
 }
 
@@ -437,6 +472,7 @@ ui.bindActions({
   home: () => ui.showLibraryHome(),
   signIn,
   refresh: rebuildIndex,
+  changeRootFolder,
   rebuild: rebuildIndex,
   signOut,
   indexMetadata: () => runMetadataIndexing(),

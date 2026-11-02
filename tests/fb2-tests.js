@@ -15,6 +15,7 @@ import { extractZipFb2, findEocd, parseCentralDirectory, ZipError } from '../js/
 import { setupDropdown } from '../js/dropdown.js';
 import { accountIdentity, applyDriveAvatar, createAvatarController } from '../js/avatar.js';
 import { downloadDriveFile, getCurrentDriveUser } from '../js/drive.js';
+import { chooseRootFolder } from '../js/root-folder-picker.js';
 import { bookCardView, createBookCard, hasPreviousVersionMetadataFailure } from '../js/book-card.js';
 import { createAnnotationModalController, formatModalAuthors, modalCoverWidth } from '../js/annotation-modal.js';
 import { genreLabels, loadGenreDictionary } from '../js/genre-labels.js';
@@ -489,7 +490,7 @@ await test('building checkpoints use a separate appData file and can be read bac
   const fileId = await saveBuildingIndex(building, null, {
     create: async (name, json) => { storedName = name; storedJson = json; return { id: 'draft-id' }; },
   });
-  equal([fileId, storedName], ['draft-id', BUILDING_INDEX_FILE_NAME], 'checkpoint targets draft file');
+  equal([fileId, storedName], ['draft-id', BUILDING_INDEX_FILE_NAME.replace('.json', '-root.json')], 'checkpoint targets root-scoped draft file');
   assert(storedName !== INDEX_FILE_NAME, 'checkpoint never targets active index name');
   const readBack = await readIndexFile('draft-id', 'root', async () => ({ json: async () => JSON.parse(storedJson) }));
   equal(readBack.buildState.status, 'building', 'serialized checkpoint reads back intact');
@@ -1528,6 +1529,26 @@ await test('direct result navigation uses all folders, current-page DOM, home an
 
 await (await import('./library-refresh-tests.js')).runLibraryRefreshTests(test, assert, equal, makeZip);
 await runSearchTests(test, assert, equal);
+await test('root folder picker navigates folders, carries resource keys and returns the selected root', async () => {
+  const calls = [];
+  const selected = chooseRootFolder({
+    listChildren: async (folderId, options) => {
+      calls.push(['list', folderId, options.resourceKey || '']);
+      return folderId === 'root' ? [{ id: 'folder-a', name: 'Книги', mimeType: 'application/vnd.google-apps.folder', resourceKey: 'folder-key' }] : [];
+    },
+    getFolder: async (folderId, options) => {
+      calls.push(['get', folderId, options.resourceKey || '']);
+      return { id: folderId, name: 'Книги', resourceKey: 'folder-key' };
+    },
+  });
+  await Promise.resolve(); await Promise.resolve();
+  document.querySelector('.root-folder-entry').click();
+  await Promise.resolve(); await Promise.resolve();
+  document.querySelector('.root-folder-dialog [data-select]').click();
+  equal(await selected, { id: 'folder-a', name: 'Книги', resourceKey: 'folder-key' }, 'selected folder metadata returned');
+  equal(calls, [['list', 'root', ''], ['list', 'folder-a', 'folder-key'], ['get', 'folder-a', 'folder-key']], 'resource key follows folder navigation');
+  assert(document.querySelector('.root-folder-backdrop') === null, 'picker closes after selection');
+});
 await runUserSettingsTests(test, assert, equal);
 await runFolderTreeTests(test, assert, equal);
 await runPublicDocumentsTests(test, assert, equal);

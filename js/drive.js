@@ -1,4 +1,4 @@
-import { FOLDER_MIME_TYPE, ROOT_FOLDER_ID, ROOT_FOLDER_RESOURCE_KEY } from './config.js';
+import { FOLDER_MIME_TYPE } from './config.js';
 import { ensureAccessToken, renewAccessToken } from './auth.js';
 
 const API_ROOT = 'https://www.googleapis.com/drive/v3';
@@ -33,7 +33,7 @@ const delay = (milliseconds, signal) => new Promise((resolve, reject) => {
 });
 
 function resourceKeyHeaders(resourceKey) {
-  const keys = ROOT_FOLDER_RESOURCE_KEY ? [`${ROOT_FOLDER_ID}/${ROOT_FOLDER_RESOURCE_KEY}`] : [];
+  const keys = [];
   if (resourceKey?.fileId && resourceKey.key) {
     const value = `${resourceKey.fileId}/${resourceKey.key}`;
     if (!keys.includes(value)) keys.push(value);
@@ -122,9 +122,9 @@ export async function driveFetch(path, options = {}, retry = 0, apiRoot = API_RO
   throw report(error, retry ? 'exhausted' : 'not-retried');
 }
 
-export async function getFolder(folderId, { signal, diagnostics = {} } = {}) {
+export async function getFolder(folderId, { signal, diagnostics = {}, resourceKey } = {}) {
   const params = new URLSearchParams({ fields: 'id,name,mimeType,parents,resourceKey', supportsAllDrives: 'true' });
-  const folder = await driveFetch(`/files/${encodeURIComponent(folderId)}?${params}`, { signal, readJson: true, diagnostics });
+  const folder = await driveFetch(`/files/${encodeURIComponent(folderId)}?${params}`, { signal, readJson: true, diagnostics, resourceKey: resourceKey ? { fileId: folderId, key: resourceKey } : undefined });
   if (folder.mimeType !== FOLDER_MIME_TYPE) throw new DriveError('Настроенный rootFolderId не является папкой Google Drive.', { code: 'not_folder' });
   return folder;
 }

@@ -1,7 +1,10 @@
-import { BUILDING_INDEX_FILE_NAME, INDEX_FILE_NAME, INDEX_VERSION } from './config.js';
+import { BUILDING_INDEX_FILE_NAME, INDEX_FILE_NAME, INDEX_VERSION, ROOT_FOLDER_ID } from './config.js';
+
 import {
   createAppDataFile, deleteAppDataFile, downloadAppDataFile, listAppDataFiles, updateAppDataFile,
 } from './drive.js';
+
+const scopedName = (base, rootFolderId) => rootFolderId === ROOT_FOLDER_ID ? base : base.slice(0, -5) + '-' + rootFolderId + '.json';
 
 export class IndexError extends Error {
   constructor(message, code = 'index_error', fileId = null) {
@@ -47,7 +50,7 @@ export function migrateIndex(index) {
 
 export async function loadIndex(rootFolderId) {
   let files;
-  try { files = await listAppDataFiles(INDEX_FILE_NAME); }
+  try { files = await listAppDataFiles(scopedName(INDEX_FILE_NAME, rootFolderId)); }
   catch (error) {
     if (error.status === 401 || error.code === 'unauthorized' || error.retryable) throw error;
     throw new IndexError(`Не удалось проверить сохраненный индекс: ${error.message}`, 'index_read_failed');
@@ -73,7 +76,7 @@ export async function saveIndex(index, fileId = null) {
   try {
     const saved = fileId
       ? await updateAppDataFile(fileId, json)
-      : await createAppDataFile(INDEX_FILE_NAME, json);
+      : await createAppDataFile(scopedName(INDEX_FILE_NAME, index.rootFolderId), json);
     return saved.id;
   } catch (error) {
     const wrapped = new IndexError(`Библиотека отсканирована, но сохранить индекс не удалось: ${error.message}`, 'index_write_failed');
@@ -88,7 +91,7 @@ export async function saveIndex(index, fileId = null) {
 }
 
 export async function loadBuildingIndex(rootFolderId) {
-  const files = await listAppDataFiles(BUILDING_INDEX_FILE_NAME);
+  const files = await listAppDataFiles(scopedName(BUILDING_INDEX_FILE_NAME, rootFolderId));
   if (!files.length) return { index: null, fileId: null };
   try {
     const response = await downloadAppDataFile(files[0].id);
@@ -107,7 +110,7 @@ export async function saveBuildingIndex(index, fileId = null, {
   const json = JSON.stringify(index);
   const saved = fileId
     ? await update(fileId, json)
-    : await create(BUILDING_INDEX_FILE_NAME, json);
+    : await create(scopedName(BUILDING_INDEX_FILE_NAME, index.rootFolderId), json);
   return saved.id;
 }
 
