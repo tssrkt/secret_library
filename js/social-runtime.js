@@ -1,6 +1,7 @@
 import { startFirebaseSession, endFirebaseSession } from './firebase-session.js';
 import { createSocialStore } from './social-store.js';
 import { createSharedLibraryStore } from './shared-library.js';
+import { sendInvitationEmail } from './invitation-mailer.js';
 
 export function socialError(error) {
   if (error?.code?.includes('permission-denied')) return 'Нет доступа к социальным данным. Проверьте настройки Firebase и повторите попытку.';
@@ -14,7 +15,7 @@ let store;
 let stop;
 let generation = 0;
 let shared;
-let invite = null;
+let invitationUser = null;
 const catalogs = new Map();
 const catalogWatches = new Map();
 function clearCatalogs() {
@@ -49,7 +50,7 @@ export const social = {
       if (!session || current !== generation) return;
       store = createSocialStore(session);
       shared = createSharedLibraryStore(session);
-      invite = session.functionsSdk.httpsCallable(session.functions, 'inviteToLibrary');
+      invitationUser = session.user;
       await store.register();
       if (current !== generation) return;
       emit({ status: 'ready', message: '' });
@@ -58,14 +59,17 @@ export const social = {
     } catch (error) { if (current === generation) emit({ status: 'error', message: socialError(error) }); }
   },
   disconnect() {
-    generation++; stop?.(); stop = null; store?.dispose(); store = null; invite = null;
+    generation++; stop?.(); stop = null; store?.dispose(); store = null; invitationUser = null;
     clearCatalogs(); shared?.dispose(); shared = null;
     emit({ status: 'idle', message: 'Войдите через Google.', friends: [], notifications: [], libraries: [] });
     void endFirebaseSession().catch(() => {});
   },
-  shareWithEmail(email) {
-    if (!invite || state.status !== 'ready') return Promise.reject(new Error(state.message));
-    return invite({ email }).then((result) => result.data.message);
+  async shareWithEmail(email) {
+    if (!store || !invitationUser || state.status !== 'ready') throw new Error(state.message);
+    const result = await store.shareWithEmail(email);
+    if (!result.includes('Приглашение сохранено')) return result;
+    const idToken = await invitationUser.getIdToken();
+    return sendInvitationEmail({ email, idToken });
   },
   setSharing(uid, active) { if (!store || state.status !== 'ready') return Promise.reject(new Error(state.message)); return store.setSharing(uid, active); },
   markSeen(items) { if (!store || state.status !== 'ready') return Promise.resolve(); return store.markSeen(items); },

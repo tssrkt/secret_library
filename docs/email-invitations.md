@@ -1,23 +1,21 @@
 # Почтовые приглашения
 
-Приглашения отправляет callable Cloud Function `inviteToLibrary` в существующем Firebase-проекте `project-071ee00e-4a4a-4a3d-95d`. Браузер не получает SMTP-реквизиты и не может записать статус `emailStatus`.
+Приглашения отправляются через бесплатный Google Apps Script от имени Google-аккаунта владельца скрипта. Для этого не используются Firebase Cloud Functions, SMTP, Secret Manager или платный тариф Firebase.
 
-Однократная настройка владельца:
+## Настройка
 
-1. Установите Firebase CLI и войдите в нужный аккаунт: `npm install -g firebase-tools`, затем `firebase login`.
-2. Установите серверные зависимости: `npm --prefix functions ci`.
-3. Задайте секреты (значения приводятся только в интерактивном вводе):
+Инструкция и исходный код находятся в `apps-script-invite/`.
 
-   ```bash
-   firebase functions:secrets:set SMTP_HOST --project project-071ee00e-4a4a-4a3d-95d
-   firebase functions:secrets:set SMTP_PORT --project project-071ee00e-4a4a-4a3d-95d
-   firebase functions:secrets:set SMTP_USER --project project-071ee00e-4a4a-4a3d-95d
-   firebase functions:secrets:set SMTP_PASSWORD --project project-071ee00e-4a4a-4a3d-95d
-   firebase functions:secrets:set SMTP_FROM --project project-071ee00e-4a4a-4a3d-95d
-   ```
+Кратко:
+1. Создайте проект на https://script.google.com/ под аккаунтом, от которого должны уходить письма.
+2. Перенесите `apps-script-invite/Code.gs` и `apps-script-invite/appsscript.json` в проект Apps Script.
+3. Запустите `authorizeMailer` один раз и подтвердите разрешения Google.
+4. Разверните как Web app: Execute as **Me**, доступ **Anyone**.
+5. Скопируйте URL `/exec` в `INVITATION_MAILER_URL` файла `js/config.js`.
+6. Опубликуйте обновлённый сайт.
 
-4. Разверните правила и функцию: `firebase deploy --only firestore:rules,functions --project project-071ee00e-4a4a-4a3d-95d`.
+Apps Script проверяет Firebase ID-токен через Firebase Authentication, а затем читает профиль и приглашение через Firestore REST API с пользовательским токеном. Firestore применяет действующие Security Rules. Изменения правил и деплой Firebase для перехода не требуются.
 
-Для `SMTP_PORT` укажите номер порта SMTP. Порт `465` используется с TLS; остальные поддерживаемые SMTP-порты подключаются через STARTTLS, если это настроено поставщиком. Реальные пароли, ключи и токены не записывайте в репозиторий.
+Для личного Gmail действует квота Google Apps Script MailApp — 100 получателей в сутки на аккаунт владельца скрипта. Дополнительно сервис ограничивает каждого пользователя 10 приглашениями за 24 часа. Квоты Google могут изменяться.
 
-Шаблон письма генерируется из `temp/email.docx` в `functions/invitation-template.json`. После изменения исходных DOCX выполните `python scripts/build-public-documents.py`; проверка актуальности: `python scripts/build-public-documents.py --check`.
+Старую callable Cloud Function `inviteToLibrary` оставляем как неиспользуемую legacy-функцию. Браузер больше не вызывает её. Удалять или развёртывать Cloud Function для работы бесплатной рассылки не нужно.
