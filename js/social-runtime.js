@@ -9,6 +9,10 @@ export function socialError(error) {
   if (error?.code?.startsWith('auth/')) return 'Не удалось подтвердить Google-сеанс в Firebase. Повторите вход через Google.';
   return error?.message || 'Не удалось выполнить социальную операцию. Попробуйте ещё раз.';
 }
+export function isPendingInvitationResult(result) {
+  return typeof result === 'string' && /Приглашение (?:уже )?сохранено/.test(result);
+}
+
 const listeners = new Set();
 let state = { status: 'idle', message: 'Социальная часть ещё не подключена.', friends: [], notifications: [] };
 let store;
@@ -67,7 +71,7 @@ export const social = {
   async shareWithEmail(email) {
     if (!store || !invitationUser || state.status !== 'ready') throw new Error(state.message);
     const result = await store.shareWithEmail(email);
-    if (!result.includes('Приглашение сохранено')) return result;
+    if (!isPendingInvitationResult(result)) return result;
     const idToken = await invitationUser.getIdToken();
     return sendInvitationEmail({ email, idToken });
   },
