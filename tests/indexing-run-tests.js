@@ -57,6 +57,74 @@ export async function runIndexingRunTests(test, assert, equal) {
     assert(metadataActionLabels(active).retryHidden, 'nothing to retry');
   });
 
+  await test('selective retry validates exact Drive IDs and leaves unselected records untouched', async () => {
+    const active = library(['one', 'two', 'three'].map((id) => book(id)));
+    active.indexingErrors = active.books.map((item) => failure(item.id));
+    const snapshot = JSON.stringify(active);
+    const building = await prepareIndexingRun(active, { mode: 'retry', selectedBookIds: ['two'] });
+    equal([building.buildState.selectedIds, building.buildState.total], [['two'], 1], 'one source ID is selected');
+    const called = [];
+    const stats = await indexPendingBooks(building, { previousIndex: active,
+      extract: async (item) => { called.push(item.id); return metadata(); } });
+    updateBuildProgress(building, stats);
+    const completed = validateCompletedIndex(building, active);
+    equal(called, ['two'], 'no additional failed book reaches metadata processing');
+    equal(completed.books.filter((item) => item.id !== 'two'), active.books.filter((item) => item.id !== 'two'),
+      'unselected book records are unchanged');
+    equal(completed.indexingErrors.filter((entry) => entry.fileId !== 'two'),
+      active.indexingErrors.filter((entry) => entry.fileId !== 'two'), 'unselected journal entries are unchanged');
+    equal([...failedBookIds(completed)].sort(), ['one', 'three'], 'only selected successful outcome is resolved');
+    equal(JSON.stringify(active), snapshot, 'selective build does not mutate active index');
+
+    const several = await prepareIndexingRun(active, { mode: 'retry', selectedBookIds: ['one', 'three'] });
+    equal(several.buildState.selectedIds.sort(), ['one', 'three'], 'multiple source IDs are supported');
+  });
+
+  await test('selective retry rejects invalid IDs and a mismatched checkpoint without mutations', async () => {
+    const active = library(['one', 'two'].map((id) => book(id)));
+    active.indexingErrors = active.books.map((item) => failure(item.id));
+    const snapshot = JSON.stringify(active);
+    for (const ids of [['one', 'one'], ['unknown'], []]) {
+      let error;
+      try { await prepareIndexingRun(active, { mode: 'retry', selectedBookIds: ids }); } catch (caught) { error = caught; }
+      assert(error?.code === 'invalid_retry_selection', `invalid selection rejected: ${JSON.stringify(ids)}`);
+      equal(JSON.stringify(active), snapshot, 'invalid selection does not mutate active records or errors');
+    }
+    const duplicateActive = library([book('duplicate'), book('duplicate')]);
+    duplicateActive.indexingErrors = [failure('duplicate')];
+    let duplicateError;
+    try { await prepareIndexingRun(duplicateActive, { mode: 'retry', selectedBookIds: ['duplicate'] }); }
+    catch (caught) { duplicateError = caught; }
+    assert(duplicateError?.code === 'invalid_retry_selection', 'ambiguous duplicate book IDs are rejected');
+    equal(duplicateActive.books.length, 2, 'duplicate-ID validation leaves the index unchanged');
+
+    active.indexingErrors = [failure('one')];
+    const withoutFailureSnapshot = JSON.stringify(active);
+    let error;
+    try { await prepareIndexingRun(active, { mode: 'retry', selectedBookIds: ['two'] }); } catch (caught) { error = caught; }
+    assert(error?.code === 'invalid_retry_selection', 'ID without current error is rejected');
+    equal(JSON.stringify(active), withoutFailureSnapshot, 'non-failed selection rejection is side-effect free');
+
+    const checkpoint = await prepareIndexingRun(active, { mode: 'retry', selectedBookIds: ['one'] });
+    const checkpointSnapshot = JSON.stringify(checkpoint);
+    error = null;
+    try { await prepareIndexingRun(active, { mode: 'retry', building: checkpoint, selectedBookIds: ['two'] }); } catch (caught) { error = caught; }
+    assert(error?.code === 'retry_checkpoint_mismatch', 'checkpoint with a different requested scope is refused');
+    equal(JSON.stringify(checkpoint), checkpointSnapshot, 'mismatched checkpoint is not rewritten');
+    assert(await prepareIndexingRun(active, { mode: 'retry', building: structuredClone(checkpoint) }),
+      'saved subset checkpoint resumes its recorded scope after reload');
+    for (const [name, mismatchedActive, mode, draft] of [
+      ['different root', { ...active, rootFolderId: 'other' }, 'retry', checkpoint],
+      ['different base index', { ...active, updatedAt: 'changed' }, 'retry', checkpoint],
+      ['different operation mode', active, 'retry', await prepareIndexingRun(active, { mode: 'full', scan: async () => structuredClone(active) })],
+    ]) {
+      error = null;
+      try { await prepareIndexingRun(mismatchedActive, { mode, building: structuredClone(draft), selectedBookIds: ['one'] }); }
+      catch (caught) { error = caught; }
+      assert(error?.code === 'retry_checkpoint_mismatch', `checkpoint is rejected for ${name}`);
+    }
+  });
+
   await test('fresh full scan includes additions, removes missing books and preserves moved good metadata on failure', async () => {
     const active = library([book('deleted'), book('moved'), book('old-failed')]);
     active.indexingErrors = [failure('old-failed')];
@@ -153,17 +221,14 @@ export async function runIndexingRunTests(test, assert, equal) {
     equal(JSON.stringify(active), snapshot, 'failed retry never mutates the active index');
   });
 
-  await test('retry checks only target ancestry, removes deleted/outside files and caches shared ancestors', async () => {
-    const active = library(['deleted', 'trashed', 'outside', 'inside1', 'inside2'].map(book));
+  await test('retry checks target ancestry, excludes confirmed ineligible files and caches shared ancestors', async () => {
+    const active = library(['trashed', 'inside1', 'inside2'].map(book));
     active.indexingErrors = active.books.map((item) => failure(item.id));
     const retry = await prepareIndexingRun(active, { mode: 'retry' });
     const calls = [];
     const getFile = async (id) => {
       calls.push(id);
-      if (id === 'deleted') throw Object.assign(new Error('Drive did not disclose this file'), { status: 404 });
       if (id === 'trashed') return { id, name: `${id}.fb2`, parents: ['nested'], trashed: true };
-      if (id === 'outside') return { id, name: 'outside.fb2', parents: ['elsewhere'] };
-      if (id === 'elsewhere') return { id, name: 'Elsewhere', mimeType: 'application/vnd.google-apps.folder', parents: [] };
       if (id === 'nested') return { id, name: 'Nested', mimeType: 'application/vnd.google-apps.folder', parents: ['root'] };
       return { id, name: `${id}.fb2`, parents: ['nested'] };
     };
@@ -172,67 +237,103 @@ export async function runIndexingRunTests(test, assert, equal) {
       extract: async (item) => { extracted.push(item.id); return metadata(); } });
     updateBuildProgress(retry, stats);
     const completed = validateCompletedIndex(retry, active);
-    equal([stats.excluded, stats.failed, failedBookIds(completed).size], [2, 1, 1], 'only confirmed trashed and outside-root results are excluded');
+    equal([stats.excluded, stats.failed, failedBookIds(completed).size], [1, 0, 0], 'confirmed trashed files are excluded while eligible files process normally');
     equal(extracted.sort(), ['inside1', 'inside2'], 'only eligible target downloads');
     equal(calls.filter((id) => id === 'nested').length, 1, 'shared ancestor fetched once');
-    equal(completed.books.map((item) => item.id).sort(), ['deleted', 'inside1', 'inside2'], 'uncertain lookup preserves prior record');
+    equal(completed.books.map((item) => item.id).sort(), ['inside1', 'inside2'], 'only positively excluded records are removed');
     equal(completed.books.find((item) => item.id === 'inside1').parentId, 'nested', 'current in-root location applied');
-    equal(active.books.length, 5, 'active survives until commit');
-    assert(metadataActionLabels(completed).full.endsWith('(3)'), 'menu count follows the current catalog after confirmed exclusions');
+    equal(active.books.length, 3, 'active survives until commit');
+    assert(metadataActionLabels(completed).full.endsWith('(2)'), 'menu count follows the current catalog after confirmed exclusions');
   });
 
-  await test('retry missing parent metadata is an error and never removes a scanned book', async () => {
+  await test('uncertain eligibility API errors pause retry and preserve the last good entry', async () => {
     const active = library([book('uncertain')]);
     active.books[0].authors = ['Author'];
     active.indexingErrors = [failure('uncertain')];
     const retry = await prepareIndexingRun(active, { mode: 'retry' });
-    const stats = await indexPendingBooks(retry, { previousIndex: active,
-      checkEligibility: createRetryEligibilityCheck(retry, { getFile: async () => ({ id: 'uncertain', name: 'uncertain.fb2' }) }),
-      extract: async () => { throw new Error('metadata extraction must not start without ancestry'); },
-    });
-    const completed = validateCompletedIndex(retry, active);
-    equal([stats.excluded, stats.failed, completed.books.map((item) => item.id),
-      completed.books[0].metadataStatus, completed.books[0].title, retry.buildState.removedBookIds],
-    [0, 1, ['uncertain'], 'ready', 'Book uncertain', []], 'uncertain ancestry retains the previous searchable record and failure');
-    equal([...failedBookIds(completed)], ['uncertain'], 'retry failure remains actionable until a later successful retry');
+    let error;
+    try { await indexPendingBooks(retry, { previousIndex: active,
+      checkEligibility: createRetryEligibilityCheck(retry, { getFile: async () => {
+        throw Object.assign(new Error('Drive response is ambiguous'), { status: 404, code: 'drive_error' });
+      } }), extract: async () => { throw new Error('metadata processing must not start without eligibility'); },
+    }); } catch (caught) { error = caught; }
+    assert(error?.retryable && error.eligibilityUndetermined, 'ambiguous availability response pauses the build');
+    equal([retry.books[0].id, retry.books[0].metadataStatus, retry.books[0].title,
+      retry.buildState.removedBookIds, retry.buildState.pendingIds],
+    ['uncertain', 'pending', 'Book uncertain', [], ['uncertain']], 'source ID and searchable metadata remain in the unfinished build');
+    assert(retry.indexingErrors.at(-1)?.outcome === 'interrupted', 'eligibility uncertainty is recorded diagnostically');
+    let rejected = false;
+    try { validateCompletedIndex(retry, active); } catch { rejected = true; }
+    assert(rejected, 'unresolved eligibility cannot be committed as complete');
+  });
+
+  await test('temporary parent-folder metadata failure also pauses without removing the book', async () => {
+    const active = library([book('folder-error')]);
+    active.indexingErrors = [failure('folder-error')];
+    const retry = await prepareIndexingRun(active, { mode: 'retry' });
+    let error;
+    try { await indexPendingBooks(retry, { previousIndex: active,
+      checkEligibility: createRetryEligibilityCheck(retry, { getFile: async (id) => {
+        if (id === 'folder-error') return { id, name: 'folder-error.fb2', parents: ['folder'] };
+        throw Object.assign(new Error('Parent lookup temporarily failed'), { status: 503, retryable: true });
+      } }), extract: async () => { throw new Error('download must wait for a complete ancestry check'); },
+    }); } catch (caught) { error = caught; }
+    equal([Boolean(error?.eligibilityUndetermined), retry.books.map((item) => item.id),
+      retry.books[0].metadataStatus, retry.buildState.removedBookIds, retry.buildState.pendingIds],
+    [true, ['folder-error'], 'pending', [], ['folder-error']], 'failed parent lookup is indeterminate and resumable');
   });
 
   await test('retry removes only books with complete evidence of exclusion from the root', async () => {
     const folderMime = 'application/vnd.google-apps.folder';
     const scenarios = [
       ['missing file parents', { file: { id: 'item', name: 'item.fb2' } }, 'kept'],
+      ['null file parents', { file: { id: 'item', name: 'item.fb2', parents: null } }, 'kept'],
       ['malformed file parents', { file: { id: 'item', name: 'item.fb2', parents: [null] } }, 'kept'],
       ['empty file parents', { file: { id: 'item', name: 'item.fb2', parents: [] } }, 'excluded'],
+      ['multiple file parents', { file: { id: 'item', name: 'item.fb2', parents: ['root', 'elsewhere'] } }, 'kept'],
       ['missing parent-folder parents', { file: { id: 'item', name: 'item.fb2', parents: ['folder'] },
         folder: { id: 'folder', name: 'Folder', mimeType: folderMime } }, 'kept'],
+      ['null parent-folder parents', { file: { id: 'item', name: 'item.fb2', parents: ['folder'] },
+        folder: { id: 'folder', name: 'Folder', mimeType: folderMime, parents: null } }, 'kept'],
       ['parent object lacks explicit folder type', { file: { id: 'item', name: 'item.fb2', parents: ['folder'] },
         folder: { id: 'folder', name: 'Folder' } }, 'kept'],
+      ['parent folder lacks a name', { file: { id: 'item', name: 'item.fb2', parents: ['folder'] },
+        folder: { id: 'folder', mimeType: folderMime, parents: ['root'] } }, 'kept'],
       ['parent object contradicts folder type', { file: { id: 'item', name: 'item.fb2', parents: ['folder'] },
         folder: { id: 'folder', name: 'Folder', mimeType: 'application/pdf', parents: ['root'] } }, 'kept'],
-      ['complete chain ends outside root', { file: { id: 'item', name: 'item.fb2', parents: ['folder'] },
+      ['complete chain ends outside configured root', { file: { id: 'item', name: 'item.fb2', parents: ['folder'] },
         folder: { id: 'folder', name: 'Folder', mimeType: folderMime, parents: [] } }, 'excluded'],
       ['cyclic ancestry', { file: { id: 'item', name: 'item.fb2', parents: ['a'] },
         a: { id: 'a', name: 'A', mimeType: folderMime, parents: ['b'] },
         b: { id: 'b', name: 'B', mimeType: folderMime, parents: ['a'] } }, 'kept'],
       ['confirmed trashed file', { file: { id: 'item', name: 'item.fb2', parents: ['root'], trashed: true } }, 'excluded'],
+      ['malformed trashed state', { file: { id: 'item', name: 'item.fb2', parents: ['root'], trashed: 'true' } }, 'kept'],
       ['confirmed trashed parent folder', { file: { id: 'item', name: 'item.fb2', parents: ['folder'] },
         folder: { id: 'folder', name: 'Folder', mimeType: folderMime, parents: ['root'], trashed: true } }, 'excluded'],
+      ['mismatched file ID', { file: { id: 'different', name: 'item.fb2', parents: ['root'] } }, 'kept'],
       ['direct child of root', { file: { id: 'item', name: 'item.fb2', parents: ['root'] } }, 'eligible'],
     ];
     for (const [name, response, expected] of scenarios) {
       const active = library([book('item')]);
       active.indexingErrors = [failure('item')];
       const retry = await prepareIndexingRun(active, { mode: 'retry' });
-      const stats = await indexPendingBooks(retry, { previousIndex: active,
+      let stats; let paused = false;
+      try { stats = await indexPendingBooks(retry, { previousIndex: active,
         checkEligibility: createRetryEligibilityCheck(retry, { getFile: async (id) => id === 'item' ? response.file : response[id] }),
         extract: async () => metadata(),
-      });
-      const completed = validateCompletedIndex(retry, active);
-      const outcome = completed.books.length === 0 ? 'excluded'
-        : completed.books[0].metadataStatus === 'ready' && !failedBookIds(completed).has('item') ? 'eligible' : 'kept';
-      equal([outcome, stats.excluded, retry.buildState.removedBookIds],
+      }); } catch (error) { paused = Boolean(error.eligibilityUndetermined); }
+      const outcome = paused ? 'kept' : retry.books.length === 0 ? 'excluded'
+        : retry.books[0].metadataStatus === 'ready' && !failedBookIds(retry).has('item') ? 'eligible' : 'kept';
+      equal([outcome, stats?.excluded || 0, retry.buildState.removedBookIds],
         [expected, expected === 'excluded' ? 1 : 0, expected === 'excluded' ? ['item'] : []],
         `${name}: only explicit, complete exclusion evidence removes the book`);
+      if (paused) {
+        equal([retry.books[0]?.id, retry.books[0]?.metadataStatus, retry.buildState.pendingIds],
+          ['item', 'pending', ['item']], `${name}: uncertain ancestry remains in the unfinished build`);
+        let rejected = false;
+        try { validateCompletedIndex(retry, active); } catch { rejected = true; }
+        assert(rejected, `${name}: incomplete eligibility cannot be committed`);
+      }
     }
   });
 }

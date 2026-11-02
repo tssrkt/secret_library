@@ -9,6 +9,26 @@ export function failedBookIds(index) {
     || (!index.lastIndexingRun && !outcomes.has(book.id) && book.metadataStatus === 'error')).map((book) => book.id));
 }
 
+export function selectedRetryBookIds(index, requestedIds) {
+  const failures = failedBookIds(index);
+  if (requestedIds === undefined) return failures;
+  if (!Array.isArray(requestedIds) || requestedIds.length === 0) {
+    throw Object.assign(new Error('A selective retry requires at least one Drive file ID.'), { code: 'invalid_retry_selection' });
+  }
+  const ids = new Set();
+  for (const id of requestedIds) {
+    if (typeof id !== 'string' || !id.trim() || id !== id.trim() || ids.has(id)) {
+      throw Object.assign(new Error('Selective retry IDs must be non-empty, unique Drive file IDs.'), { code: 'invalid_retry_selection' });
+    }
+    ids.add(id);
+    if (index.books.filter((book) => book.id === id).length !== 1 || !failures.has(id)) {
+      throw Object.assign(new Error(`Drive file ID ${id} is not an unambiguous failed book in the current index.`),
+        { code: 'invalid_retry_selection', fileId: id });
+    }
+  }
+  return ids;
+}
+
 export function indexingCounts(index) {
   const failed = failedBookIds(index);
   const warnings = new Set((index.indexingErrors || []).filter((entry) => entry.outcome === 'recovered').map((entry) => entry.fileId));

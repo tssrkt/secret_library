@@ -194,6 +194,54 @@ export async function runLibraryRefreshTests(test, assert, equal, makeZip) {
       afterSecondRefresh.authors, afterSecondRefresh.modifiedTime],
     ['0', 'pending', undefined, undefined, 'changed-again'], 'changed scan does not attach metadata to the previous file contents');
   });
+  await test('refresh fallback checkpoint is persisted before the refreshed index can replace the active copy', async () => {
+    const old = oldIndex(); old.books[0].genres = [];
+    const events = [];
+    let persistedRefresh = null;
+    let persistedCheckpoint = null;
+    let active = old;
+    const refresh = createLibraryRefresher({
+      scan: () => scanTree({ root: [folder('A')], A: [{ ...file('0'), modifiedTime: 'new-version', size: '29' }] }),
+      beforeSave: async (index, previousIndex) => {
+        const prepared = prepareBuildingIndex(index, { mode: 'refresh', previousIndex });
+        persistedCheckpoint = JSON.parse(JSON.stringify(prepared));
+        events.push('checkpoint');
+        return prepared;
+      },
+      save: async (index) => { events.push('active-index'); persistedRefresh = JSON.parse(JSON.stringify(index)); return 'index'; },
+      apply: (index) => { active = index; }, removeCovers: async () => {},
+    });
+    const result = await refresh.run({ activeIndex: old, rootFolderId: 'root' });
+    equal(events, ['checkpoint', 'active-index'], 'metadata fallback is durable before saving the replacement active index');
+    equal([active.books[0].id, active.books[0].modifiedTime, Object.hasOwn(active.books[0], 'title'),
+      persistedCheckpoint.buildState.previousBooks[0].title],
+    ['0', 'new-version', false, 'Title 0'], 'checkpoint holds old metadata while refresh record holds current source fields');
+
+    const transient = await prepareIndexingRun(persistedRefresh, { mode: 'refresh', building: persistedCheckpoint });
+    let interrupted = false;
+    try { await indexPendingBooks(transient, { extract: async () => {
+      throw Object.assign(new Error('temporary local fixture failure'), { status: 503, retryable: true });
+    } }); } catch (error) { interrupted = error.retryable === true; }
+    assert(interrupted, 'temporary extraction error interrupts rather than completes the build');
+    equal([transient.books[0].id, transient.books[0].modifiedTime, transient.books[0].title,
+      persistedRefresh.books[0].title], ['0', 'new-version', 'Title 0', undefined],
+    'resumed work can recover old searchable metadata without changing the persisted refreshed source record');
+    let rejected = false;
+    try { validateCompletedIndex(transient, persistedRefresh); } catch { rejected = true; }
+    assert(rejected, 'temporary failure cannot be committed as a completed index');
+
+    const resumed = await prepareIndexingRun(persistedRefresh, { mode: 'refresh', building: JSON.parse(JSON.stringify(transient)) });
+    await indexPendingBooks(resumed, { extract: async () => {
+      throw Object.assign(new Error('final local parse failure'), { code: 'invalid_xml', stage: 'parse' });
+    } });
+    const completed = validateCompletedIndex(resumed, persistedRefresh);
+    const retained = completed.books.find((book) => book.id === '0');
+    equal([retained.id, retained.modifiedTime, retained.size, retained.metadataStatus, retained.title, retained.authors],
+      ['0', 'new-version', 29, 'ready', 'Title 0', ['Author']],
+      'final error keeps current file fields and only the confirmed prior metadata fallback');
+    assert(completed.indexingErrors.some((entry) => entry.fileId === '0' && entry.outcome === 'failed'
+      && entry.previousEntryPreserved), 'final extraction failure remains visible as a preserved-entry error');
+  });
   await test('legacy refresh checkpoint without previousBooks preserves metadata available in its active record only', async () => {
     const previous = oldIndex();
     previous.books[0].path = 'Root / A / 0.fb2';
@@ -349,7 +397,7 @@ export async function runLibraryRefreshTests(test, assert, equal, makeZip) {
     assert(!hasPreviousVersionMetadataFailure(recovered.books.find((book) => book.id === 'new-error'), recovered.indexingErrors),
       'successful retry does not leave the previous-version warning');
   });
-  await test('new book with metadata failure survives retry when Drive omits parent metadata', async () => {
+  await test('new book with metadata failure remains pending when retry eligibility metadata is incomplete', async () => {
     const scanned = await scanTree({ root: [folder('A')], A: [file('new-book')] });
     const active = preserveBookMetadata(scanned, oldIndex(0));
     const firstRun = prepareBuildingIndex(active, { mode: 'refresh' });
@@ -362,15 +410,18 @@ export async function runLibraryRefreshTests(test, assert, equal, makeZip) {
     'discovered new book is kept as a retryable catalog entry after parsing fails');
 
     const retry = await prepareIndexingRun(errored, { mode: 'retry' });
-    const stats = await indexPendingBooks(retry, { previousIndex: errored,
+    let paused = false;
+    try { await indexPendingBooks(retry, { previousIndex: errored,
       checkEligibility: createRetryEligibilityCheck(retry, { getFile: async () => ({ id: 'new-book', name: 'new-book.fb2' }) }),
       extract: async () => { throw new Error('must not download before eligibility metadata is complete'); },
-    });
-    const retried = validateCompletedIndex(retry, errored);
-    equal([stats.excluded, retry.buildState.removedBookIds, retried.books.map((book) => book.id),
-      retried.books[0]?.metadataStatus, failedBookIds(retried).has('new-book')],
-    [0, [], ['new-book'], 'error', true],
-    'incomplete ancestry is an indexing error, not confirmation that the scanned book was removed');
+    }); } catch (error) { paused = Boolean(error.eligibilityUndetermined); }
+    equal([paused, retry.buildState.removedBookIds, retry.books.map((book) => book.id),
+      retry.books[0]?.metadataStatus, retry.buildState.pendingIds, failedBookIds(retry).has('new-book')],
+    [true, [], ['new-book'], 'pending', ['new-book'], false],
+    'incomplete ancestry preserves the ID and leaves the build resumably unfinished');
+    let rejected = false;
+    try { validateCompletedIndex(retry, errored); } catch { rejected = true; }
+    assert(rejected, 'eligibility uncertainty is not committed as a finished retry');
   });
   await test('scanned per-file resource key reaches Drive download and new book catalog entry', async () => {
     const originalFetch = window.fetch;
@@ -422,5 +473,21 @@ export async function runLibraryRefreshTests(test, assert, equal, makeZip) {
       save: async () => { throw new Error('save failed'); }, removeCovers: () => { removed = true; } });
     try { await refresh.run({ activeIndex: oldIndex(), rootFolderId: 'root' }); } catch {}
     assert(!removed && !refresh.running, 'no cache removal and unlocked');
+  });
+  await test('ambiguous refresh save failure retains its checkpoint for active-index reconciliation', async () => {
+    const old = oldIndex(); let applied = false; let retainedCheckpoint = null; let savedPreparation = null;
+    const refresh = createLibraryRefresher({ scan: () => scanTree({ root: [folder('A')], A: [file('new')] }),
+      beforeSave: async (index) => {
+        savedPreparation = { candidateIds: index.books.map((book) => book.id) };
+        retainedCheckpoint = savedPreparation;
+        return savedPreparation;
+      },
+      save: async () => { throw new Error('local fixture save failure'); },
+      onSaveFailure: async (_error, preparation) => { assert(preparation === retainedCheckpoint, 'caller can retain the durable checkpoint while the write result is uncertain'); },
+      apply: () => { applied = true; }, removeCovers: async () => {} });
+    try { await refresh.run({ activeIndex: old, rootFolderId: 'root' }); } catch {}
+    equal(retainedCheckpoint, savedPreparation, 'prepared checkpoint remains available for reconciliation after ambiguous save failure');
+    assert(!applied, 'failed active-index save never applies the scanned index');
+    equal(old.books.map((book) => book.id), ['0'], 'prior active snapshot remains unchanged');
   });
 }

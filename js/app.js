@@ -12,7 +12,7 @@ import {
 import { createLibraryRefresher, scanStatus, scanFailureMessage } from './library-refresh.js';
 import { indexPendingBooks, resetProcessingBooks } from './metadata-indexer.js';
 import {
-  canResumeBuildingIndex, updateBuildProgress, validateCompletedIndex,
+  canResumeBuildingIndex, prepareBuildingIndex, updateBuildProgress, validateCompletedIndex,
 } from './index-build.js';
 import { prepareIndexingRun, createRetryEligibilityCheck } from './indexing-run.js';
 import * as ui from './ui.js';
@@ -43,6 +43,7 @@ let metadataController = null;
 let localCheckpointKey = null;
 let authorizedOwner = null;
 let reconnectRequired = false;
+let refreshCommitUncertain = false;
 const authAttempts = createAuthAttemptGuard();
 const tabsRoot = document.querySelector('#library-tabs');
 const tabs = createLibraryTabs(tabsRoot, (uid) => selection.select(uid));
@@ -119,6 +120,17 @@ function renderLibrary(index) {
 const libraryRefresher = createLibraryRefresher({
   save: saveIndex,
   apply: (index) => { currentIndex = index; renderLibrary(index); },
+  beforeSave: async (index, previousIndex) => {
+    const prepared = prepareBuildingIndex(index, { mode: 'refresh', previousIndex });
+    if (!prepared.buildState.total) return null;
+    await saveCheckpoint(localCheckpointKey, prepared);
+    buildingIndex = prepared;
+    return prepared;
+  },
+  onSaveFailure: async (_error, prepared) => {
+    if (prepared && buildingIndex === prepared) buildingIndex = null;
+    refreshCommitUncertain = true;
+  },
   removeCovers,
   onProgress: (stats) => { ui.setStatus(scanStatus(stats)); ui.showStats(stats.processedFolders, stats.books); },
   onPhase: () => ui.setStatus('Сканирование завершено. Новая структура применена. Сохраняем индекс…'),
@@ -126,6 +138,10 @@ const libraryRefresher = createLibraryRefresher({
 });
 
 async function rebuildIndex() {
+  if (refreshCommitUncertain) {
+    ui.showError('Не удалось подтвердить, сохранено ли обновление. Перезагрузите страницу, чтобы сверить индекс и checkpoint перед продолжением.');
+    return;
+  }
   if (metadataController || libraryRefresher.running) return;
   if (buildingIndex) return runMetadataIndexing({ resume: true });
   ui.clearError();
@@ -139,20 +155,31 @@ async function rebuildIndex() {
     ui.showStats(currentIndex.folders.length, currentIndex.books.length);
     void publishLibrary(result.index).catch((error) => ui.showError(`Не удалось обновить каталог для друзей: ${socialError(error)}`));
     ui.setStatus(`Библиотека обновлена: ${result.index.books.length.toLocaleString('ru-RU')} книг.`);
-    await runMetadataIndexing({ refreshOnly: true, previousIndex: result.previousIndex });
+    if (buildingIndex) await runMetadataIndexing({ resume: true });
   } catch (error) {
     reportOperationError(currentIndex || {}, error, error.stage || 'list', error.folderId || ROOT_FOLDER_ID);
-    if (error.status === 401 || error.code === 'unauthorized') ui.showError(readableError(error));
+    if (refreshCommitUncertain) ui.showError('Не удалось подтвердить, сохранено ли обновление. Перезагрузите страницу; до сверки индекса обработка заблокирована.');
+    else if (error.status === 401 || error.code === 'unauthorized') ui.showError(readableError(error));
     else ui.showError(error.stage === 'index-write' ? readableError(error) : scanFailureMessage(error), { canRebuild: true });
-    ui.setStatus(error.stage === 'index-write' ? 'Новая структура показана в этой вкладке. Сохранить индекс не удалось; прежний сохранённый индекс и обложки оставлены.' : scanFailureMessage(error));
+    ui.setStatus(refreshCommitUncertain ? 'Сначала перезагрузите страницу и проверьте восстановленный checkpoint.'
+      : error.stage === 'index-write' ? 'Новая структура показана в этой вкладке. Сохранить индекс не удалось; прежний сохранённый индекс и обложки оставлены.' : scanFailureMessage(error));
   } finally {
     ui.setBusy(false);
   }
 }
 
-async function runMetadataIndexing({ retryErrors = false, refreshOnly = false, resume = false, previousIndex = null } = {}) {
+async function runMetadataIndexing({ retryErrors = false, refreshOnly = false, resume = false, previousIndex = null,
+  selectedBookIds } = {}) {
+  if (refreshCommitUncertain) {
+    ui.showError('Обработка заблокирована до перезагрузки и сверки активного индекса с checkpoint.');
+    return;
+  }
   if (!currentIndex || metadataController || (libraryRefresher.running && !refreshOnly)) return;
   if (buildingIndex && !resume) {
+    if (selectedBookIds !== undefined) {
+      ui.showError('Нельзя начать выборочную обработку, пока существует незавершённая сборка. Сначала продолжите её или дождитесь завершения.');
+      return;
+    }
     showUnfinishedOperation();
     ui.setStatus('Сначала продолжите незавершённую индексацию.');
     return;
@@ -164,9 +191,11 @@ async function runMetadataIndexing({ retryErrors = false, refreshOnly = false, r
   }
   if (!resume && refreshOnly && !currentIndex.books.some((book) => ['pending', 'processing'].includes(book.metadataStatus))) return;
   const activeIndex = currentIndex;
-  const mode = resume ? buildingIndex.buildState.mode : refreshOnly ? 'refresh' : retryErrors ? 'retry' : 'full';
+  const mode = resume ? buildingIndex.buildState.mode : refreshOnly ? 'refresh'
+    : (retryErrors || selectedBookIds !== undefined) ? 'retry' : 'full';
   if (!resume && mode === 'full' && !window.confirm('Переиндексировать всю библиотеку? Будут повторно обработаны все книги.')) return;
-  const modeLabel = refreshOnly ? 'Индексация новых и изменённых книг' : retryErrors ? 'Повторная обработка ошибок' : 'Полная переиндексация';
+  const modeLabel = refreshOnly ? 'Индексация новых и изменённых книг'
+    : (retryErrors || selectedBookIds !== undefined) ? 'Повторная обработка ошибок' : 'Полная переиндексация';
   metadataController = new AbortController();
   ui.clearError();
   ui.setMetadataRunning(true);
@@ -175,7 +204,7 @@ async function runMetadataIndexing({ retryErrors = false, refreshOnly = false, r
   try {
     buildingIndex = resume ? buildingIndex : await prepareIndexingRun(activeIndex, {
       mode, building: buildingIndex, signal: metadataController.signal,
-      previousIndex,
+      previousIndex, selectedBookIds,
       onScan: (stats) => ui.setStatus(scanStatus(stats)),
     });
     prepared = true;
@@ -274,6 +303,15 @@ async function runMetadataIndexing({ retryErrors = false, refreshOnly = false, r
   }
 }
 
+// Explicit programmatic entry point for a diagnostic retry; the UI action remains global.
+export function retrySelectedBooks(bookIds) {
+  if (!Array.isArray(bookIds) || !bookIds.length) {
+    return Promise.reject(Object.assign(new Error('A selective retry requires an explicit non-empty Drive ID list.'),
+      { code: 'invalid_retry_selection' }));
+  }
+  return runMetadataIndexing({ retryErrors: true, selectedBookIds: bookIds });
+}
+
 function stopMetadataIndexing() {
   if (!metadataController) return;
   ui.setStatus('Останавливаем индексирование и сохраняем результаты…');
@@ -312,6 +350,7 @@ async function afterAuthorization() {
     indexFileId = saved.fileId;
     if (saved.index) {
       currentIndex = saved.index;
+      refreshCommitUncertain = false;
       if (saved.migrated) {
         saved.index.updatedAt = new Date().toISOString();
         indexFileId = await saveIndex(saved.index, indexFileId);

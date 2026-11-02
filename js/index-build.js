@@ -1,5 +1,5 @@
 import { BOOK_SOURCE_TYPES, INDEX_VERSION, METADATA_VERSION } from './config.js';
-import { failedBookIds, indexingCounts } from './indexing-state.js';
+import { failedBookIds, indexingCounts, selectedRetryBookIds } from './indexing-state.js';
 
 function cloneIndex(index) {
   return typeof structuredClone === 'function'
@@ -12,15 +12,16 @@ function activeSignature(index) {
 }
 
 export function prepareBuildingIndex(activeIndex, { retryErrors = false, mode = retryErrors ? 'retry' : 'incremental', scannedIndex,
-  previousIndex = null, now = () => new Date().toISOString() } = {}) {
+  previousIndex = null, selectedBookIds, now = () => new Date().toISOString() } = {}) {
   if (mode === 'full' && (!scannedIndex || scannedIndex.rootFolderId !== activeIndex.rootFolderId)) throw new Error('Full reindex requires a fresh scan of the same root.');
+  if (selectedBookIds !== undefined && mode !== 'retry') throw Object.assign(new Error('Book IDs can be selected only for a retry.'), { code: 'invalid_retry_selection' });
+  const retryIds = mode === 'retry' ? selectedRetryBookIds(activeIndex, selectedBookIds) : failedBookIds(activeIndex);
   const building = cloneIndex(mode === 'full' ? scannedIndex : activeIndex);
-  const previousFailures = failedBookIds(activeIndex);
   building.indexingErrors = ['retry', 'refresh'].includes(mode) ? cloneIndex(activeIndex.indexingErrors || []).filter((entry) => entry.stage !== 'index-write') : [];
   const selectedIds = [];
   let total = 0;
   for (const book of building.books) {
-    const needsMetadata = mode === 'full' || (mode === 'retry' ? previousFailures.has(book.id) : mode === 'refresh'
+    const needsMetadata = mode === 'full' || (mode === 'retry' ? retryIds.has(book.id) : mode === 'refresh'
       ? ['pending', 'processing'].includes(book.metadataStatus) : book.metadataStatus === 'pending'
       || book.metadataStatus === 'processing'
       || book.metadataVersion !== METADATA_VERSION);
@@ -54,11 +55,38 @@ export function prepareBuildingIndex(activeIndex, { retryErrors = false, mode = 
   return building;
 }
 
-export function canResumeBuildingIndex(building, activeIndex, { retryErrors = false, mode = retryErrors ? 'retry' : 'incremental', scannedIndex } = {}) {
+export function canResumeBuildingIndex(building, activeIndex, { retryErrors = false, mode = retryErrors ? 'retry' : 'incremental', scannedIndex,
+  selectedBookIds } = {}) {
   if (!building?.buildState || !['building', 'paused'].includes(building.buildState.status)) return false;
   if (building.buildState.baseSignature !== activeSignature(activeIndex)) return false;
   if ((building.buildState.mode || 'incremental') !== mode) return false;
   if (building.rootFolderId !== activeIndex.rootFolderId) return false;
+  if (mode !== 'full') {
+    const activeIds = new Set(activeIndex.books.map((book) => book.id));
+    const checkpointBookIds = building.buildState.bookIds || activeIndex.books.map((book) => book.id);
+    if (activeIds.size !== activeIndex.books.length || new Set(checkpointBookIds).size !== checkpointBookIds.length
+        || activeIds.size !== checkpointBookIds.length || checkpointBookIds.some((id) => !activeIds.has(id))) return false;
+  }
+  if (mode === 'retry') {
+    let failedIds;
+    let requested;
+    try {
+      failedIds = selectedRetryBookIds(activeIndex);
+      requested = selectedBookIds === undefined ? null : selectedRetryBookIds(activeIndex, selectedBookIds);
+    }
+    catch { return false; }
+    const checkpointIds = building.buildState.selectedIds || [];
+    if (new Set(checkpointIds).size !== checkpointIds.length
+        || checkpointIds.some((id) => !failedIds.has(id))) return false;
+    if (requested && (requested.size !== checkpointIds.length || checkpointIds.some((id) => !requested.has(id)))) return false;
+    const selected = new Set(checkpointIds);
+    const activeBooks = new Map(activeIndex.books.map((book) => [book.id, book]));
+    for (const book of building.books) if (!selected.has(book.id)
+        && JSON.stringify(book) !== JSON.stringify(activeBooks.get(book.id))) return false;
+    const unselectedErrors = (entries) => (entries || []).filter((entry) => entry.stage !== 'index-write' && !selected.has(entry.fileId));
+    if (JSON.stringify(unselectedErrors(building.indexingErrors)) !== JSON.stringify(unselectedErrors(activeIndex.indexingErrors))) return false;
+    if ((building.buildState.removedBookIds || []).some((id) => !selected.has(id))) return false;
+  } else if (selectedBookIds !== undefined) return false;
   if (mode === 'full' && scannedIndex) {
     const sources = new Map(building.buildState.sourceBooks?.map((book) => [book.id, book]));
     if (sources.size !== scannedIndex.books.length || !scannedIndex.books.every((book) => JSON.stringify(sources.get(book.id)) === JSON.stringify(book))) return false;
