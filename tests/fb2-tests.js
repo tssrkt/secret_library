@@ -1533,10 +1533,11 @@ await (await import('./library-refresh-tests.js')).runLibraryRefreshTests(test, 
 await runSearchTests(test, assert, equal);
 await test('root folder picker navigates folders, carries resource keys and returns the selected root', async () => {
   const calls = [];
+  let folderAppeared = false;
   const selected = chooseRootFolder({
     listChildren: async (folderId, options) => {
       calls.push(['list', folderId, options.resourceKey || '']);
-      return folderId === 'root' ? [{ id: 'folder-a', name: 'Книги', mimeType: 'application/vnd.google-apps.folder', resourceKey: 'folder-key' }] : [];
+      return folderId === 'root' && folderAppeared ? [{ id: 'folder-a', name: 'Книги', mimeType: 'application/vnd.google-apps.folder', resourceKey: 'folder-key' }] : [];
     },
     getFolder: async (folderId, options) => {
       calls.push(['get', folderId, options.resourceKey || '']);
@@ -1544,11 +1545,17 @@ await test('root folder picker navigates folders, carries resource keys and retu
     },
   });
   await Promise.resolve(); await Promise.resolve();
+  assert(document.querySelector('.root-folder-dialog [data-refresh]'), 'folder picker exposes refresh button');
+  assert(!document.querySelector('.root-folder-entry'), 'initially empty folder listing is shown');
+  folderAppeared = true;
+  document.querySelector('.root-folder-dialog [data-refresh]').click();
+  await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+  assert(document.querySelector('.root-folder-entry'), 'refresh reloads newly added folders');
   document.querySelector('.root-folder-entry').click();
   await Promise.resolve(); await Promise.resolve();
   document.querySelector('.root-folder-dialog [data-select]').click();
   equal(await selected, { id: 'folder-a', name: 'Книги', resourceKey: 'folder-key' }, 'selected folder metadata returned');
-  equal(calls, [['list', 'root', ''], ['list', 'folder-a', 'folder-key'], ['get', 'folder-a', 'folder-key']], 'resource key follows folder navigation');
+  equal(calls, [['list', 'root', ''], ['list', 'root', ''], ['list', 'folder-a', 'folder-key'], ['get', 'folder-a', 'folder-key']], 'resource key follows folder navigation');
   assert(document.querySelector('.root-folder-backdrop') === null, 'picker closes after selection');
 });
 await runUserSettingsTests(test, assert, equal);

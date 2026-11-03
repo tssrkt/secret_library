@@ -7,7 +7,7 @@ export function chooseRootFolder({ listChildren, getFolder, description = 'Вы�
     dialog.setAttribute('role', 'dialog');
     dialog.setAttribute('aria-modal', 'true');
     dialog.setAttribute('aria-labelledby', 'root-folder-title');
-    dialog.innerHTML = '<header><h2 id="root-folder-title">Выберите корневую папку</h2><button type="button" class="secondary compact" data-close aria-label="Закрыть">×</button></header><p class="root-folder-description">Выберите папку с книгами. Сайт будет сканировать её и все вложенные папки.</p><nav class="root-folder-breadcrumb" aria-label="Путь к папке"></nav><p class="root-folder-status" role="status">Загружаем папки…</p><ul class="root-folder-list"></ul><footer><button type="button" class="secondary" data-cancel>Отмена</button><button type="button" data-select disabled>Выбрать эту папку</button></footer>';
+    dialog.innerHTML = '<header><h2 id="root-folder-title">Выберите корневую папку</h2><button type="button" class="secondary compact" data-close aria-label="Закрыть">×</button></header><p class="root-folder-description">Выберите папку с книгами. Сайт будет сканировать её и все вложенные папки.</p><nav class="root-folder-breadcrumb" aria-label="Путь к папке"></nav><div class="root-folder-status-row"><p class="root-folder-status" role="status">Загружаем папки…</p><button type="button" class="secondary compact" data-refresh>Обновить</button></div><ul class="root-folder-list"></ul><footer><button type="button" class="secondary" data-cancel>Отмена</button><button type="button" data-select disabled>Выбрать эту папку</button></footer>';
     dialog.querySelector('.root-folder-description').textContent = description;
     backdrop.append(dialog);
     documentRef.body.append(backdrop);
@@ -15,6 +15,7 @@ export function chooseRootFolder({ listChildren, getFolder, description = 'Вы�
     const status = dialog.querySelector('.root-folder-status');
     const list = dialog.querySelector('.root-folder-list');
     const select = dialog.querySelector('[data-select]');
+    const refresh = dialog.querySelector('[data-refresh]');
     let onKey = null;
     const close = (value, error) => {
       if (onKey) documentRef.removeEventListener('keydown', onKey);
@@ -35,8 +36,10 @@ export function chooseRootFolder({ listChildren, getFolder, description = 'Вы�
         if (index < path.length - 1) breadcrumb.append(documentRef.createTextNode(' / '));
       });
       select.disabled = path.length === 1 || busy;
+      refresh.disabled = busy;
     };
     const load = async () => {
+      if (busy) return;
       busy = true; status.textContent = 'Загружаем папки…'; list.replaceChildren(); renderPath();
       try {
         const currentFolder = path.at(-1);
@@ -55,6 +58,7 @@ export function chooseRootFolder({ listChildren, getFolder, description = 'Вы�
         status.textContent = error.message || 'Не удалось прочитать содержимое папки.';
       } finally { busy = false; renderPath(); }
     };
+    refresh.addEventListener('click', () => { void load(); });
     select.addEventListener('click', async () => {
       if (busy || path.length === 1) return;
       busy = true; select.disabled = true; status.textContent = 'Проверяем выбранную папку…';
