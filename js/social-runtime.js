@@ -43,6 +43,13 @@ function watchCatalogs(friends) {
 }
 const emit = (change) => { state = { ...state, ...change }; listeners.forEach((listener) => listener(state)); };
 export const social = {
+  async checkAccess(token) {
+    const session = await startFirebaseSession(token);
+    if (!session) throw new Error('Не удалось проверить доступ к библиотеке.');
+    const result = await session.functionsSdk.httpsCallable(session.functions, 'checkLibraryAccess')({});
+    if (result.data?.allowed !== true) throw new Error('Доступ к библиотеке не подтверждён.');
+    return true;
+  },
   subscribe(listener) { listeners.add(listener); listener(state); return () => listeners.delete(listener); },
   async connect(token) {
     const current = ++generation;

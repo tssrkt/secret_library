@@ -324,6 +324,7 @@ function stopMetadataIndexing() {
 async function afterAuthorization() {
   const user = await getCurrentDriveUser();
   if (!user.emailAddress) throw new Error('Google не вернул идентификатор пользователя.');
+  if (firebaseConfigured()) await social.checkAccess(getAccessToken());
   const sameOwner = authorizedOwner === user.emailAddress;
   if (authorizedOwner && !sameOwner) {
     sharingVersion++; shareableIndex = null; currentIndex = null;
