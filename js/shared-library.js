@@ -8,7 +8,7 @@ export function sharedLibraryIndex(index, settings) {
     for (const folder of index.folders) if (!allowed.has(folder.id) && allowed.has(folder.parentId)) { allowed.add(folder.id); changed = true; }
   }
   const fields = ['id', 'parentId', 'fileName', 'extension', 'sourceType', 'size', 'modifiedTime', 'metadataStatus',
-    'metadataVersion', 'title', 'authors', 'genres', 'series', 'seriesNumber', 'annotation', 'preview', 'language'];
+    'metadataVersion', 'title', 'authors', 'genres', 'series', 'seriesNumber', 'annotation', 'preview', 'language', 'resourceKey'];
   const folderNotes = Object.fromEntries(Object.entries(settings.folderNotes || {})
     .filter(([folderId, note]) => allowed.has(folderId) && typeof note === 'string' && note.trim())
     .map(([folderId, note]) => [folderId, note.trim()]));

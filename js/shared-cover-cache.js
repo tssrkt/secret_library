@@ -1,131 +1,68 @@
 import { extractBookMetadata } from './book-metadata.js';
 import { resizeCover } from './cover-cache.js';
+import { createAppDataBlob, deleteAppDataFile, downloadAppDataBlob, listAppDataFilesByPrefix } from './drive.js';
 
-export const SHARED_COVER_MAX_ENTRIES = 80;
-export const SHARED_COVER_MAX_BYTES = 15 * 1024 * 1024;
-const DB_NAME = 'secret-library-shared-covers';
-const STORE_NAME = 'covers';
-const memoryFallback = new Map();
-let databasePromise;
+export const SHARED_COVER_CACHE_PREFIX = 'secret-library-shared-cover-';
 
 export function sharedCoverCacheKey(ownerId, bookId) {
   return String(ownerId) + ':' + String(bookId);
 }
 
-function openDatabase() {
-  if (!globalThis.indexedDB) return Promise.resolve(null);
-  if (!databasePromise) databasePromise = new Promise((resolve) => {
-    try {
-      const request = indexedDB.open(DB_NAME, 1);
-      request.onupgradeneeded = () => {
-        if (!request.result.objectStoreNames.contains(STORE_NAME)) {
-          const store = request.result.createObjectStore(STORE_NAME, { keyPath: 'key' });
-          store.createIndex('lastUsedAt', 'lastUsedAt');
-        }
-      };
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => resolve(null);
-      request.onblocked = () => resolve(null);
-    } catch { resolve(null); }
-  });
-  return databasePromise;
+function cachePrefix(ownerId, bookId) {
+  return SHARED_COVER_CACHE_PREFIX + encodeURIComponent(String(ownerId)) + '-' + encodeURIComponent(String(bookId)) + '-';
 }
 
-async function transact(mode, operation) {
-  const database = await openDatabase();
-  if (!database) return null;
-  return new Promise((resolve) => {
-    try {
-      const transaction = database.transaction(STORE_NAME, mode);
-      const request = operation(transaction.objectStore(STORE_NAME));
-      transaction.oncomplete = () => resolve(request?.result ?? null);
-      transaction.onerror = transaction.onabort = () => resolve(null);
-    } catch { resolve(null); }
-  });
-}
-
-async function readEntry(key) {
-  const database = await openDatabase();
-  if (!database) return memoryFallback.get(key) || null;
-  return new Promise((resolve) => {
-    try {
-      const request = database.transaction(STORE_NAME, 'readonly').objectStore(STORE_NAME).get(key);
-      request.onsuccess = () => resolve(request.result || memoryFallback.get(key) || null);
-      request.onerror = () => resolve(memoryFallback.get(key) || null);
-    } catch { resolve(memoryFallback.get(key) || null); }
-  });
-}
-
-async function writeEntry(entry) {
-  memoryFallback.set(entry.key, entry);
-  await transact('readwrite', (store) => store.put(entry));
-  await enforceCacheLimit();
-}
-
-async function readAllEntries() {
-  const database = await openDatabase();
-  if (!database) return [...memoryFallback.values()];
-  return new Promise((resolve) => {
-    try {
-      const request = database.transaction(STORE_NAME, 'readonly').objectStore(STORE_NAME).getAll();
-      request.onsuccess = () => {
-        const entries = new Map((request.result || []).map((entry) => [entry.key, entry]));
-        for (const entry of memoryFallback.values()) entries.set(entry.key, entry);
-        resolve([...entries.values()]);
-      };
-      request.onerror = () => resolve([...memoryFallback.values()]);
-    } catch { resolve([...memoryFallback.values()]); }
-  });
-}
-
-async function deleteEntry(key) {
-  memoryFallback.delete(key);
-  await transact('readwrite', (store) => store.delete(key));
-}
-
-async function enforceCacheLimit({ maxEntries = SHARED_COVER_MAX_ENTRIES, maxBytes = SHARED_COVER_MAX_BYTES } = {}) {
-  const entries = (await readAllEntries()).sort((a, b) => (a.lastUsedAt || 0) - (b.lastUsedAt || 0));
-  let totalBytes = entries.reduce((sum, entry) => sum + (entry.size || entry.blob?.size || 0), 0);
-  let count = entries.length;
-  for (const entry of entries) {
-    if (count <= maxEntries && totalBytes <= maxBytes) break;
-    await deleteEntry(entry.key);
-    count -= 1;
-    totalBytes -= entry.size || entry.blob?.size || 0;
-  }
+function cacheName(ownerId, book, modifiedTime) {
+  return cachePrefix(ownerId, book.id) + encodeURIComponent(modifiedTime || 'unknown') + '.webp';
 }
 
 export function createSharedCoverLoader({
-  get = readEntry,
-  set = writeEntry,
+  list = listAppDataFilesByPrefix,
+  download = downloadAppDataBlob,
+  create = createAppDataBlob,
+  remove = deleteAppDataFile,
   extract = extractBookMetadata,
   resize = resizeCover,
-  now = () => Date.now(),
 } = {}) {
   const inFlight = new Map();
-  const latestRequestedVersion = new Map();
+  let filesPromise = null;
+  const files = async (refresh = false) => {
+    if (refresh || !filesPromise) {
+      filesPromise = Promise.resolve().then(() => list(SHARED_COVER_CACHE_PREFIX))
+        .catch((error) => { filesPromise = null; throw error; });
+    }
+    return filesPromise;
+  };
+
   return async function loadSharedCover(ownerId, book, { signal } = {}) {
     if (!ownerId || !book?.id) return null;
-    const key = sharedCoverCacheKey(ownerId, book.id);
-    const modifiedTime = book.modifiedTime || '';
-    const cached = await get(key);
-    if (cached?.blob && cached.modifiedTime === modifiedTime) {
-      void Promise.resolve(set({ ...cached, lastUsedAt: now() })).catch(() => {});
-      return cached.blob;
-    }
-    const taskKey = key + ':' + modifiedTime;
+    const prefix = cachePrefix(ownerId, book.id);
+    const name = cacheName(ownerId, book, book.modifiedTime || '');
+    const taskKey = name;
     if (inFlight.has(taskKey)) return inFlight.get(taskKey);
-    latestRequestedVersion.set(key, modifiedTime);
     const task = (async () => {
       signal?.throwIfAborted();
+      const existing = (await files()).find((file) => file.name === name);
+      if (existing) {
+        try { return await download(existing.id, signal); }
+        catch (error) {
+          if (error?.status !== 404) throw error;
+          filesPromise = null;
+        }
+      }
+
       const metadata = await extract(book, { signal });
       signal?.throwIfAborted();
       if (!metadata?.cover?.bytes || !metadata.cover.mimeType) return null;
       const blob = await resize(metadata.cover);
       signal?.throwIfAborted();
-      if (latestRequestedVersion.get(key) === modifiedTime) {
-        await set({ key, ownerId: String(ownerId), bookId: String(book.id), modifiedTime,
-          blob, size: blob.size, lastUsedAt: now() });
+      const saved = await create(name, blob);
+      filesPromise = null;
+
+      // Remove stale versions for this book from the viewer's own Drive cache.
+      const stale = (await files(true)).filter((file) => file.name.startsWith(prefix) && file.id !== saved.id);
+      for (const file of stale) {
+        try { await remove(file.id); } catch (error) { if (error?.status !== 404) throw error; }
       }
       return blob;
     })();
