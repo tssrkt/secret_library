@@ -192,10 +192,12 @@ export async function runUserSettingsTests(test, assert, equal) {
       for (let i = 0; i < 100 && !tree.querySelector('.sharing-settings-form'); i++) await tick();
       assert(tree.querySelector('.sharing-settings-form'), `settings loaded: ${fixture.querySelector('#error-text').textContent}`);
       assert(fixture.querySelector('#avatar-menu').hidden && tree.querySelector('h2').textContent === 'Настройки', 'menu closes and settings opens');
+      assert(document.body.classList.contains('settings-page-open'), 'settings state can hide library tabs');
       assert([...tree.querySelectorAll('input[type=checkbox]')].every((field) => field.checked), 'missing settings selects all');
       tree.querySelector('input').checked = false;
       click('#library-home-link');
       assert(tree.querySelector('.tree-list') && !tree.querySelector('.user-settings-page'), 'home restores tree');
+      assert(!document.body.classList.contains('settings-page-open'), 'leaving settings restores library tabs');
       click('#settings-button');
       await tick();
       assert(tree.querySelector('input').checked, 'home discarded unsaved changes');

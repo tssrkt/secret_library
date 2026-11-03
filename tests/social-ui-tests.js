@@ -29,17 +29,21 @@ export async function runSocialUiTests(test, assert, equal) {
   });
   await test('friends table slices before rendering and switches action based on direction', async () => {
     const page = document.createElement('div'); document.body.append(page);
-    const friends = Array.from({ length: 51 }, (_, i) => ({ uid: String(i), displayName: `User ${i}`, email: '', inbound: i !== 1, outbound: i !== 0 }));
+    const friends = Array.from({ length: 51 }, (_, i) => ({ uid: String(i), displayName: `User ${i}`, email: i === 0 ? 'reader@gmail.com' : '', inbound: i !== 1, outbound: i !== 0 }));
     const social = stub({ friends });
-    const cleanup = mountFriends(page, social, () => {});
+    const openedLibraries = [];
+    const cleanup = mountFriends(page, social, () => {}, (uid) => openedLibraries.push(uid));
     try {
       equal(page.querySelectorAll('tbody tr').length, 50, 'only first 50 rows exist');
-      assert(page.querySelector('.friends-count').textContent === 'Друзей: 51', 'unique count');
+      assert(page.querySelector('.friends-count').textContent === 'У вас 51 друг', 'grammatical count');
       const rows = [...page.querySelectorAll('tbody tr')];
+      const profileButton = rows[0].querySelector('.friend-library-button');
+      assert(profileButton && profileButton.textContent.includes('User 0') && profileButton.textContent.includes('reader@gmail.com'), 'friend name and email are one library button');
+      profileButton.click(); equal(openedLibraries, ['0'], 'friend library button opens the selected user');
       equal([...rows[0].children].slice(1).map((cell) => cell.textContent), ['Да', '—', 'ПОДЕЛИТЬСЯ'], 'inbound only');
       equal([...rows[1].children].slice(1).map((cell) => cell.textContent), ['—', 'Да', 'ЗАКРЫТЬ ДОСТУП'], 'outbound only');
       equal([...rows[2].children].slice(1).map((cell) => cell.textContent), ['Да', 'Да', 'ЗАКРЫТЬ ДОСТУП'], 'mutual');
-      rows[0].querySelector('button').click(); await tick(); equal(social.calls[0], ['0', true], 'share action');
+      rows[0].querySelector('.settings-save-button').click(); await tick(); equal(social.calls[0], ['0', true], 'share action');
       page.querySelector('[aria-label="Страница 2"]').click(); equal(page.querySelectorAll('tbody tr').length, 1, 'second page is a slice');
       social.update({ friends: friends.slice(0, 50) });
       assert(!page.querySelector('.book-pagination') && page.querySelectorAll('tbody tr').length === 50, '50 friends no paginator, page clamps');
@@ -49,7 +53,15 @@ export async function runSocialUiTests(test, assert, equal) {
       form.requestSubmit(); await tick();
       assert(form.elements.email.value === 'known@gmail.com' && !form.querySelector('button').disabled, 'network error keeps draft and enables retry');
       assert(page.querySelector('[role=status]').textContent === 'Connection failed', 'failure visible');
-      social.update({ friends: [] }); equal(page.querySelectorAll('tbody tr').length, 0, 'no active relationship removes row');
+      const shareButton = page.querySelector('.social-share-form .settings-save-button');
+      const revokeButton = page.querySelector('.friends-table .settings-save-button');
+      equal(getComputedStyle(revokeButton).paddingLeft, getComputedStyle(shareButton).paddingLeft, 'close access left padding matches share');
+      equal(getComputedStyle(revokeButton).paddingRight, getComputedStyle(shareButton).paddingRight, 'close access right padding matches share');
+      for (const [count, expected] of [[21, 'У вас 21 друг'], [22, 'У вас 22 друга'], [11, 'У вас 11 друзей'], [5, 'У вас 5 друзей'], [1, 'У вас 1 друг'], [0, 'У вас 0 друзей']]) {
+        social.update({ friends: friends.slice(0, count) });
+        equal(page.querySelector('.friends-count').textContent, expected, `Russian friend count for ${count}`);
+      }
+      equal(page.querySelectorAll('tbody tr').length, 0, 'no active relationship removes row');
     } finally { cleanup(); page.remove(); }
   });
   await test('settings controls use download accent, equal form heights and accessible Gmail placeholder', () => {

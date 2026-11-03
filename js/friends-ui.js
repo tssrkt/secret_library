@@ -1,7 +1,7 @@
 import { createPaginator, paginateItems } from './pagination.js';
 import { socialError } from './social-runtime.js';
 
-export function mountFriends(page, social, retry) {
+export function mountFriends(page, social, retry, openLibrary = (uid) => { window.location.href = `?library=${encodeURIComponent(uid)}`; }) {
   const shareSection = document.createElement('section');
   shareSection.className = 'social-section';
   shareSection.innerHTML = '<h3>Поделиться библиотекой</h3><form class="social-share-form"><label><input type="email" name="email" autocomplete="off" required aria-label="Gmail" placeholder="Gmail вашего друга"></label><button class="settings-save-button" type="submit">ПОДЕЛИТЬСЯ</button></form><p role="status"></p><button class="settings-save-button" type="button" data-social-retry hidden>ПОВТОРИТЬ ПОДКЛЮЧЕНИЕ</button>';
@@ -24,7 +24,13 @@ export function mountFriends(page, social, retry) {
   const render = () => {
     const paged = paginateItems(snapshot.friends, pageNumber, 50);
     pageNumber = paged.currentPage;
-    friendsSection.querySelector('.friends-count').textContent = `Друзей: ${paged.totalItems}`;
+    const count = paged.totalItems;
+    const remainder100 = count % 100;
+    const remainder10 = count % 10;
+    const noun = remainder100 >= 11 && remainder100 <= 14 ? 'друзей'
+      : remainder10 === 1 ? 'друг'
+        : remainder10 >= 2 && remainder10 <= 4 ? 'друга' : 'друзей';
+    friendsSection.querySelector('.friends-count').textContent = `У вас ${count.toLocaleString('ru-RU')} ${noun}`;
     const container = friendsSection.querySelector('.friends-table-container');
     const table = document.createElement('table');
     table.className = 'friends-table';
@@ -32,8 +38,12 @@ export function mountFriends(page, social, retry) {
     for (const friend of paged.items) {
       const row = document.createElement('tr');
       const name = document.createElement('td');
-      const text = document.createElement('span'); text.textContent = friend.displayName; name.append(text);
-      if (friend.email) { const email = document.createElement('small'); email.textContent = friend.email; name.append(email); }
+      const openButton = document.createElement('button');
+      openButton.type = 'button'; openButton.className = 'friend-library-button';
+      openButton.textContent = friend.displayName;
+      if (friend.email) { const email = document.createElement('small'); email.textContent = friend.email; openButton.append(email); }
+      openButton.addEventListener('click', () => openLibrary(friend.uid));
+      name.append(openButton);
       row.append(name);
       for (const value of [friend.inbound, friend.outbound]) { const cell = document.createElement('td'); cell.textContent = value ? 'Да' : '—'; row.append(cell); }
       const action = document.createElement('td');

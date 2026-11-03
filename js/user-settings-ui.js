@@ -17,6 +17,7 @@ export function createUserSettingsController({ container, index, onError, clearE
   const open = async () => {
     unmount();
     active = true;
+    documentRef.body?.classList.add('settings-page-open');
     const current = ++revision;
     const isCurrent = () => active && current === revision;
     clearError();
@@ -94,5 +95,15 @@ export function createUserSettingsController({ container, index, onError, clearE
       section.append(retry);
     }
   };
-  return { open, get active() { return active; }, leave() { active = false; revision++; unmount(); unmount = () => {}; } };
+  return {
+    open,
+    get active() { return active; },
+    leave() {
+      active = false;
+      revision++;
+      documentRef.body?.classList.remove('settings-page-open');
+      unmount();
+      unmount = () => {};
+    },
+  };
 }
