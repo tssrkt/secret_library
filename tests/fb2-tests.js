@@ -1133,7 +1133,7 @@ await test('annotation modal keeps close action fixed and uses readable computed
   const closeRect = close.getBoundingClientRect();
   assert(getComputedStyle(modal).position === 'relative' && getComputedStyle(close).position === 'absolute', 'close button is positioned against modal');
   assert(Math.abs(closeRect.top - modalRect.top - 14) < 1 && Math.abs(modalRect.right - closeRect.right - 16) < 1, 'close button remains at modal top-right');
-  assert(getComputedStyle(close.querySelector('span')).top === '-5px', 'close glyph is optically shifted upward inside its fixed square button');
+  assert(getComputedStyle(close.querySelector('span')).top === '-4px', 'close glyph is optically shifted upward inside its fixed square button');
   assert(Number.parseFloat(getComputedStyle(fixture.querySelector('.modal-header h2')).paddingRight) >= 40, 'heading reserves room for close button');
   equal([
     getComputedStyle(title).fontSize,
