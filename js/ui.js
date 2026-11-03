@@ -571,9 +571,8 @@ export function showLibraryUnavailable(message, goHome) {
   elements.libraryPanel.hidden = false;
   document.body.classList.add('viewing-friend-library');
   const panel = document.querySelector('#library-selection-message');
-  const button = document.createElement('button'); button.type = 'button'; button.textContent = 'Моя библиотека';
-  button.addEventListener('click', goHome);
-  panel.replaceChildren(document.createTextNode(`${message} `), button); panel.hidden = false;
+  panel.textContent = message;
+  panel.hidden = false;
   resetLibraryHome = goHome;
   openSettings = () => { goHome(); openSettings(); };
 }

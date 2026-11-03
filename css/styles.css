@@ -41,6 +41,9 @@ h1 { margin: 0; font: 750 clamp(2rem, 5vw, 3rem)/1.05 system-ui, sans-serif; whi
 .branding h1 a:focus-visible { outline: 3px solid #8a623b; outline-offset: .2rem; }
 .subtitle { margin: .35rem 0 0; color: #6a6359; }
 .account-actions { display: flex; align-items: center; flex: none; column-gap: .65rem; row-gap: .65rem; }
+.social-header .account-actions { column-gap: .5rem; }
+#sign-in-button { background: var(--download-accent); }
+#sign-in-button:not(:disabled):hover { background: var(--download-hover); }
 .account-actions > .search-icon-button, .account-actions > .notification-controls, .account-actions > .user-controls { margin: 0; }
 .user-controls { position: relative; }
 .avatar-button {
@@ -170,6 +173,7 @@ dl { display: flex; gap: 1.5rem; margin: 0; }
 dl div { text-align: right; }
 dt { color: #746b60; font-size: .78rem; }
 dd { margin: 0; color: #000; font-weight: 400; font-variant-numeric: tabular-nums; }
+#stats dd { font-weight: 700; }
 
 #library-panel { margin-top: 1rem; overflow: auto; }
 .library-tree { min-width: 0; }
@@ -599,6 +603,7 @@ dd { margin: 0; color: #000; font-weight: 400; font-variant-numeric: tabular-num
   h1 { font-size: clamp(1.45rem, 7vw, 2rem); }
   .subtitle { font-size: .85rem; }
   .account-actions { gap: .4rem; }
+  .social-header .account-actions { gap: .4rem; }
   .account-actions > button { padding: .55rem .7rem; }
   .status-panel { align-items: flex-start; flex-wrap: wrap; }
   .status-panel > p { flex-basis: 100%; }

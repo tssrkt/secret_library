@@ -131,7 +131,7 @@ export async function runSocialUiTests(test, assert, equal) {
       const before = rect('#notifications-button');
       const search = rect('#book-search-button'); const avatar = rect('#avatar-button');
       assert(search.right <= before.left && before.right <= avatar.left, `search bell avatar order at ${width}`);
-      const expectedGap = width <= 650 ? 6.4 : 10.4;
+      const expectedGap = width <= 650 ? 6.4 : 8;
       assert(Math.abs(before.left - search.right - expectedGap) < .02
         && Math.abs(avatar.left - before.right - expectedGap) < .02, 'search, bell and avatar use the responsive gap');
       assert(Math.abs((before.left - search.right) - (avatar.left - before.right)) < .02, 'search, bell and avatar gaps match');
