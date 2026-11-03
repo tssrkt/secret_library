@@ -17,12 +17,19 @@ function doPost(e) {
   let requestId = '';
   let stage = 'parse-request';
   let reservation = null;
+  let adminRequest = false;
   try {
     const raw = e && e.parameter && e.parameter.payload;
     if (!raw || raw.length > 12000) throw new Error('Некорректный запрос.');
     const input = JSON.parse(raw);
     requestId = String(input.requestId || '');
     if (!/^[a-zA-Z0-9_-]{12,80}$/.test(requestId)) throw new Error('Некорректный идентификатор запроса.');
+    if (input.action) {
+      adminRequest = true;
+      stage = 'admin-request';
+      const result = handleAdminRequest(input);
+      return adminResponsePage(requestId, true, '', result);
+    }
     const email = normalizeEmail(input.email);
     const idToken = String(input.idToken || '');
     if (!isValidEmail(email) || idToken.length < 100 || idToken.length > 5000) {
@@ -78,7 +85,9 @@ function doPost(e) {
       stage: stage,
       name: error && error.name ? String(error.name) : 'UnknownError'
     });
-    return responsePage(requestId, false, publicError(error));
+    return adminRequest
+      ? adminResponsePage(requestId, false, publicAdminError(error), null)
+      : responsePage(requestId, false, publicError(error));
   }
 }
 
@@ -256,4 +265,259 @@ function responsePage(requestId, ok, message) {
     '</body></html>';
   return HtmlService.createHtmlOutput(html)
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+}
+
+const ADMIN_EMAIL_ADDRESS = 'tssrkt777@gmail.com';
+const ADMIN_SECTIONS_API = ['overview', 'users', 'relationships', 'invites', 'shares', 'events', 'banned', 'admins'];
+const FIRESTORE_REST_ROOT = 'https://firestore.googleapis.com/v1/projects/' +
+  FIREBASE_PROJECT_ID + '/databases/(default)/documents/';
+
+function handleAdminRequest(input) {
+  const idToken = String(input.idToken || '');
+  if (idToken.length < 100 || idToken.length > 5000) throw new Error('Сеанс Google истёк. Войдите снова.');
+  const user = verifyFirebaseUser(idToken);
+  const action = String(input.action || '');
+  const data = input.data && typeof input.data === 'object' ? input.data : {};
+  if (action === 'bootstrapAdmin') {
+    if (normalizeEmail(user.email) !== ADMIN_EMAIL_ADDRESS) throw new Error('Первоначальная настройка доступна только владельцу проекта.');
+    if (fsGet('bannedUsers/' + user.localId)) throw new Error('Доступ к Тайной Библиотеке заблокирован.');
+    const admins = fsList('adminUsers');
+    const current = fsGet('adminUsers/' + user.localId);
+    if (admins.length && current?.role !== 'superadmin') throw new Error('Главный администратор уже настроен.');
+    if (current?.role === 'superadmin') {
+      fsSet('users/' + user.localId, { isAdmin: true });
+      return { ok: true, alreadyAdmin: true };
+    }
+    fsSet('adminUsers/' + user.localId, {
+      uid: user.localId, email: ADMIN_EMAIL_ADDRESS, role: 'superadmin', active: true,
+      permissions: Object.fromEntries(ADMIN_SECTIONS_API.map(k => [k, true])),
+      createdAt: new Date(), createdBy: 'bootstrap'
+    });
+    fsSet('users/' + user.localId, { isAdmin: true });
+    fsAddEvent(user.localId, 'bootstrap-admin', null, {});
+    return { ok: true, alreadyAdmin: false };
+  }
+  const actor = requireAdminApi(user.localId);
+  switch (action) {
+    case 'getAdminDashboard': return getAdminDashboardApi(actor);
+    case 'setAdminPermissions': return setAdminPermissionsApi(actor, data);
+    case 'banLibraryUser': return banLibraryUserApi(actor, data);
+    case 'restoreLibraryUser': return restoreLibraryUserApi(actor, data);
+    case 'adminRevokeInvitation': return revokeInvitationApi(actor, data);
+    case 'adminSetLibraryShare': return setLibraryShareApi(actor, data);
+    default: throw new Error('Неизвестная административная операция.');
+  }
+}
+
+function requireAdminApi(uid, permission) {
+  if (fsGet('bannedUsers/' + uid)) throw new Error('Доступ к Тайной Библиотеке заблокирован.');
+  const admin = fsGet('adminUsers/' + uid);
+  if (!admin || admin.active !== true) throw new Error('Нет прав администратора.');
+  if (admin.role !== 'superadmin' && permission && admin.permissions?.[permission] !== true) {
+    throw new Error('Недостаточно прав для этого действия.');
+  }
+  return { uid: uid, admin: admin };
+}
+
+function getAdminDashboardApi(actor) {
+  const p = actor.admin.role === 'superadmin'
+    ? Object.fromEntries(ADMIN_SECTIONS_API.map(k => [k, true])) : (actor.admin.permissions || {});
+  if (!Object.values(p).some(Boolean)) throw new Error('Не назначены права для просмотра админки.');
+  const users = p.users || p.relationships ? fsList('users') : [];
+  const banned = p.banned || p.users || p.relationships ? fsList('bannedUsers') : [];
+  const admins = p.admins || p.users ? fsList('adminUsers') : [];
+  const invites = p.invites ? fsList('pendingInvites').flatMap(inv => fsList('pendingInvites/' + inv.id + '/shares').map(item => ({
+    ...item, email: inv.id
+  }))) : [];
+  const shares = p.shares || p.relationships ? fsList('libraryShares') : [];
+  const events = p.events ? fsList('adminEvents').sort((a,b) => String(b.createdAt || '').localeCompare(String(a.createdAt || ''))).slice(0, 100) : [];
+  const userRows = users.map(u => ({ ...u, uid: u.id, banned: banned.some(b => b.id === u.id), admin: admins.some(a => a.id === u.id) }));
+  return {
+    permissions: p,
+    counts: {
+      users: p.users ? users.length : null,
+      invitations: p.invites ? invites.length : null,
+      acceptedInvitations: p.invites ? invites.filter(x => Boolean(x.claimedUid)).length : null,
+      shares: p.shares ? shares.filter(x => x.active === true).length : null,
+      admins: p.admins ? admins.length : null,
+      banned: p.banned ? banned.length : null
+    },
+    users: p.users || p.relationships ? userRows : [],
+    invitations: p.invites ? invites : [],
+    shares: p.shares || p.relationships ? shares : [],
+    admins: p.admins ? admins : [],
+    banned: p.banned ? banned : [],
+    events: p.events ? events : []
+  };
+}
+
+function setAdminPermissionsApi(actor, data) {
+  requireAdminApi(actor.uid, 'admins');
+  const uid = String(data.uid || '');
+  const permissions = data.permissions;
+  if (!uid || uid === actor.uid || !permissions || typeof permissions !== 'object' ||
+      Object.keys(permissions).some(k => !ADMIN_SECTIONS_API.includes(k) || typeof permissions[k] !== 'boolean')) {
+    throw new Error('Некорректные права администратора.');
+  }
+  if (!fsGet('users/' + uid)) throw new Error('Участник не найден.');
+  const old = fsGet('adminUsers/' + uid);
+  if (old?.role === 'superadmin') throw new Error('Нельзя менять права главного администратора.');
+  const active = data.active !== false;
+  fsSet('adminUsers/' + uid, {
+    uid, email: normalizeEmail(old?.email) || '', role: 'moderator', active, permissions,
+    updatedAt: new Date(), updatedBy: actor.uid
+  });
+  fsSet('users/' + uid, { isAdmin: active });
+  fsAddEvent(actor.uid, 'set-admin-permissions', uid, { permissions, active });
+  return { ok: true };
+}
+
+function banLibraryUserApi(actor, data) {
+  requireAdminApi(actor.uid, 'users');
+  const uid = String(data.uid || '');
+  const reason = typeof data.reason === 'string' ? data.reason.trim().slice(0, 500) : '';
+  if (!uid || uid === actor.uid) throw new Error('Нельзя заблокировать эту учётную запись.');
+  const admin = fsGet('adminUsers/' + uid);
+  if (admin?.role === 'superadmin') throw new Error('Главного администратора нельзя заблокировать.');
+  const profile = fsGet('users/' + uid);
+  if (!profile) throw new Error('Участник не найден.');
+  fsSet('bannedUsers/' + uid, {
+    uid, email: '', displayName: profile.displayName || '', reason, bannedBy: actor.uid,
+    adminWasActive: Boolean(admin && admin.active === true), bannedAt: new Date()
+  });
+  if (admin) {
+    fsSet('adminUsers/' + uid, { active: false, updatedAt: new Date(), updatedBy: actor.uid });
+    fsSet('users/' + uid, { isAdmin: false });
+  }
+  fsAddEvent(actor.uid, 'ban-user', uid, { reason });
+  return { ok: true };
+}
+
+function restoreLibraryUserApi(actor, data) {
+  requireAdminApi(actor.uid, 'banned');
+  const uid = String(data.uid || '');
+  if (!uid) throw new Error('Не указан участник.');
+  const banned = fsGet('bannedUsers/' + uid);
+  if (!banned) return { ok: true };
+  fsDelete('bannedUsers/' + uid);
+  const admin = fsGet('adminUsers/' + uid);
+  if (admin && banned.adminWasActive === true) {
+    fsSet('adminUsers/' + uid, { active: true, updatedAt: new Date(), updatedBy: actor.uid });
+    fsSet('users/' + uid, { isAdmin: true });
+  }
+  fsAddEvent(actor.uid, 'restore-user', uid, {});
+  return { ok: true };
+}
+
+function revokeInvitationApi(actor, data) {
+  requireAdminApi(actor.uid, 'invites');
+  const email = normalizeEmail(data.email);
+  const ownerUid = String(data.ownerUid || '');
+  if (!isValidEmail(email) || !ownerUid) throw new Error('Некорректное приглашение.');
+  const path = 'pendingInvites/' + encodeURIComponent(email) + '/shares/' + encodeURIComponent(ownerUid);
+  const item = fsGet(path);
+  if (!item) throw new Error('Приглашение не найдено.');
+  if (item.claimedUid) throw new Error('Приглашение уже принято.');
+  fsSet(path, { active: false, revokedAt: new Date(), revokedBy: actor.uid });
+  fsAddEvent(actor.uid, 'revoke-invitation', null, { email, ownerUid });
+  return { ok: true };
+}
+
+function setLibraryShareApi(actor, data) {
+  requireAdminApi(actor.uid, 'shares');
+  const id = String(data.id || '');
+  if (!id || typeof data.active !== 'boolean') throw new Error('Некорректный доступ.');
+  const current = fsGet('libraryShares/' + encodeURIComponent(id));
+  if (!current) throw new Error('Связь доступа не найдена.');
+  fsSet('libraryShares/' + encodeURIComponent(id), { active: data.active, revokedAt: data.active ? null : new Date() });
+  fsAddEvent(actor.uid, data.active ? 'admin-open-share' : 'admin-close-share', current.viewerUid || null, { ownerUid: current.ownerUid || '' });
+  return { ok: true };
+}
+
+function fsGet(path) {
+  const response = fsRequest('get', path);
+  return response ? { id: response.name.split('/').pop(), ...fsDecodeFields(response.fields || {}) } : null;
+}
+function fsList(path) {
+  const out = [];
+  let token = '';
+  do {
+    const url = FIRESTORE_REST_ROOT + path + '?pageSize=1000' + (token ? '&pageToken=' + encodeURIComponent(token) : '');
+    const response = fsFetch(url, 'get');
+    if (response.code !== 200) throw new Error('Не удалось прочитать данные Firebase.');
+    const body = JSON.parse(response.text);
+    (body.documents || []).forEach(doc => out.push({ id: doc.name.split('/').pop(), ...fsDecodeFields(doc.fields || {}) }));
+    token = body.nextPageToken || '';
+  } while (token);
+  return out;
+}
+function fsSet(path, values) {
+  const fields = fsEncodeFields(values);
+  const mask = Object.keys(fields).map(key => 'updateMask.fieldPaths=' + encodeURIComponent(key)).join('&');
+  const response = fsFetch(FIRESTORE_REST_ROOT + path + '?' + mask, 'patch', { fields: fields });
+  if (response.code < 200 || response.code >= 300) throw new Error('Не удалось сохранить данные Firebase (' + response.code + ').');
+}
+function fsDelete(path) {
+  const response = fsFetch(FIRESTORE_REST_ROOT + path, 'delete');
+  if (response.code !== 200 && response.code !== 204 && response.code !== 404) throw new Error('Не удалось удалить запись Firebase.');
+}
+function fsAddEvent(actorUid, action, targetUid, details) {
+  const id = Utilities.getUuid();
+  fsSet('adminEvents/' + id, { actorUid, action, targetUid: targetUid || null, details: details || {}, createdAt: new Date() });
+}
+function fsRequest(method, path, body) {
+  const response = fsFetch(FIRESTORE_REST_ROOT + path, method, body);
+  if (response.code === 404) return null;
+  if (response.code < 200 || response.code >= 300) throw new Error('Операция Firebase не выполнена (' + response.code + ').');
+  return response.text ? JSON.parse(response.text) : {};
+}
+function fsFetch(url, method, body) {
+  const options = { method: method, headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() }, muteHttpExceptions: true };
+  if (body !== undefined) { options.contentType = 'application/json'; options.payload = JSON.stringify(body); }
+  const response = UrlFetchApp.fetch(url, options);
+  return { code: response.getResponseCode(), text: response.getContentText() };
+}
+function fsDecodeFields(fields) {
+  const out = {};
+  Object.keys(fields).forEach(key => { out[key] = fsDecodeValue(fields[key]); });
+  return out;
+}
+function fsDecodeValue(value) {
+  if ('stringValue' in value) return value.stringValue;
+  if ('integerValue' in value) return Number(value.integerValue);
+  if ('doubleValue' in value) return value.doubleValue;
+  if ('booleanValue' in value) return value.booleanValue;
+  if ('timestampValue' in value) return value.timestampValue;
+  if ('nullValue' in value) return null;
+  if ('mapValue' in value) return fsDecodeFields(value.mapValue.fields || {});
+  if ('arrayValue' in value) return (value.arrayValue.values || []).map(fsDecodeValue);
+  return null;
+}
+function fsEncodeFields(values) {
+  const out = {};
+  Object.keys(values).forEach(key => { out[key] = fsEncodeValue(values[key]); });
+  return out;
+}
+function fsEncodeValue(value) {
+  if (value === null || value === undefined) return { nullValue: null };
+  if (value instanceof Date) return { timestampValue: value.toISOString() };
+  if (typeof value === 'string') return { stringValue: value };
+  if (typeof value === 'boolean') return { booleanValue: value };
+  if (typeof value === 'number') return Number.isInteger(value) ? { integerValue: String(value) } : { doubleValue: value };
+  if (Array.isArray(value)) return { arrayValue: { values: value.map(fsEncodeValue) } };
+  if (typeof value === 'object') return { mapValue: { fields: fsEncodeFields(value) } };
+  return { nullValue: null };
+}
+function publicAdminError(error) {
+  const message = error && error.message ? String(error.message) : '';
+  if (/^(Сеанс Google|Для отправки приглашений|Нет прав администратора|Доступ к Тайной Библиотеке|Главный администратор|Первоначальная настройка|Учётная запись администратора|Недостаточно прав|Не назначены права|Некорректные права|Нельзя менять права|Участник не найден|Нельзя заблокировать|Главного администратора|Не указан участник|Приглашение не найдено|Приглашение уже принято|Некорректное приглашение|Некорректный доступ|Связь доступа не найдена)/.test(message)) return message;
+  return 'Административная операция не выполнена. Проверьте разрешения Apps Script и доступ к Firebase.';
+}
+
+function adminResponsePage(requestId, ok, message, result) {
+  const payload = JSON.stringify({ type: 'secret-library-admin-result', requestId, ok, message, result })
+    .replace(/</g, '\\u003c');
+  const html = '<!doctype html><html><head><meta charset="utf-8"></head><body><script>window.top.postMessage(' +
+    payload + ', ' + JSON.stringify(SITE_ORIGIN) + ');</script></body></html>';
+  return HtmlService.createHtmlOutput(html).setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
 }

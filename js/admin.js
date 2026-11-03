@@ -1,5 +1,6 @@
 import { initializeAuth, requestAccessToken, getAccessToken } from './auth.js';
 import { startFirebaseSession } from './firebase-session.js';
+import { INVITATION_MAILER_URL } from './config.js';
 
 const $ = (selector) => document.querySelector(selector);
 const authPanel = $('#auth'), dashboard = $('#dashboard'), status = $('#status'), stats = $('#stats'), tabs = $('#tabs'), content = $('#content');
@@ -9,6 +10,39 @@ const sections = [
   ['shares','Доступ к библиотекам'],['events','Журнал событий'],['banned','Забаненные'],['admins','Администраторы и права']
 ];
 const label = (value) => value == null || value === '' ? '—' : String(value);
+function dateLabel(value) {
+  if (!value) return '—';
+  const date = value?.toDate ? value.toDate() : new Date(value);
+  return Number.isNaN(date.getTime()) ? '—' : date.toLocaleString('ru-RU');
+}
+function gasRequest(action, payload) {
+  if (!INVITATION_MAILER_URL) return Promise.reject(new Error('Не настроен адрес административного сервиса.'));
+  return new Promise(async (resolve, reject) => {
+    const requestId = Array.from(crypto.getRandomValues(new Uint8Array(18)), b => b.toString(16).padStart(2, '0')).join('');
+    const iframe = document.createElement('iframe');
+    iframe.name = 'admin-request-' + requestId;
+    iframe.hidden = true;
+    const form = document.createElement('form');
+    form.method = 'POST'; form.action = INVITATION_MAILER_URL; form.target = iframe.name; form.hidden = true;
+    const field = document.createElement('input'); field.type = 'hidden'; field.name = 'payload';
+    let idToken;
+    try { idToken = await session.user.getIdToken(); }
+    catch (error) { reject(error); return; }
+    field.value = JSON.stringify({ requestId, action, idToken, data: payload || {} });
+    form.append(field);
+    const cleanup = () => { window.removeEventListener('message', onMessage); clearTimeout(timer); form.remove(); iframe.remove(); };
+    const onMessage = event => {
+      if (event.source !== iframe.contentWindow || event.data?.type !== 'secret-library-admin-result' || event.data?.requestId !== requestId) return;
+      cleanup();
+      if (event.data.ok) resolve(event.data.result);
+      else reject(new Error(event.data.message || 'Административная операция не выполнена.'));
+    };
+    const timer = setTimeout(() => { cleanup(); reject(new Error('Сервис не ответил вовремя. Проверьте подключение и повторите попытку.')); }, 60000);
+    window.addEventListener('message', onMessage);
+    document.body.append(iframe, form);
+    form.submit();
+  });
+}
 function say(message, error = false) { status.textContent = message; status.classList.toggle('error', error); }
 function node(tag, text, cls) { const e = document.createElement(tag); if (text != null) e.textContent = text; if (cls) e.className = cls; return e; }
 function button(text, action, cls = '') { const b = node('button', text, cls); b.addEventListener('click', action); return b; }
@@ -95,7 +129,7 @@ function renderRelations() {
 }
 function renderInvites() {
   content.append(table(['Адрес приглашения','Пригласитель UID','Приглашённый UID','Статус письма','Создано','Действие'],(data.invitations||[]).map(i=>[
-    i.email,i.ownerUid,i.claimedUid||'Не принято',i.emailStatus||'—',i.createdAt?.toDate?.().toLocaleString('ru-RU')||'—',
+    i.email,i.ownerUid,i.claimedUid||'Не принято',i.emailStatus||'—',dateLabel(i.createdAt),
     !i.claimedUid && i.active!==false ? button('Отменить приглашение',async()=>{if(!confirm('Отменить это приглашение?'))return;try{await call('adminRevokeInvitation')({email:i.email,ownerUid:i.ownerUid||i.id});await refresh();}catch(e){say(e?.message||'Не удалось отменить приглашение.',true);}},'danger') : '—'
   ])));
 }
@@ -110,12 +144,12 @@ function renderShares() {
 }
 function renderEvents() {
   content.append(table(['Время','Администратор UID','Событие','Участник UID','Подробности'],(data.events||[]).map(e=>[
-    e.createdAt?.toDate?.().toLocaleString('ru-RU')||'—',e.actorUid,e.action,e.targetUid||'—',JSON.stringify(e.details||{})
+    dateLabel(e.createdAt),e.actorUid,e.action,e.targetUid||'—',JSON.stringify(e.details||{})
   ])));
 }
 function renderBanned() {
   content.append(table(['Участник','Причина','Кем заблокирован','Дата','Действие'],(data.banned||[]).map(u=>[
-    details(u.displayName,u.email,u.uid),u.reason,u.bannedBy,u.bannedAt?.toDate?.().toLocaleString('ru-RU')||'—',
+    details(u.displayName,u.email,u.uid),u.reason,u.bannedBy,dateLabel(u.bannedAt),
     button('Восстановить',async()=>{await call('restoreLibraryUser')({uid:u.uid});await refresh();})
   ])));
 }
@@ -158,9 +192,10 @@ async function login() {
     await initializeAuth();
     await requestAccessToken({prompt:''});
     session=await startFirebaseSession(getAccessToken());
-    const sdk=session.functionsSdk;
-    call=(name)=>sdk.httpsCallable(session.functions,name);
-    try { await call('bootstrapAdmin')({}); } catch(e) { if(!['functions/failed-precondition','functions/permission-denied'].includes(e.code)) throw e; }
+    call=(name)=>(payload={})=>gasRequest(name,payload);
+    try { await call('bootstrapAdmin')({}); } catch(e) {
+      if (!/Главный администратор уже настроен|Нет прав администратора|Первоначальная настройка доступна только владельцу проекта/.test(e?.message || '')) throw e;
+    }
     await refresh();
     authPanel.classList.add('hidden');dashboard.classList.remove('hidden');
   } catch(e) { say(e?.message||'Не удалось войти. Проверьте права администратора.',true); if(!dashboard.classList.contains('hidden')){} else {const p=node('p',e?.message||'Нет доступа','error');authPanel.append(p);} }
