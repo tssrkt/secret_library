@@ -24,6 +24,7 @@ import { createLibrarySelection } from './library-selection.js';
 import { loadUserSettings, loadRootFolderPreference, loadRootFolderResourceKey, saveRootFolderPreference } from './user-settings.js';
 import { chooseRootFolder } from './root-folder-picker.js';
 import { firebaseConfigured } from './firebase-config.js';
+import { hasMinimumBooks, MINIMUM_LIBRARY_BOOKS } from './library-access.js';
 
 function reportOperationError(index, error, stage, fileId = '', fileName = '') {
   if (!index || error.indexingLogged) return;
@@ -46,20 +47,22 @@ let activeRootFolderId = null;
 let activeRootFolderResourceKey = '';
 let reconnectRequired = false;
 let refreshCommitUncertain = false;
+let libraryAccessGranted = false;
 const authAttempts = createAuthAttemptGuard();
 const tabsRoot = document.querySelector('#library-tabs');
 const tabs = createLibraryTabs(tabsRoot, (uid) => selection.select(uid));
 const selection = createLibrarySelection({ tabs, service: social,
   show: (index, { own, ownerIndex, ownerId }) => {
+    if (!libraryAccessGranted) { tabsRoot.hidden = true; return; }
     tabsRoot.hidden = false;
     ui.renderLibrary(index, downloadBook, { ownerIndex, readOnly: !own, ownerId,
       onSettingsSaved: (index, settings) => publishLibrary(shareableIndex || index, settings),
       beforeSettingsSave: () => { sharingVersion++; return firebaseConfigured() ? social.unpublishLibrary() : Promise.resolve(); } });
   },
-  unavailable: (message, goHome) => { tabsRoot.hidden = false; ui.showLibraryUnavailable(message, goHome); },
+  unavailable: (message, goHome) => { if (!libraryAccessGranted) { tabsRoot.hidden = true; return; } tabsRoot.hidden = false; ui.showLibraryUnavailable(message, goHome); },
 });
 async function publishLibrary(index, settings = null) {
-  if (!social.ready) return;
+  if (!social.ready || !hasMinimumBooks(index)) return;
   const version = sharingVersion;
   const owner = authorizedOwner;
   const loaded = settings || (await loadUserSettings(index)).settings;
@@ -116,7 +119,38 @@ async function downloadBook(book) {
 }
 
 function renderLibrary(index) {
+  if (!hasMinimumBooks(index)) {
+    libraryAccessGranted = false;
+    tabsRoot.hidden = true;
+    selection.reset();
+    return;
+  }
+  libraryAccessGranted = true;
+  tabsRoot.hidden = false;
   selection.setOwn(index);
+}
+
+async function ensureMinimumBookAccess(index) {
+  if (hasMinimumBooks(index)) { libraryAccessGranted = true; return true; }
+  libraryAccessGranted = false;
+  tabsRoot.hidden = true;
+  selection.reset();
+  const count = Array.isArray(index?.books) ? index.books.length : 0;
+  ui.setStatus('В корневой папке найдено ' + count + ' книг. Для доступа к «Тайной Библиотеке» нужно не менее ' + MINIMUM_LIBRARY_BOOKS + '. Выберите другую папку.');
+  while (true) {
+    const folder = await chooseRootFolder({ listChildren: listFolderChildren, getFolder });
+    if (!folder) {
+      ui.setStatus('Доступ к каталогу закрыт: нужно не менее ' + MINIMUM_LIBRARY_BOOKS + ' книг. Выберите подходящую корневую папку через личное меню.');
+      return false;
+    }
+    if (folder.id === activeRootFolderId) {
+      ui.setStatus('В этой папке недостаточно книг. Выберите другую корневую папку с минимум ' + MINIMUM_LIBRARY_BOOKS + ' книгами.');
+      continue;
+    }
+    await saveRootFolderPreference(folder.id, folder.resourceKey);
+    window.location.reload();
+    return false;
+  }
 }
 
 const libraryRefresher = createLibraryRefresher({
@@ -156,6 +190,7 @@ async function rebuildIndex() {
     indexFileId = result.fileId;
     shareableIndex = result.index;
     ui.showStats(currentIndex.folders.length, currentIndex.books.length);
+    if (!await ensureMinimumBookAccess(result.index)) return;
     void publishLibrary(result.index).catch((error) => ui.showError(`Не удалось обновить каталог для друзей: ${socialError(error)}`));
     ui.setStatus(`Библиотека обновлена: ${result.index.books.length.toLocaleString('ru-RU')} книг.`);
     if (buildingIndex) await runMetadataIndexing({ resume: true });
@@ -272,7 +307,7 @@ async function runMetadataIndexing({ retryErrors = false, refreshOnly = false, r
       currentIndex = committed.index;
       shareableIndex = currentIndex;
       renderLibrary(currentIndex);
-      void publishLibrary(currentIndex).catch((error) => ui.showError(`Не удалось обновить каталог для друзей: ${socialError(error)}`));
+      if (hasMinimumBooks(currentIndex)) void publishLibrary(currentIndex).catch((error) => ui.showError(`Не удалось обновить каталог для друзей: ${socialError(error)}`));
       const obsoleteCovers = staleActiveCoverIds(activeIndex, currentIndex);
       const completedBuildingFileId = buildingIndexFileId;
       buildingIndex = null;
@@ -330,6 +365,8 @@ async function afterAuthorization() {
     selection.reset(); tabsRoot.hidden = true; ui.resetUi();
   }
   authorizedOwner = user.emailAddress;
+  libraryAccessGranted = false;
+  tabsRoot.hidden = true;
   activeRootFolderId = await loadRootFolderPreference();
   activeRootFolderResourceKey = activeRootFolderId ? await loadRootFolderResourceKey() : '';
   persistAuthSession(user);
@@ -389,7 +426,7 @@ async function afterAuthorization() {
         throw error;
       }
       renderLibrary(currentIndex);
-      void publishLibrary(currentIndex).catch((error) => ui.showError(`Не удалось обновить каталог для друзей: ${socialError(error)}`));
+      if (hasMinimumBooks(currentIndex)) void publishLibrary(currentIndex).catch((error) => ui.showError(`Не удалось обновить каталог для друзей: ${socialError(error)}`));
       ui.updateIndexingErrors(buildingIndex?.indexingErrors || currentIndex.indexingErrors || []);
       const coverIndex = buildingIndex
         ? { books: [...currentIndex.books, ...buildingIndex.books] }
