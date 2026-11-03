@@ -121,36 +121,36 @@ function renderRelations() {
       if (!children.length) return;
       const collapsed=childList.classList.toggle('collapsed');
       if (toggle) {
-        toggle.textContent=collapsed?'?':'?';
+        toggle.textContent=collapsed?'\u25B8':'\u25BE';
         toggle.setAttribute('aria-expanded',String(!collapsed));
-        toggle.setAttribute('aria-label',(collapsed?'??????????':'????????')+' ????? '+(u.displayName||u.uid));
+        toggle.setAttribute('aria-label',(collapsed?'\u0420\u0430\u0437\u0432\u0435\u0440\u043d\u0443\u0442\u044c':'\u0421\u0432\u0435\u0440\u043d\u0443\u0442\u044c')+' \u0432\u0435\u0442\u043a\u0443 '+(u.displayName||u.uid));
       }
     };
     if (children.length) {
-      toggle=button('?',toggleBranch,'tree-toggle');
+      toggle=button('\u25BE',toggleBranch,'tree-toggle');
       toggle.setAttribute('aria-expanded','true');
-      toggle.setAttribute('aria-label','???????? ????? '+(u.displayName||u.uid));
+      toggle.setAttribute('aria-label','\u0421\u0432\u0435\u0440\u043d\u0443\u0442\u044c \u0432\u0435\u0442\u043a\u0443 '+(u.displayName||u.uid));
       line.append(toggle);
     } else {
       line.append(node('span','', 'tree-toggle-placeholder'));
     }
     const name=children.length
-      ? button((u.displayName||'??? ?????')+(u.banned?' ? ???????':''),toggleBranch,'tree-name-button')
-      : node('span',(u.displayName||'??? ?????')+(u.banned?' ? ???????':''));
-    name.title='???????, ????? '+(children.length?'???????? ??? ?????????? ?????. ':'')+'UID: '+u.uid;
+      ? button((u.displayName||'\u0411\u0435\u0437 \u0438\u043c\u0435\u043d\u0438')+(u.banned?' \u00B7 \u0437\u0430\u0431\u0430\u043d':''),toggleBranch,'tree-name-button')
+      : node('span',(u.displayName||'\u0411\u0435\u0437 \u0438\u043c\u0435\u043d\u0438')+(u.banned?' \u00B7 \u0437\u0430\u0431\u0430\u043d':''));
+    name.title='\u041d\u0430\u0436\u043c\u0438\u0442\u0435, \u0447\u0442\u043e\u0431\u044b '+(children.length?'\u0441\u0432\u0435\u0440\u043d\u0443\u0442\u044c \u0438\u043b\u0438 \u0440\u0430\u0437\u0432\u0435\u0440\u043d\u0443\u0442\u044c \u0432\u0435\u0442\u043a\u0443. ':'')+'UID: '+u.uid;
     line.append(name);
-    const copy=button('?',async()=>{
+    const copy=button('\u2398',async()=>{
       try {
         await navigator.clipboard.writeText(String(u.uid));
-        const feedback=node('span','UID ??????????','uid-copy-feedback');
+        const feedback=node('span','UID \u0441\u043a\u043e\u043f\u0438\u0440\u043e\u0432\u0430\u043d','uid-copy-feedback');
         line.append(feedback);
         setTimeout(()=>feedback.remove(),1600);
       } catch (error) {
-        say('?? ??????? ??????????? UID. ????????? ?????? ? ?????? ?????? ? ?????????.',true);
+        say('\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u0441\u043a\u043e\u043f\u0438\u0440\u043e\u0432\u0430\u0442\u044c UID. \u0420\u0430\u0437\u0440\u0435\u0448\u0438\u0442\u0435 \u0434\u043e\u0441\u0442\u0443\u043f \u043a \u0431\u0443\u0444\u0435\u0440\u0443 \u043e\u0431\u043c\u0435\u043d\u0430 \u0438 \u043f\u043e\u0432\u0442\u043e\u0440\u0438\u0442\u0435.',true);
       }
     },'uid-copy-button');
-    copy.title='??????????? UID';
-    copy.setAttribute('aria-label','??????????? UID ???????????? '+(u.displayName||u.uid));
+    copy.title='\u0421\u043a\u043e\u043f\u0438\u0440\u043e\u0432\u0430\u0442\u044c UID';
+    copy.setAttribute('aria-label','\u0421\u043a\u043e\u043f\u0438\u0440\u043e\u0432\u0430\u0442\u044c UID \u043f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u044f '+(u.displayName||u.uid));
     line.append(copy); box.append(line);
     children.forEach(c=>childList.append(branch(c,depth+1,next)));
     box.append(childList);
