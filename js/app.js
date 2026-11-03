@@ -349,6 +349,9 @@ async function afterAuthorization() {
   reconnectRequired = false;
   ui.setReconnectRequired(false);
   ui.setAuthorized(true);
+  // Refresh the signed-in user's public admin marker, but never let this auxiliary check block Google sign-in.
+  try { await social.checkAccess(getAccessToken()); }
+  catch (error) { console.warn('Не удалось обновить статус администратора:', error); }
   void social.connect(getAccessToken());
   void ui.setUserAvatar(user);
   ui.clearError();
