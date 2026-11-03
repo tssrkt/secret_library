@@ -394,6 +394,9 @@ async function afterAuthorization() {
   void ui.setUserAvatar(user);
   ui.clearError();
   if (sameOwner && currentIndex) {
+    // A previously rejected library may have gained books in Drive since the last scan.
+    // Refresh the stale index before asking the user to choose another root folder.
+    if (!hasMinimumBooks(currentIndex)) { await rebuildIndex(); return; }
     if (!await ensureMinimumBookAccess(currentIndex)) return;
     renderLibrary(currentIndex);
     if (buildingIndex && !metadataController) await runMetadataIndexing({ resume: true });
