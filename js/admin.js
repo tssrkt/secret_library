@@ -126,10 +126,17 @@ function renderRelations() {
     const outgoing=active.filter(s=>s.ownerUid===u.uid).map(s=>s.viewerUid);
     const incoming=active.filter(s=>s.viewerUid===u.uid).map(s=>s.ownerUid);
     const others=new Set([...outgoing,...incoming]);
-    const types=[...others].map(other=>{
+    const grouped = { mutual: [], outgoing: [], incoming: [] };
+    [...others].forEach(other => {
       const out=outgoing.includes(other), inc=incoming.includes(other), name=(data.users||[]).find(x=>x.uid===other)?.displayName||other;
-      return (out&&inc?'Взаимные: ':out?'Делится: ':'Пользуется: ')+name;
+      if (out && inc) grouped.mutual.push(name);
+      else if (out) grouped.outgoing.push(name);
+      else grouped.incoming.push(name);
     });
+    const types = [];
+    if (grouped.mutual.length) types.push('Взаимные: '+grouped.mutual.join(', '));
+    if (grouped.outgoing.length) types.push('Делится: '+grouped.outgoing.join(', '));
+    if (grouped.incoming.length) types.push('Пользуется: '+grouped.incoming.join(', '));
     return [details(u.displayName,'',u.uid),(data.users||[]).find(x=>x.uid===u.invitedByUid)?.displayName||u.invitedByUid||'—',invited.join(', ')||'—',types.join('; ')||'—'];
   })));
   content.append(node('h3','Отдельные связи доступа'));
