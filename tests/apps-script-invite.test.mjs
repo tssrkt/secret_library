@@ -168,3 +168,79 @@ test('prevents changing a library share involving the superadmin on the server',
   app.context.fsAddEvent = () => assert.fail('must not log a blocked mutation as completed');
   assert.throws(() => app.context.setLibraryShareApi({}, { id: 'share-1', active: false }), /Нельзя изменять доступ/);
 });
+
+
+function adminHarness({ permissions = {}, active = true, banned = false, role = 'moderator' } = {}) {
+  const app = harness();
+  const writes = [];
+  const records = new Map([
+    ['adminUsers/mod-uid', { uid: 'mod-uid', role, active, permissions }],
+    ['users/target-uid', { id: 'target-uid', displayName: 'Участник' }],
+  ]);
+  if (banned) records.set('bannedUsers/mod-uid', { uid: 'mod-uid' });
+  app.context.fsGet = (path) => records.get(path) || null;
+  app.context.fsSet = (path, value) => { writes.push({ path, value }); records.set(path, { ...(records.get(path) || {}), ...value }); };
+  app.context.fsDelete = (path) => { writes.push({ path, delete: true }); records.delete(path); };
+  app.context.fsAddEvent = (...args) => writes.push({ event: args });
+  return { ...app, writes, records };
+}
+
+test('admin API rejects a banned moderator before any administrative operation', () => {
+  const app = adminHarness({ permissions: { users: true }, banned: true });
+  assert.throws(() => app.context.requireAdminApi('mod-uid', 'users'), /Доступ к Тайной Библиотеке заблокирован/);
+  assert.equal(app.writes.length, 0);
+});
+
+test('admin API rejects missing and inactive administrator records', () => {
+  const app = adminHarness({ permissions: { users: true }, active: false });
+  assert.throws(() => app.context.requireAdminApi('mod-uid', 'users'), /Нет прав администратора/);
+  app.context.fsGet = () => null;
+  assert.throws(() => app.context.requireAdminApi('mod-uid', 'users'), /Нет прав администратора/);
+});
+
+test('each moderator mutation requires its own explicit permission', async (t) => {
+  const cases = [
+    ['admins', (ctx) => ctx.setAdminPermissionsApi({ uid: 'mod-uid', admin: { role: 'moderator', active: true, permissions: { admins: false } } }, { uid: 'target-uid', permissions: { users: true } })],
+    ['users', (ctx) => ctx.banLibraryUserApi({ uid: 'mod-uid', admin: { role: 'moderator', active: true, permissions: { users: false } } }, { uid: 'target-uid' })],
+    ['banned', (ctx) => ctx.restoreLibraryUserApi({ uid: 'mod-uid', admin: { role: 'moderator', active: true, permissions: { banned: false } } }, { uid: 'target-uid' })],
+    ['invites', (ctx) => ctx.revokeInvitationApi({ uid: 'mod-uid', admin: { role: 'moderator', active: true, permissions: { invites: false } } }, { email: 'friend@gmail.com', ownerUid: 'owner-uid' })],
+    ['shares', (ctx) => ctx.setLibraryShareApi({ uid: 'mod-uid', admin: { role: 'moderator', active: true, permissions: { shares: false } } }, { id: 'share-1', active: false })],
+  ];
+  for (const [permission, invoke] of cases) {
+    await t.test(permission, () => {
+      const app = adminHarness({ permissions: { [permission]: false } });
+      assert.throws(() => invoke(app.context), /Недостаточно прав/);
+      assert.equal(app.writes.length, 0, 'denied action must not write data or audit events');
+    });
+  }
+});
+
+test('moderator cannot grant themselves privileges or alter the superadmin', () => {
+  const app = adminHarness({ permissions: { admins: true } });
+  const actor = { uid: 'mod-uid', admin: { role: 'moderator', active: true, permissions: { admins: true } } };
+  assert.throws(() => app.context.setAdminPermissionsApi(actor, { uid: 'mod-uid', permissions: { users: true } }), /Некорректные права/);
+  app.records.set('adminUsers/super-uid', { uid: 'super-uid', role: 'superadmin' });
+  app.records.set('users/super-uid', { id: 'super-uid' });
+  assert.throws(() => app.context.setAdminPermissionsApi(actor, { uid: 'super-uid', permissions: { users: false } }), /Нельзя менять права главного администратора/);
+  assert.equal(app.writes.length, 0);
+});
+
+test('superadmin bootstrap provisions only the configured public project email', () => {
+  const adminUser = {
+    localId: 'owner-uid', email: 'secret.society.library@gmail.com', emailVerified: true,
+    displayName: 'Администратор', providerUserInfo: [{ providerId: 'google.com' }]
+  };
+  const app = harness({ authUser: adminUser });
+  const writes = [];
+  app.context.fsGet = () => null;
+  app.context.fsList = () => [];
+  app.context.fsSet = (path, value) => writes.push({ path, value });
+  app.context.fsAddEvent = (...args) => writes.push({ event: args });
+  const result = app.context.handleAdminRequest({ idToken: 'firebase-id-token-'.padEnd(500, 'x'), action: 'bootstrapAdmin' });
+  assert.equal(result.alreadyAdmin, false);
+  assert.equal(writes.find((x) => x.path === 'adminUsers/owner-uid').value.email, 'secret.society.library@gmail.com');
+  assert.equal(writes.find((x) => x.path === 'adminUsers/owner-uid').value.role, 'superadmin');
+
+  const wrong = harness({ authUser: { ...adminUser, email: 'other@gmail.com' } });
+  assert.throws(() => wrong.context.handleAdminRequest({ idToken: 'firebase-id-token-'.padEnd(500, 'x'), action: 'bootstrapAdmin' }), /Первоначальная настройка доступна только владельцу проекта/);
+});

@@ -267,7 +267,7 @@ function responsePage(requestId, ok, message) {
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
 }
 
-const ADMIN_EMAIL_ADDRESS = 'tssrkt777@gmail.com';
+const ADMIN_EMAIL_ADDRESS = 'secret.society.library@gmail.com';
 const ADMIN_SECTIONS_API = ['overview', 'users', 'relationships', 'invites', 'shares', 'events', 'banned', 'admins'];
 const FIRESTORE_REST_ROOT = 'https://firestore.googleapis.com/v1/projects/' +
   FIREBASE_PROJECT_ID + '/databases/(default)/documents/';

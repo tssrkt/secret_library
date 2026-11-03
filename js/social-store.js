@@ -5,7 +5,7 @@ export function createSocialStore({ db, sdk, user }) {
     serverTimestamp, onSnapshot, writeBatch } = sdk;
   const uid = user.uid;
   const email = normalizeEmail(user.email);
-  const superAdminEmail = 'tssrkt777@gmail.com';
+  const superAdminEmail = 'secret.society.library@gmail.com';
   let superAdminUid = '';
   const ref = (...path) => doc(db, ...path);
   const data = (snapshot) => snapshot.exists() ? snapshot.data() : null;
