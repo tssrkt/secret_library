@@ -1,4 +1,4 @@
-export function chooseRootFolder({ listChildren, getFolder, documentRef = document }) {
+export function chooseRootFolder({ listChildren, getFolder, description = 'Выберите папку с книгами. Сайт будет сканировать её и все вложенные папки.', documentRef = document }) {
   return new Promise((resolve, reject) => {
     const backdrop = documentRef.createElement('div');
     backdrop.className = 'modal-backdrop root-folder-backdrop';
@@ -8,6 +8,7 @@ export function chooseRootFolder({ listChildren, getFolder, documentRef = docume
     dialog.setAttribute('aria-modal', 'true');
     dialog.setAttribute('aria-labelledby', 'root-folder-title');
     dialog.innerHTML = '<header><h2 id="root-folder-title">Выберите корневую папку</h2><button type="button" class="secondary compact" data-close aria-label="Закрыть">×</button></header><p class="root-folder-description">Выберите папку с книгами. Сайт будет сканировать её и все вложенные папки.</p><nav class="root-folder-breadcrumb" aria-label="Путь к папке"></nav><p class="root-folder-status" role="status">Загружаем папки…</p><ul class="root-folder-list"></ul><footer><button type="button" class="secondary" data-cancel>Отмена</button><button type="button" data-select disabled>Выбрать эту папку</button></footer>';
+    dialog.querySelector('.root-folder-description').textContent = description;
     backdrop.append(dialog);
     documentRef.body.append(backdrop);
     const breadcrumb = dialog.querySelector('.root-folder-breadcrumb');

@@ -138,7 +138,8 @@ async function ensureMinimumBookAccess(index) {
   const count = Array.isArray(index?.books) ? index.books.length : 0;
   ui.setStatus('В корневой папке найдено ' + count + ' книг. Для доступа к «Тайной Библиотеке» нужно не менее ' + MINIMUM_LIBRARY_BOOKS + '. Выберите другую папку.');
   while (true) {
-    const folder = await chooseRootFolder({ listChildren: listFolderChildren, getFolder });
+    const folder = await chooseRootFolder({ listChildren: listFolderChildren, getFolder,
+      description: 'Выберите корневую папку, в которой после сканирования будет найдено не менее ' + MINIMUM_LIBRARY_BOOKS + ' книг. Учитываются книги во вложенных папках. Если книг окажется меньше, доступ к каталогу останется закрытым.' });
     if (!folder) {
       ui.setStatus('Доступ к каталогу закрыт: нужно не менее ' + MINIMUM_LIBRARY_BOOKS + ' книг. Выберите подходящую корневую папку через личное меню.');
       return false;
@@ -392,6 +393,8 @@ async function afterAuthorization() {
   void ui.setUserAvatar(user);
   ui.clearError();
   if (sameOwner && currentIndex) {
+    if (!await ensureMinimumBookAccess(currentIndex)) return;
+    renderLibrary(currentIndex);
     if (buildingIndex && !metadataController) await runMetadataIndexing({ resume: true });
     return;
   }
