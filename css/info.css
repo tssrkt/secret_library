@@ -33,10 +33,11 @@
   white-space: normal;
   line-height: 1.25;
   font-weight: 700;
-  margin: 24pt 0 10pt !important;
+  margin: 10pt 0 4pt !important;
   text-align: left;
 }
 .info-document > h1:first-child { margin-top: 0 !important; }
+.info-document p:has(> br:only-child) { display: none; }
 .info-document h2 { margin: 10pt 0 4pt !important; }
 .info-document .source-numbering { list-style: none; margin: 0; padding: 0; }
 .info-page .info-document a {

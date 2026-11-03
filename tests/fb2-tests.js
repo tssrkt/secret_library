@@ -33,7 +33,7 @@ import { runIndexerResilienceTests } from './indexer-resilience-tests.js';
 import { runBookFormatTests } from './book-formats-tests.js';
 import { runSocialUiTests } from './social-ui-tests.js';
 import {
-  AUTH_SESSION_KEY, PREVIOUS_SIGN_IN_KEY, clearAccessToken, clearPersistedAuth,
+  AUTH_SESSION_KEY, PREVIOUS_SIGN_IN_KEY, PERSISTED_PROFILE_KEY, clearAccessToken, clearPersistedAuth,
   createAuthAttemptGuard, getAccessToken, persistAuthSession, recoverAuthSession, restoreAuthSession,
 } from '../js/auth.js';
 
@@ -99,9 +99,10 @@ await test('session persists account data and manual logout clears all state', (
   persistAuthSession({ displayName: 'Ada King', emailAddress: 'ada@example.com', photoLink: 'photo' }, { session, local });
   const saved = JSON.parse(session.getItem(AUTH_SESSION_KEY));
   equal([saved.user.displayName, saved.user.emailAddress], ['Ada King', 'ada@example.com'], 'account persisted');
+  equal(JSON.parse(local.getItem(PERSISTED_PROFILE_KEY)), { displayName: 'Ada King', emailAddress: 'ada@example.com', photoLink: 'photo' }, 'profile persists separately from expiring token');
   clearPersistedAuth({ forget: true, session, local });
   clearAccessToken();
-  equal([session.getItem(AUTH_SESSION_KEY), local.getItem(PREVIOUS_SIGN_IN_KEY), getAccessToken()], [null, null, null], 'manual logout clears session, marker and token');
+  equal([session.getItem(AUTH_SESSION_KEY), local.getItem(PREVIOUS_SIGN_IN_KEY), local.getItem(PERSISTED_PROFILE_KEY), getAccessToken()], [null, null, null, null], 'manual logout clears session, marker, profile and token');
 });
 
 await test('late Google response cannot restore authorization after logout', () => {

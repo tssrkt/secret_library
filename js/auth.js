@@ -35,6 +35,7 @@ export async function ensureAccessToken() {
 
 export const AUTH_SESSION_KEY = 'secret-library-google-session';
 export const PREVIOUS_SIGN_IN_KEY = 'secret-library-previous-sign-in';
+export const PERSISTED_PROFILE_KEY = 'secret-library-persisted-profile';
 
 function storageOrNull(name) {
   try { return window[name]; } catch { return null; }
@@ -48,6 +49,11 @@ export function persistAuthSession(user = {}, {
   try {
     session?.setItem(AUTH_SESSION_KEY, JSON.stringify({ accessToken, expiresAt: tokenExpiresAt, user }));
     local?.setItem(PREVIOUS_SIGN_IN_KEY, '1');
+    local?.setItem(PERSISTED_PROFILE_KEY, JSON.stringify({
+      displayName: user.displayName || '',
+      emailAddress: user.emailAddress || '',
+      photoLink: user.photoLink || '',
+    }));
     return true;
   } catch { return false; }
 }
@@ -79,7 +85,12 @@ export function clearPersistedAuth({
   forget = false, session = storageOrNull('sessionStorage'), local = storageOrNull('localStorage'),
 } = {}) {
   try { session?.removeItem(AUTH_SESSION_KEY); } catch { /* storage may be unavailable */ }
-  try { if (forget) local?.removeItem(PREVIOUS_SIGN_IN_KEY); } catch { /* storage may be unavailable */ }
+  try {
+    if (forget) {
+      local?.removeItem(PREVIOUS_SIGN_IN_KEY);
+      local?.removeItem(PERSISTED_PROFILE_KEY);
+    }
+  } catch { /* storage may be unavailable */ }
 }
 
 export function createAuthAttemptGuard() {

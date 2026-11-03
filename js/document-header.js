@@ -41,9 +41,12 @@ if (host) {
     notificationsButton.addEventListener('click', () => home('#notifications'));
 
     let session = null;
+    let profile = null;
     try { session = JSON.parse(window.sessionStorage.getItem('secret-library-google-session') || 'null'); }
     catch { session = null; }
-    const user = session?.user;
+    try { profile = JSON.parse(window.localStorage.getItem('secret-library-persisted-profile') || 'null'); }
+    catch { profile = null; }
+    const user = session?.user || profile;
     const dropdown = setupDropdown(avatarButton, avatarMenu);
     // The account UI should reflect the persisted sign-in, even if the short-lived Drive token needs renewal.
     if (user && (user.emailAddress || user.displayName || user.photoLink)) {
