@@ -49,7 +49,7 @@ export function chooseRootFolder({ listChildren, getFolder, scanFolder, descript
         let scanSummary = '';
         if (scanFiles && scanFolder) {
           status.textContent = '\u0421\u043a\u0430\u043d\u0438\u0440\u0443\u044e \u0444\u0430\u0439\u043b\u044b \u0438 \u0432\u043b\u043e\u0436\u0435\u043d\u043d\u044b\u0435 \u043f\u0430\u043f\u043a\u0438?';
-          const scanned = await scanFolder(currentFolder.id, { rootResourceKey: currentFolder.resourceKey || '' });
+          const scanned = await scanFolder(currentFolder.id, () => {}, { rootResourceKey: currentFolder.resourceKey || '' });
           scanSummary = ' \u041d\u0430\u0439\u0434\u0435\u043d\u043e \u043a\u043d\u0438\u0433: ' + scanned.books.length.toLocaleString('ru-RU') + '; \u043f\u0430\u043f\u043e\u043a: ' + Math.max(0, scanned.folders.length - 1).toLocaleString('ru-RU') + '.';
         }
         status.textContent = (folders.length ? '\u0412\u043b\u043e\u0436\u0435\u043d\u043d\u044b\u0435 \u043f\u0430\u043f\u043a\u0438 \u043e\u0442\u043e\u0431\u0440\u0430\u0436\u0435\u043d\u044b \u043d\u0438\u0436\u0435.' : '\u0412 \u044d\u0442\u043e\u0439 \u043f\u0430\u043f\u043a\u0435 \u043d\u0435\u0442 \u0432\u043b\u043e\u0436\u0435\u043d\u043d\u044b\u0445 \u043f\u0430\u043f\u043e\u043a.') + scanSummary;
