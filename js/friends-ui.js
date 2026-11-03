@@ -18,7 +18,7 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
   let pageNumber = 1;
   let sending = false;
   let closed = false;
-  let synced = false;
+  let lastSyncSignature = null;
   let serviceMessage = '';
   const busy = new Set();
   const render = () => {
@@ -79,9 +79,14 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
     if (next.message || message.textContent === serviceMessage) message.textContent = next.message || '';
     serviceMessage = next.message || '';
     render();
-    if (next.status === 'ready' && !synced) {
-      synced = true;
-      void social.syncKnownContacts().catch((error) => { synced = false; if (!closed) message.textContent = socialError(error); });
+    if (next.status === 'ready') {
+      // A pending invite becomes an active friend only after the invitee registers.
+      // Re-sync when the relationship list changes, not just on the owner's first load.
+      const signature = next.friends.map((friend) => `${friend.uid}:${friend.inbound ? 1 : 0}:${friend.outbound ? 1 : 0}`).sort().join('|');
+      if (signature !== lastSyncSignature) {
+        lastSyncSignature = signature;
+        void social.syncKnownContacts().catch((error) => { lastSyncSignature = ''; if (!closed) message.textContent = socialError(error); });
+      }
     }
   });
   form.addEventListener('submit', async (event) => {

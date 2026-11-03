@@ -10,7 +10,7 @@ export async function runSocialUiTests(test, assert, equal) {
     const listeners = new Set(); const calls = [];
     return { calls, subscribe(fn) { listeners.add(fn); fn(state); return () => listeners.delete(fn); },
       update(change) { state = { ...state, ...change }; listeners.forEach((fn) => fn(state)); },
-      async syncKnownContacts() {}, async shareWithEmail(email) { calls.push(email); return 'Доступ предоставлен.'; },
+      async syncKnownContacts() { calls.push('syncKnownContacts'); }, async shareWithEmail(email) { calls.push(email); return 'Доступ предоставлен.'; },
       async setSharing(uid, active) { calls.push([uid, active]); },
       async markSeen(items) { calls.push(items); this.update({ notifications: state.notifications.map((item) => items.includes(item) ? { ...item, unread: false } : item) }); },
     };
@@ -26,6 +26,18 @@ export async function runSocialUiTests(test, assert, equal) {
     assert(notificationsModel('me', shares)[0].mutual, 'reciprocal share');
     assert(!notificationsModel('me', shares, { a: { seenSharedAt: 1 } })[0].unread, 'seen timestamp hides unread');
     assert(notificationsModel('me', [{ ...shares[0], sharedAt: 3 }], { a: { seenSharedAt: 1 } })[0].unread, 'regrant is unread');
+  });
+  await test('known contact sync repeats when an invited friend registers later', async () => {
+    const page = document.createElement('div'); document.body.append(page);
+    const social = stub({ friends: [] });
+    const cleanup = mountFriends(page, social, () => {});
+    try {
+      await tick();
+      assert(social.calls.filter((call) => call === 'syncKnownContacts').length === 1, 'initial contact sync runs');
+      social.update({ friends: [{ uid: 'tara', displayName: 'Тара', email: '', inbound: false, outbound: true }] });
+      await tick();
+      assert(social.calls.filter((call) => call === 'syncKnownContacts').length === 2, 'new friend triggers another contact sync');
+    } finally { cleanup(); page.remove(); }
   });
   await test('friends table labels administrators without displaying their email', () => {
     const page = document.createElement('div'); document.body.append(page);

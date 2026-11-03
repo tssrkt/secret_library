@@ -136,16 +136,17 @@ async function ensureMinimumBookAccess(index) {
   tabsRoot.hidden = true;
   selection.reset();
   const count = Array.isArray(index?.books) ? index.books.length : 0;
-  ui.setStatus('В корневой папке найдено ' + count + ' книг. Для доступа к «Тайной Библиотеке» нужно не менее ' + MINIMUM_LIBRARY_BOOKS + '. Выберите другую папку.');
+  const reason = 'В вашей папке всего ' + count + ' книг, а нужно не менее ' + MINIMUM_LIBRARY_BOOKS + '!';
+  ui.setStatus(reason + ' Выберите другую корневую папку.');
   while (true) {
     const folder = await chooseRootFolder({ listChildren: listFolderChildren, getFolder,
-      description: 'Выберите корневую папку, в которой после сканирования будет найдено не менее ' + MINIMUM_LIBRARY_BOOKS + ' книг. Учитываются книги во вложенных папках. Если книг окажется меньше, доступ к каталогу останется закрытым.' });
+      description: reason + ' Выберите корневую папку, где после сканирования найдётся не менее ' + MINIMUM_LIBRARY_BOOKS + ' книг. Учитываются книги во вложенных папках.' });
     if (!folder) {
       ui.setStatus('Доступ к каталогу закрыт: нужно не менее ' + MINIMUM_LIBRARY_BOOKS + ' книг. Выберите подходящую корневую папку через личное меню.');
       return false;
     }
     if (folder.id === activeRootFolderId) {
-      ui.setStatus('В этой папке недостаточно книг. Выберите другую корневую папку с минимум ' + MINIMUM_LIBRARY_BOOKS + ' книгами.');
+      ui.setStatus(reason + ' Выберите другую корневую папку.');
       continue;
     }
     await saveRootFolderPreference(folder.id, folder.resourceKey);
@@ -410,6 +411,9 @@ async function afterAuthorization() {
     if (saved.index) {
       currentIndex = saved.index;
       refreshCommitUncertain = false;
+      // The saved index may be stale if the user added books after the previous scan.
+      // Refresh Drive first; enforce the minimum against the fresh scan, not the old cache.
+      if (!hasMinimumBooks(currentIndex)) { await rebuildIndex(); return; }
       if (!await ensureMinimumBookAccess(currentIndex)) return;
       if (saved.migrated) {
         saved.index.updatedAt = new Date().toISOString();
