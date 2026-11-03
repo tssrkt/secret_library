@@ -113,8 +113,27 @@ function renderRelations() {
     if(seen.has(u.uid)) return node('div','Цикл связей обнаружен');
     const next=new Set(seen); next.add(u.uid);
     const box=node('div',null,'relationship'); box.style.marginLeft=(depth*18)+'px';
-    box.append(node('div',(u.displayName||u.uid)+(u.banned?' · забанен':'')));
-    (childMap.get(u.uid)||[]).sort((a,b)=>(a.displayName||'').localeCompare(b.displayName||'','ru')).forEach(c=>box.append(branch(c,depth+1,next)));
+    const children=(childMap.get(u.uid)||[]).sort((a,b)=>(a.displayName||'').localeCompare(b.displayName||'','ru'));
+    const line=node('div',null,'relationship-line');
+    if (children.length) {
+      const toggle=button('▾',()=> {
+        const collapsed=childList.classList.toggle('collapsed');
+        toggle.textContent=collapsed?'▸':'▾';
+        toggle.setAttribute('aria-expanded',String(!collapsed));
+        toggle.setAttribute('aria-label',(collapsed?'Развернуть':'Свернуть')+' ветку '+(u.displayName||u.uid));
+      },'tree-toggle');
+      toggle.setAttribute('aria-expanded','true');
+      toggle.setAttribute('aria-label','Свернуть ветку '+(u.displayName||u.uid));
+      line.append(toggle);
+    } else {
+      line.append(node('span','', 'tree-toggle-placeholder'));
+    }
+    const name=node('span',(u.displayName||'Без имени')+(u.banned?' · забанен':''));
+    name.title='UID: '+u.uid;
+    line.append(name); box.append(line);
+    const childList=node('div',null,'relationship-children');
+    children.forEach(c=>childList.append(branch(c,depth+1,next)));
+    box.append(childList);
     return box;
   }
   roots.sort((a,b)=>(a.displayName||'').localeCompare(b.displayName||'','ru')).forEach(u=>tree.append(branch(u)));
@@ -137,7 +156,8 @@ function renderRelations() {
     if (grouped.mutual.length) types.push('Взаимные: '+grouped.mutual.join(', '));
     if (grouped.outgoing.length) types.push('Делится: '+grouped.outgoing.join(', '));
     if (grouped.incoming.length) types.push('Пользуется: '+grouped.incoming.join(', '));
-    return [details(u.displayName,'',u.uid),(data.users||[]).find(x=>x.uid===u.invitedByUid)?.displayName||u.invitedByUid||'—',invited.join(', ')||'—',types.join('; ')||'—'];
+    const userName=node('div'); const visibleName=node('strong',u.displayName||'Без имени'); visibleName.title='UID: '+u.uid; userName.append(visibleName);
+    return [userName,(data.users||[]).find(x=>x.uid===u.invitedByUid)?.displayName||u.invitedByUid||'—',invited.join(', ')||'—',types.join('; ')||'—'];
   })));
   content.append(node('h3','Отдельные связи доступа'));
   content.append(table(['Владелец библиотеки','Пользователь','Доступ'],(data.shares||[]).map(s=>[
