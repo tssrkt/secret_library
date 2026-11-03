@@ -45,6 +45,7 @@ h1 { margin: 0; font: 750 clamp(2rem, 5vw, 3rem)/1.05 system-ui, sans-serif; whi
 #sign-in-button { background: var(--download-accent); }
 #sign-in-button:not(:disabled):hover { background: var(--download-hover); }
 .account-actions > .search-icon-button, .account-actions > .notification-controls, .account-actions > .user-controls { margin: 0; }
+.account-actions > .search-icon-button { margin-right: -.15rem; }
 .user-controls { position: relative; }
 .avatar-button {
   width: 2.7rem;
@@ -495,7 +496,13 @@ dd { margin: 0; color: #000; font-weight: 400; font-variant-numeric: tabular-num
   background: #fffdf9;
   font: inherit;
 }
-.quick-search-form input:focus-visible, .book-search-form input:focus-visible, .book-search-form select:focus-visible {
+.quick-search-form input { border-color: #ded5c8; }
+.quick-search-form input:focus-visible {
+  outline: none;
+  box-shadow: none;
+  border-color: #b9afa2;
+}
+.book-search-form input:focus-visible, .book-search-form select:focus-visible {
   outline: 2px solid #8a623b;
   outline-offset: 2px;
 }
