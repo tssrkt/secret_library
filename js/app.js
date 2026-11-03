@@ -370,6 +370,7 @@ async function afterAuthorization() {
     if (saved.index) {
       currentIndex = saved.index;
       refreshCommitUncertain = false;
+      if (!await ensureMinimumBookAccess(currentIndex)) return;
       if (saved.migrated) {
         saved.index.updatedAt = new Date().toISOString();
         indexFileId = await saveIndex(saved.index, indexFileId);
