@@ -32,7 +32,7 @@ function gasRequest(action, payload) {
     form.append(field);
     const cleanup = () => { window.removeEventListener('message', onMessage); clearTimeout(timer); form.remove(); iframe.remove(); };
     const onMessage = event => {
-      if (event.source !== window || event.data?.type !== 'secret-library-admin-result' || event.data?.requestId !== requestId) return;
+      if (event.source !== iframe.contentWindow || event.data?.type !== 'secret-library-admin-result' || event.data?.requestId !== requestId) return;
       cleanup();
       if (event.data.ok) resolve(event.data.result);
       else reject(new Error(event.data.message || 'Административная операция не выполнена.'));
