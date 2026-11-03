@@ -169,7 +169,7 @@ button:disabled { cursor: wait; opacity: .6; }
 dl { display: flex; gap: 1.5rem; margin: 0; }
 dl div { text-align: right; }
 dt { color: #746b60; font-size: .78rem; }
-dd { margin: 0; font-weight: 750; font-variant-numeric: tabular-nums; }
+dd { margin: 0; color: #000; font-weight: 400; font-variant-numeric: tabular-nums; }
 
 #library-panel { margin-top: 1rem; overflow: auto; }
 .library-tree { min-width: 0; }
@@ -191,13 +191,13 @@ dd { margin: 0; font-weight: 750; font-variant-numeric: tabular-nums; }
 .avatar-menu-link:hover { background: #f2eadf; }
 .avatar-menu-link:focus-visible { outline: 2px solid #8a623b; outline-offset: -2px; }
 .folder-content-count, .folder-note { color: #8b8379; font-size: .88em; }
-.folder-content-count { flex: none; margin-left: .45rem; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.folder-content-count { flex: none; margin-left: .45rem; color: #000; font-weight: 400; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .folder-note-edit { flex: none; padding: .15rem .32rem; margin-left: .28rem; color: #746b60; background: transparent; font-size: .9rem; line-height: 1; }
 .folder-note-edit:hover { background: #f4eee5; }
 .folder-note-viewport { position: relative; flex: 1 1 0; min-width: 0; max-width: 100%; margin-left: .32rem; overflow: hidden; white-space: nowrap; cursor: grab; touch-action: pan-y; user-select: none; -webkit-user-select: none; }
 .folder-note-viewport:active { cursor: grabbing; }
 .folder-note { display: inline-block; min-width: max-content; overflow: hidden; text-overflow: ellipsis; vertical-align: top; user-select: none; -webkit-user-select: none; }
-.folder-note-viewport.truncated::after { content: "…"; position: absolute; right: 0; top: 0; padding-left: .2rem; color: #8b8379; background: #fffdfa; pointer-events: none; }
+.folder-note-viewport.truncated:not(.scrolled)::after { content: "…"; position: absolute; right: 0; top: 0; padding-left: .2rem; color: #8b8379; background: #fffdfa; pointer-events: none; }
 .empty-library { color: #746b60; }
 
 .book-grid-item { margin: .45rem 0 .9rem; }

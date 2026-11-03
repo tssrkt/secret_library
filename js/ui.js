@@ -305,6 +305,10 @@ export function renderLibrary(index, onDownload = async () => {}, { ownerIndex =
     node.hidden = !note;
     node.title = note;
     const viewport = node.parentElement;
+    if (viewport) {
+      viewport.scrollLeft = 0;
+      viewport.classList.remove('scrolled');
+    }
     requestAnimationFrame(() => viewport?.classList.toggle('truncated', !node.hidden && viewport.scrollWidth > viewport.clientWidth));
   };
   const registerFolderNote = (folderId, node) => {
@@ -324,13 +328,14 @@ export function renderLibrary(index, onDownload = async () => {}, { ownerIndex =
       const distance = event.clientX - startX;
       if (!dragging && Math.abs(distance) < 4) return;
       dragging = true; event.preventDefault(); event.stopPropagation();
-      viewport.scrollLeft = startScroll - distance;
+      viewport.scrollLeft = Math.max(0, startScroll - distance);
+      viewport.classList.toggle('scrolled', viewport.scrollLeft > 0);
     });
     const finish = (event) => {
       if (event.pointerId !== pointerId) return;
       if (dragging) { event.preventDefault(); event.stopPropagation(); }
       pointerId = null; dragging = false;
-      viewport.scrollLeft = 0;
+      viewport.classList.toggle('scrolled', viewport.scrollLeft > 0);
     };
     viewport.addEventListener('pointerup', finish);
     viewport.addEventListener('pointercancel', finish);
