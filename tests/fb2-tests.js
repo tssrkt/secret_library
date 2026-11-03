@@ -1543,8 +1543,9 @@ await test('root folder picker navigates folders, carries resource keys and retu
       calls.push(['get', folderId, options.resourceKey || '']);
       return { id: folderId, name: 'Книги', resourceKey: 'folder-key' };
     },
-    scanFolder: async (folderId, options) => {
+    scanFolder: async (folderId, onProgress, options) => {
       calls.push(['scan', folderId, options.rootResourceKey || '']);
+      assert.equal(typeof onProgress, 'function', 'scan receives progress callback');
       return { books: Array.from({ length: 11 }), folders: [{ id: folderId }] };
     },
   });
