@@ -6,3 +6,4 @@ temp/
 node_modules/
 *-debug.log
 .firebase/
+.tmp.driveupload/
