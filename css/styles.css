@@ -657,3 +657,18 @@ dd { margin: 0; color: #000; font-weight: 400; font-variant-numeric: tabular-num
 .root-folder-entry:hover, .root-folder-entry:focus-visible { background: #f2eadf; }
 .root-folder-dialog footer { justify-content: flex-end; flex-wrap: wrap; }
 .root-folder-dialog button:focus-visible { outline: 2px solid #8a623b; outline-offset: 2px; }
+
+/* Keep text-entry controls neutral; avoid brown borders and focus frames. */
+input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not([type="button"]):not([type="submit"]):not([type="reset"]):not([type="file"]),
+textarea,
+select {
+  border-color: #c8c8c8;
+}
+input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not([type="button"]):not([type="submit"]):not([type="reset"]):not([type="file"]):focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  border-color: #888;
+  outline: 2px solid #aaa;
+  outline-offset: 1px;
+  box-shadow: none;
+}
