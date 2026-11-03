@@ -40,6 +40,7 @@ export function createBookCard(book, onDownload, documentRef = document, options
     authors: Array.isArray(book.authors) ? [...book.authors] : [],
     genres: Array.isArray(book.genres) ? book.genres : [],
     coverFileId: book.coverFileId || null,
+    coverBook: book,
   };
   const openAnnotation = () => options.onAnnotation?.(annotationDetails, article);
   article.addEventListener('click', (event) => {
@@ -142,7 +143,7 @@ export function createBookCard(book, onDownload, documentRef = document, options
   body.append(author, title, genre, annotationBlock);
   article.append(media, body);
 
-  if (book.coverFileId && options.loadCover) {
+  if ((book.coverFileId || options.loadCoverWithoutFileId?.(book)) && options.loadCover) {
     Promise.resolve(options.loadCover(book)).then((url) => {
       if (!url) return;
       if (!cover.isConnected) {

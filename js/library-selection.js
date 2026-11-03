@@ -13,7 +13,7 @@ export function createLibrarySelection({ tabs, service, show, unavailable, locat
     if (!force && key === renderedKey) return;
     renderedKey = key;
     const request = ++version;
-    if (!selected) { show(own, { own: true, ownerIndex: own }); return; }
+    if (!selected) { show(own, { own: true, ownerIndex: own, ownerId: '' }); return; }
     if (!/^[A-Za-z0-9_-]{1,128}$/.test(selected) || !target) {
       unavailable(snapshot.status === 'loading' ? 'Проверяем доступ к библиотеке…' : 'Библиотека недоступна или доступ к ней закрыт.', () => select(''));
       return;
@@ -21,7 +21,7 @@ export function createLibrarySelection({ tabs, service, show, unavailable, locat
     unavailable('Загружаем библиотеку…', () => select(''));
     try {
       const index = await service.loadLibrary(selected, target.revision);
-      if (request === version) show(index, { own: false, ownerIndex: own });
+      if (request === version) show(index, { own: false, ownerIndex: own, ownerId: selected });
     } catch (error) {
       if (request === version) unavailable('Не удалось открыть библиотеку. Возможно, доступ закрыт или соединение прервано.', () => select(''));
     }

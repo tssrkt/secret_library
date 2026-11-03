@@ -3,7 +3,8 @@ import { buildLibraryLookups, folderHasLibraryChildren } from './library-view-mo
 import { accountIdentity, createAvatarController } from './avatar.js';
 import { createBookCard, hasPreviousVersionMetadataFailure } from './book-card.js';
 import { createAnnotationModalController } from './annotation-modal.js';
-import { loadCover } from './cover-cache.js';
+import { loadCover as loadOwnCover } from './cover-cache.js';
+import { loadSharedCover } from './shared-cover-cache.js';
 import { loadGenreDictionary } from './genre-labels.js';
 import { createPaginator, paginateItems } from './pagination.js';
 import { metadataActionLabels } from './indexing-state.js';
@@ -21,6 +22,22 @@ const genresRu = await loadGenreDictionary().catch(() => ({}));
 
 const coverUrls = new Set();
 const pageByFolderId = new Map();
+let activeCoverOwnerId = '';
+let activeCoverReadOnly = false;
+
+async function loadBookCoverBlob(book) {
+  if (book?.coverFileId) return loadOwnCover(book.coverFileId);
+  if (activeCoverReadOnly && activeCoverOwnerId) return loadSharedCover(activeCoverOwnerId, book);
+  return null;
+}
+
+async function createCoverObjectUrl(book) {
+  const blob = await loadBookCoverBlob(book);
+  if (!blob) return null;
+  const url = URL.createObjectURL(blob);
+  coverUrls.add(url);
+  return url;
+}
 let resetLibraryHome = () => {};
 let selectDirectFilter = () => {};
 let searchController = null;
@@ -97,11 +114,8 @@ const annotationModal = createAnnotationModalController(
     genresRu,
     onAuthorFilter,
     onGenreFilter,
-    loadCover: async ({ coverFileId }) => {
-      const url = URL.createObjectURL(await loadCover(coverFileId));
-      coverUrls.add(url);
-      return url;
-    },
+    loadCover: (details) => createCoverObjectUrl(details.coverBook || details),
+    loadCoverWithoutFileId: () => activeCoverReadOnly,
     releaseCoverUrl: (url) => {
       URL.revokeObjectURL(url);
       coverUrls.delete(url);
@@ -225,8 +239,10 @@ export function clearError() { elements.errorPanel.hidden = true; }
 
 export function showLibraryHome() { resetLibraryHome(); }
 
-export function renderLibrary(index, onDownload = async () => {}, { ownerIndex = index, readOnly = false,
+export function renderLibrary(index, onDownload = async () => {}, { ownerIndex = index, readOnly = false, ownerId = '',
   onSettingsSaved = async () => {}, beforeSettingsSave = async () => {} } = {}) {
+  activeCoverOwnerId = readOnly ? ownerId : '';
+  activeCoverReadOnly = readOnly;
   annotationModal.close();
   pageByFolderId.clear();
   const selectionMessage = document.querySelector('#library-selection-message');
@@ -354,11 +370,8 @@ export function renderLibrary(index, onDownload = async () => {}, { ownerIndex =
     onAuthorFilter,
     onGenreFilter,
     onSeriesFilter,
-    loadCover: async ({ coverFileId }) => {
-      const url = URL.createObjectURL(await loadCover(coverFileId));
-      coverUrls.add(url);
-      return url;
-    },
+    loadCover: createCoverObjectUrl,
+    loadCoverWithoutFileId: () => activeCoverReadOnly,
     releaseCoverUrl: (url) => {
       URL.revokeObjectURL(url);
       coverUrls.delete(url);

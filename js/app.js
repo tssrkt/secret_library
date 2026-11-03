@@ -50,9 +50,9 @@ const authAttempts = createAuthAttemptGuard();
 const tabsRoot = document.querySelector('#library-tabs');
 const tabs = createLibraryTabs(tabsRoot, (uid) => selection.select(uid));
 const selection = createLibrarySelection({ tabs, service: social,
-  show: (index, { own, ownerIndex }) => {
+  show: (index, { own, ownerIndex, ownerId }) => {
     tabsRoot.hidden = false;
-    ui.renderLibrary(index, downloadBook, { ownerIndex, readOnly: !own,
+    ui.renderLibrary(index, downloadBook, { ownerIndex, readOnly: !own, ownerId,
       onSettingsSaved: (index, settings) => publishLibrary(shareableIndex || index, settings),
       beforeSettingsSave: () => { sharingVersion++; return firebaseConfigured() ? social.unpublishLibrary() : Promise.resolve(); } });
   },

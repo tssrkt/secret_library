@@ -108,7 +108,7 @@ export function createAnnotationModalController(
         );
       } else genres.textContent = labels;
     });
-    if (book.coverFileId && coverImage && coverPlaceholder && options.loadCover) {
+    if ((book.coverFileId || options.loadCoverWithoutFileId?.(book)) && coverImage && coverPlaceholder && options.loadCover) {
       void Promise.resolve(options.loadCover(book)).then((url) => {
         if (!url) return;
         if (openVersion !== version) {
