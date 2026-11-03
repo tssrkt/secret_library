@@ -31,7 +31,7 @@ function configuration() {
   return { host, port, user, pass, from };
 }
 
-const ADMIN_EMAIL = 'secret.society.library@gmail.com';
+const ADMIN_EMAIL = 'tssrkt777@gmail.com';
 const ADMIN_SECTIONS = ['overview', 'users', 'relationships', 'invites', 'shares', 'events', 'banned', 'admins'];
 const adminRef = (uid) => db.doc(`adminUsers/${uid}`);
 const banRef = (uid) => db.doc(`bannedUsers/${uid}`);

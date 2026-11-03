@@ -227,7 +227,7 @@ test('moderator cannot grant themselves privileges or alter the superadmin', () 
 
 test('superadmin bootstrap provisions only the configured public project email', () => {
   const adminUser = {
-    localId: 'owner-uid', email: 'secret.society.library@gmail.com', emailVerified: true,
+    localId: 'owner-uid', email: 'tssrkt777@gmail.com', emailVerified: true,
     displayName: 'Администратор', providerUserInfo: [{ providerId: 'google.com' }]
   };
   const app = harness({ authUser: adminUser });
@@ -238,7 +238,7 @@ test('superadmin bootstrap provisions only the configured public project email',
   app.context.fsAddEvent = (...args) => writes.push({ event: args });
   const result = app.context.handleAdminRequest({ idToken: 'firebase-id-token-'.padEnd(500, 'x'), action: 'bootstrapAdmin' });
   assert.equal(result.alreadyAdmin, false);
-  assert.equal(writes.find((x) => x.path === 'adminUsers/owner-uid').value.email, 'secret.society.library@gmail.com');
+  assert.equal(writes.find((x) => x.path === 'adminUsers/owner-uid').value.email, 'tssrkt777@gmail.com');
   assert.equal(writes.find((x) => x.path === 'adminUsers/owner-uid').value.role, 'superadmin');
 
   const wrong = harness({ authUser: { ...adminUser, email: 'other@gmail.com' } });
