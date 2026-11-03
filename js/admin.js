@@ -115,23 +115,43 @@ function renderRelations() {
     const box=node('div',null,'relationship'); box.style.marginLeft=(depth*18)+'px';
     const children=(childMap.get(u.uid)||[]).sort((a,b)=>(a.displayName||'').localeCompare(b.displayName||'','ru'));
     const line=node('div',null,'relationship-line');
-    if (children.length) {
-      const toggle=button('▾',()=> {
-        const collapsed=childList.classList.toggle('collapsed');
-        toggle.textContent=collapsed?'▸':'▾';
+    const childList=node('div',null,'relationship-children');
+    let toggle=null;
+    const toggleBranch=()=>{
+      if (!children.length) return;
+      const collapsed=childList.classList.toggle('collapsed');
+      if (toggle) {
+        toggle.textContent=collapsed?'?':'?';
         toggle.setAttribute('aria-expanded',String(!collapsed));
-        toggle.setAttribute('aria-label',(collapsed?'Развернуть':'Свернуть')+' ветку '+(u.displayName||u.uid));
-      },'tree-toggle');
+        toggle.setAttribute('aria-label',(collapsed?'??????????':'????????')+' ????? '+(u.displayName||u.uid));
+      }
+    };
+    if (children.length) {
+      toggle=button('?',toggleBranch,'tree-toggle');
       toggle.setAttribute('aria-expanded','true');
-      toggle.setAttribute('aria-label','Свернуть ветку '+(u.displayName||u.uid));
+      toggle.setAttribute('aria-label','???????? ????? '+(u.displayName||u.uid));
       line.append(toggle);
     } else {
       line.append(node('span','', 'tree-toggle-placeholder'));
     }
-    const name=node('span',(u.displayName||'Без имени')+(u.banned?' · забанен':''));
-    name.title='UID: '+u.uid;
-    line.append(name); box.append(line);
-    const childList=node('div',null,'relationship-children');
+    const name=children.length
+      ? button((u.displayName||'??? ?????')+(u.banned?' ? ???????':''),toggleBranch,'tree-name-button')
+      : node('span',(u.displayName||'??? ?????')+(u.banned?' ? ???????':''));
+    name.title='???????, ????? '+(children.length?'???????? ??? ?????????? ?????. ':'')+'UID: '+u.uid;
+    line.append(name);
+    const copy=button('?',async()=>{
+      try {
+        await navigator.clipboard.writeText(String(u.uid));
+        const feedback=node('span','UID ??????????','uid-copy-feedback');
+        line.append(feedback);
+        setTimeout(()=>feedback.remove(),1600);
+      } catch (error) {
+        say('?? ??????? ??????????? UID. ????????? ?????? ? ?????? ?????? ? ?????????.',true);
+      }
+    },'uid-copy-button');
+    copy.title='??????????? UID';
+    copy.setAttribute('aria-label','??????????? UID ???????????? '+(u.displayName||u.uid));
+    line.append(copy); box.append(line);
     children.forEach(c=>childList.append(branch(c,depth+1,next)));
     box.append(childList);
     return box;
