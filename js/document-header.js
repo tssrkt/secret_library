@@ -11,6 +11,7 @@ if (host) {
     header.classList.add('info-header');
     host.replaceChildren(document.importNode(header, true));
 
+    header.querySelector('.info-header-links')?.remove();
     const signIn = header.querySelector('#sign-in-button');
     const search = header.querySelector('#book-search-button');
     const searchForm = header.querySelector('#quick-search-form');
@@ -44,7 +45,8 @@ if (host) {
     catch { session = null; }
     const user = session?.user;
     const dropdown = setupDropdown(avatarButton, avatarMenu);
-    if (user && session.expiresAt > Date.now()) {
+    // The account UI should reflect the persisted sign-in, even if the short-lived Drive token needs renewal.
+    if (user && (user.emailAddress || user.displayName || user.photoLink)) {
       signIn.hidden = true;
       notificationControls.hidden = false;
       userControls.hidden = false;

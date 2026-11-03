@@ -37,6 +37,7 @@
   text-align: left;
 }
 .info-document > h1:first-child { margin-top: 0 !important; }
+.info-document h2 { margin: 10pt 0 4pt !important; }
 .info-document .source-numbering { list-style: none; margin: 0; padding: 0; }
 .info-page .info-document a {
   color: var(--download-accent);
