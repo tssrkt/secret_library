@@ -22,7 +22,8 @@ after(async () => { await env.cleanup(); });
 test('shared catalogs enforce incoming access, exclude private folders and revoke old revisions', async () => {
   const a = client('owner'); const b = client('viewer'); const c = client('other');
   for (const person of [a, b, c]) await person.store.register();
-  const sharedA = createSharedLibraryStore({ db: a.db, sdk, user: a.user });
+  const sharedA = createSharedLibraryStore({ db: a.db, sdk, user: a.user,
+    downloadCover: async () => new Blob(['test-cover'], { type: 'image/webp' }) });
   const sharedB = createSharedLibraryStore({ db: b.db, sdk, user: b.user });
   const index = { version: 4, rootFolderId: 'root', folders: [
     { id: 'root', parentId: null, name: 'Root' }, { id: 'open', parentId: 'root', name: 'Open' },
@@ -33,11 +34,15 @@ test('shared catalogs enforce incoming access, exclude private folders and revok
   await sharedA.publish(index, settings);
   const first = await get(a.db, 'sharedLibraries/owner');
   await assertFails(sdk.getDoc(sdk.doc(b.db, 'sharedLibraries/owner')));
+  await assertFails(sdk.getDoc(sdk.doc(b.db, 'sharedLibraries/owner/covers/yes')));
   await b.store.setSharing('owner', true);
   await assert.rejects(sharedB.load('owner'), /permission/i, 'outgoing share does not grant incoming access');
   await a.store.setSharing('viewer', true);
   const visible = await sharedB.load('owner');
-  assert.deepEqual(visible.books.map((book) => book.id), ['yes']);
+  assert.deepEqual(visible.books.map((book) => book.id), ['yes', 'loose'], 'root-level books remain shareable outside excluded folders');
+  await assertSucceeds(sdk.getDoc(sdk.doc(b.db, 'sharedLibraries/owner/covers/yes')));
+  await assertFails(sdk.getDoc(sdk.doc(c.db, 'sharedLibraries/owner/covers/yes')));
+  assert.equal(await (await sharedB.loadCover('owner', 'yes')).text(), 'test-cover');
   assert(!JSON.stringify(visible).includes('private-appdata'));
   assert(!JSON.stringify(visible).includes('Secret'));
   await assertFails(sdk.getDocs(sdk.collection(c.db, 'sharedLibraries')));
@@ -45,7 +50,9 @@ test('shared catalogs enforce incoming access, exclude private folders and revok
   await assertFails(sdk.setDoc(sdk.doc(b.db, 'sharedLibraries/owner'), first));
   await assertFails(sdk.setDoc(sdk.doc(b.db, `sharedLibraries/owner/versions/${first.revision}/chunks/0`), { position: 0, json: '{}' }));
   await sharedA.publish(index, { sharing: { excludedFolderIds: ['open', 'closed'] } });
-  assert.deepEqual((await sharedB.load('owner')).books, []);
+  assert.deepEqual((await sharedB.load('owner')).books.map((book) => book.id), ['loose']);
+  assert.equal((await sdk.getDocFromServer(sdk.doc(b.db, 'sharedLibraries/owner/covers/yes'))).exists(), false,
+    'cover documents for books excluded from the shared catalog are removed');
   await assertFails(sdk.getDocs(sdk.collection(b.db, `sharedLibraries/owner/versions/${first.revision}/chunks`)));
   await sharedA.unpublish();
   await assert.rejects(sharedB.load('owner'), /недоступна/, 'closing catalog before a settings update removes access');

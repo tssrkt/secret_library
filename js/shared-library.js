@@ -1,3 +1,5 @@
+import { downloadAppDataBlob } from './drive.js';
+
 // A read-only projection; the owner's complete Drive index remains authoritative.
 export function sharedLibraryIndex(index, settings) {
   const excluded = new Set(settings.sharing.excludedFolderIds);
@@ -33,15 +35,80 @@ export async function sharedLibraryPayload(index, settings) {
   return { signature, chunks };
 }
 
-export function createSharedLibraryStore({ db, sdk, user }) {
+async function coverSourceKey(book) {
+  const bytes = new TextEncoder().encode(`${book.coverFileId}:${book.modifiedTime || ''}`);
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+async function blobToBase64(blob) {
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  let binary = '';
+  for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
+  }
+  return btoa(binary);
+}
+
+function base64ToBlob(value, mimeType) {
+  const binary = atob(value);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return new Blob([bytes], { type: mimeType });
+}
+
+export function createSharedLibraryStore({ db, sdk, user, downloadCover = downloadAppDataBlob }) {
   const manifest = (owner) => sdk.doc(db, 'sharedLibraries', owner);
   const chunks = (owner, revision) => sdk.collection(db, 'sharedLibraries', owner, 'versions', revision, 'chunks');
+  const covers = (owner) => sdk.collection(db, 'sharedLibraries', owner, 'covers');
+  const coverRef = (owner, bookId) => sdk.doc(db, 'sharedLibraries', owner, 'covers', bookId);
+  async function syncCovers(index, projection, oldSignature) {
+    const visibleIds = new Set(projection.books.map((book) => book.id));
+    const books = index.books.filter((book) => visibleIds.has(book.id) && book.coverFileId);
+    const sources = await Promise.all(books.map(async (book) => ({ book, sourceKey: await coverSourceKey(book) })));
+    const digestInput = sources.map(({ book, sourceKey }) => `${book.id}:${sourceKey}`).sort().join('|');
+    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(digestInput));
+    const signature = [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+    if (signature === oldSignature || (!sources.length && !oldSignature)) return signature;
+    const existingSnapshot = await sdk.getDocsFromServer(covers(user.uid));
+    const existing = new Map(existingSnapshot.docs.map((doc) => [doc.id, doc.data()]));
+    const currentIds = new Set(sources.map(({ book }) => book.id));
+    for (const id of existing.keys()) if (!currentIds.has(id)) await sdk.deleteDoc(coverRef(user.uid, id));
+    let cursor = 0;
+    const worker = async () => {
+      while (cursor < sources.length) {
+        const item = sources[cursor++];
+        ensureCurrent();
+        if (existing.get(item.book.id)?.sourceKey === item.sourceKey) continue;
+        const blob = await downloadCover(item.book.coverFileId);
+        const data = await blobToBase64(blob);
+        if (data.length > 800000) throw new Error(`Обложка книги «${item.book.title || item.book.fileName || item.book.id}» слишком велика для бесплатного хранилища Firebase.`);
+        ensureCurrent();
+        await sdk.setDoc(coverRef(user.uid, item.book.id), { sourceKey: item.sourceKey, mimeType: 'image/webp', data });
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(4, sources.length) }, worker));
+    return signature;
+  }
   let queue = Promise.resolve();
   let disposed = false;
   const ensureCurrent = () => { if (disposed) throw new Error('Сеанс завершён.'); };
   return {
     dispose() { disposed = true; },
-    unpublish() { queue = queue.catch(() => {}).then(() => { ensureCurrent(); return sdk.deleteDoc(manifest(user.uid)); }); return queue; },
+    unpublish() {
+      queue = queue.catch(() => {}).then(async () => {
+        ensureCurrent();
+        await sdk.deleteDoc(manifest(user.uid));
+        const snapshot = await sdk.getDocsFromServer(covers(user.uid));
+        for (let start = 0; start < snapshot.docs.length; start += 100) {
+          ensureCurrent();
+          const batch = sdk.writeBatch(db);
+          snapshot.docs.slice(start, start + 100).forEach((doc) => batch.delete(doc.ref));
+          await batch.commit();
+        }
+      });
+      return queue;
+    },
     watchManifest(owner, next, error) {
       return sdk.onSnapshot(manifest(owner), { includeMetadataChanges: true }, (snapshot) => {
         if (!snapshot.metadata.fromCache && !snapshot.metadata.hasPendingWrites) next(snapshot.exists() ? snapshot.data() : null);
@@ -50,9 +117,17 @@ export function createSharedLibraryStore({ db, sdk, user }) {
     publish(index, settings) {
       const task = async () => {
         ensureCurrent();
+        const projection = sharedLibraryIndex(index, settings);
         const payload = await sharedLibraryPayload(index, settings);
         const before = await sdk.getDocFromServer(manifest(user.uid));
-        if (before.exists() && before.data().signature === payload.signature) return;
+        const previous = before.exists() ? before.data() : {};
+        const coversSignature = await syncCovers(index, projection, previous.coversSignature || '');
+        if (before.exists() && previous.signature === payload.signature) {
+          if (previous.coversSignature !== coversSignature) {
+            await sdk.setDoc(manifest(user.uid), { ...previous, coversSignature });
+          }
+          return;
+        }
         const revision = crypto.randomUUID();
         for (let start = 0; start < payload.chunks.length; start += 10) {
           const batch = sdk.writeBatch(db);
@@ -60,7 +135,7 @@ export function createSharedLibraryStore({ db, sdk, user }) {
           await batch.commit();
         }
         ensureCurrent();
-        await sdk.setDoc(manifest(user.uid), { revision, signature: payload.signature, chunkCount: payload.chunks.length });
+        await sdk.setDoc(manifest(user.uid), { revision, signature: payload.signature, chunkCount: payload.chunks.length, coversSignature });
         if (before.exists()) {
           const old = await sdk.getDocsFromServer(chunks(user.uid, before.data().revision));
           for (let start = 0; start < old.docs.length; start += 100) {
@@ -72,6 +147,15 @@ export function createSharedLibraryStore({ db, sdk, user }) {
       };
       queue = queue.catch(() => {}).then(task);
       return queue;
+    },
+    async loadCover(owner, bookId) {
+      ensureCurrent();
+      if (!owner || !bookId) return null;
+      const snapshot = await sdk.getDocFromServer(coverRef(owner, bookId));
+      if (!snapshot.exists()) return null;
+      const cover = snapshot.data();
+      if (typeof cover.data !== 'string' || cover.mimeType !== 'image/webp') return null;
+      return base64ToBlob(cover.data, cover.mimeType);
     },
     async load(owner, expected) {
       const before = await sdk.getDocFromServer(manifest(owner));

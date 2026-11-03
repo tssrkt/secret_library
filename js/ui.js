@@ -4,7 +4,6 @@ import { accountIdentity, createAvatarController } from './avatar.js';
 import { createBookCard, hasPreviousVersionMetadataFailure } from './book-card.js';
 import { createAnnotationModalController } from './annotation-modal.js';
 import { loadCover as loadOwnCover } from './cover-cache.js';
-import { loadSharedCover } from './shared-cover-cache.js';
 import { loadGenreDictionary } from './genre-labels.js';
 import { createPaginator, paginateItems } from './pagination.js';
 import { metadataActionLabels } from './indexing-state.js';
@@ -27,7 +26,7 @@ let activeCoverReadOnly = false;
 
 async function loadBookCoverBlob(book) {
   if (book?.coverFileId) return loadOwnCover(book.coverFileId);
-  if (activeCoverReadOnly && activeCoverOwnerId) return loadSharedCover(activeCoverOwnerId, book);
+  if (activeCoverReadOnly && activeCoverOwnerId) return social.loadCover(activeCoverOwnerId, book.id);
   return null;
 }
 

@@ -100,4 +100,8 @@ export const social = {
     if (!shared || state.status !== 'ready' || !state.libraries?.some((library) => library.uid === uid)) return Promise.reject(new Error('Библиотека недоступна.'));
     return shared.load(uid, revision);
   },
+  loadCover(uid, bookId) {
+    if (!shared || state.status !== 'ready' || !state.friends.some((friend) => friend.uid === uid && friend.inbound)) return Promise.resolve(null);
+    return shared.loadCover(uid, bookId);
+  },
 };
