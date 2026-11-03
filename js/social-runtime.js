@@ -54,7 +54,7 @@ export const social = {
       await endFirebaseSession().catch(() => {});
       throw error;
     }
-  }, 
+  },
   subscribe(listener) { listeners.add(listener); listener(state); return () => listeners.delete(listener); },
   async connect(token) {
     const current = ++generation;
