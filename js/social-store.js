@@ -70,7 +70,11 @@ export function createSocialStore({ db, sdk, user }) {
       const firstRef = ref('pendingInvites', address);
       const first = data(await tx.get(firstRef));
       ensureCurrent();
-      if (existing?.active) return 'Этот пользователь ещё не зарегистрирован. Приглашение уже сохранено.';
+      if (existing?.active) {
+        // Repair invitations created by older clients before returning the existing-invite message.
+        if (!existing.ownerEmail) tx.update(pending, { ownerEmail: email });
+        return 'Этот пользователь ещё не зарегистрирован. Приглашение уже сохранено.';
+      }
       tx.set(pending, { ownerUid: uid, ownerEmail: email, inviteeEmail: address, active: true,
         createdAt: serverTimestamp(), claimedUid: null, claimedAt: null });
       // Immutable first invitation makes attribution enforceable without server code.
