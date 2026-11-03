@@ -141,7 +141,7 @@ export const banLibraryUser = onCall({ region: 'europe-west1', invoker: 'public'
   const profile = await db.doc(`users/${targetUid}`).get();
   if (!profile.exists) throw new HttpsError('not-found', 'Участник не найден.');
   const authUser = await getAuth().getUser(targetUid).catch(() => null);
-  await banRef(targetUid).set({ uid: targetUid, email: normalEmail(authUser?.email), displayName: profile.data()?.displayName || '', reason, bannedBy: uid, bannedAt: FieldValue.serverTimestamp() });
+  await banRef(targetUid).set({ uid: targetUid, email: normalEmail(authUser?.email), displayName: profile.data()?.displayName || '', reason, bannedBy: uid, adminWasActive: admin.exists && admin.data()?.active === true, bannedAt: FieldValue.serverTimestamp() });
   if (admin.exists) await adminRef(targetUid).update({ active: false, updatedAt: FieldValue.serverTimestamp(), updatedBy: uid });
   await getAuth().revokeRefreshTokens(targetUid).catch(() => {});
   await logAdminEvent(uid, 'ban-user', targetUid, { reason });
@@ -156,8 +156,22 @@ export const restoreLibraryUser = onCall({ region: 'europe-west1', invoker: 'pub
   if (!banned.exists) return { ok: true };
   await banRef(targetUid).delete();
   const admin = await adminRef(targetUid).get();
-  if (admin.exists) await adminRef(targetUid).update({ active: true, updatedAt: FieldValue.serverTimestamp(), updatedBy: uid });
+  if (admin.exists && banned.data()?.adminWasActive === true) await adminRef(targetUid).update({ active: true, updatedAt: FieldValue.serverTimestamp(), updatedBy: uid });
   await logAdminEvent(uid, 'restore-user', targetUid);
+  return { ok: true };
+});
+
+export const adminRevokeInvitation = onCall({ region: 'europe-west1', invoker: 'public' }, async (request) => {
+  const { uid } = await requireAdmin(request, 'invites');
+  const email = normalEmail(request.data?.email);
+  const ownerUid = String(request.data?.ownerUid || '');
+  if (!emailPattern.test(email) || !ownerUid) throw new HttpsError('invalid-argument', 'Некорректное приглашение.');
+  const ref = pendingShare(email, ownerUid);
+  const snapshot = await ref.get();
+  if (!snapshot.exists) throw new HttpsError('not-found', 'Приглашение не найдено.');
+  if (snapshot.data()?.claimedUid) throw new HttpsError('failed-precondition', 'Приглашение уже принято.');
+  await ref.update({ active: false, revokedAt: FieldValue.serverTimestamp(), revokedBy: uid });
+  await logAdminEvent(uid, 'revoke-invitation', null, { email, ownerUid });
   return { ok: true };
 });
 

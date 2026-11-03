@@ -94,8 +94,9 @@ function renderRelations() {
   ])));
 }
 function renderInvites() {
-  content.append(table(['Адрес приглашения','Пригласитель UID','Приглашённый UID','Статус письма','Создано'],(data.invitations||[]).map(i=>[
-    i.email,i.ownerUid,i.claimedUid||'Не принято',i.emailStatus||'—',i.createdAt?.toDate?.().toLocaleString('ru-RU')||'—'
+  content.append(table(['Адрес приглашения','Пригласитель UID','Приглашённый UID','Статус письма','Создано','Действие'],(data.invitations||[]).map(i=>[
+    i.email,i.ownerUid,i.claimedUid||'Не принято',i.emailStatus||'—',i.createdAt?.toDate?.().toLocaleString('ru-RU')||'—',
+    !i.claimedUid && i.active!==false ? button('Отменить приглашение',async()=>{if(!confirm('Отменить это приглашение?'))return;try{await call('adminRevokeInvitation')({email:i.email,ownerUid:i.ownerUid||i.id});await refresh();}catch(e){say(e?.message||'Не удалось отменить приглашение.',true);}},'danger') : '—'
   ])));
 }
 function renderShares() {
@@ -121,18 +122,24 @@ function renderBanned() {
 function renderAdminEditor(user=null) {
   content.replaceChildren(node('h2',user?'Права модератора':'Администраторы и права'));
   if(user) {
-    const form=node('div'); form.append(details(user.displayName,'',user.uid));
+    const existing=(data.admins||[]).find(a=>a.uid===user.uid);
+    if(existing?.role==='superadmin'){content.append(node('p','Права главного администратора нельзя изменить здесь.'));return;}
+    const form=node('div'); form.append(details(user.displayName,existing?.email||'',user.uid));
     const checks=[];
-    sections.forEach(([key,title])=>{const labelEl=node('label');labelEl.style.display='block';const input=node('input');input.type='checkbox';input.checked=false;labelEl.append(input,document.createTextNode(' '+title));form.append(labelEl);checks.push([key,input]);});
-    form.append(button('Сохранить права',async()=>{const permissions=Object.fromEntries(checks.map(([k,i])=>[k,i.checked]));await call('setAdminPermissions')({uid:user.uid,email:'',permissions,active:true});await refresh();},'primary'));
+    sections.forEach(([key,title])=>{const labelEl=node('label');labelEl.style.display='block';const input=node('input');input.type='checkbox';input.checked=existing?.permissions?.[key]===true;labelEl.append(input,document.createTextNode(' '+title));form.append(labelEl);checks.push([key,input]);});
+    const activeLabel=node('label');activeLabel.style.display='block';const activeInput=node('input');activeInput.type='checkbox';activeInput.checked=existing ? existing.active===true : true;activeLabel.append(activeInput,document.createTextNode(' Учётная запись администратора активна'));form.append(activeLabel);
+    form.append(button('Сохранить права',async()=>{try{const permissions=Object.fromEntries(checks.map(([k,i])=>[k,i.checked]));await call('setAdminPermissions')({uid:user.uid,email:existing?.email||'',permissions,active:activeInput.checked});await refresh();}catch(e){say(e?.message||'Не удалось сохранить права.',true);}},'primary'));
     form.append(button('Отмена',()=>render()));content.append(form);return;
   }
-  content.append(table(['Участник','Роль','Статус','Права'],(data.admins||[]).map(a=>[
-    details(a.email,a.uid,a.uid),a.role,a.active?'Активен':'Отключён',Object.entries(a.permissions||{}).filter(([,v])=>v).map(([k])=>sections.find(s=>s[0]===k)?.[1]||k).join(', ')
+  content.append(table(['Участник','Роль','Статус','Права','Действие'],(data.admins||[]).map(a=>[
+    details(a.email,a.uid,a.uid),a.role,a.active?'Активен':'Отключён',Object.entries(a.permissions||{}).filter(([,v])=>v).map(([k])=>sections.find(s=>s[0]===k)?.[1]||k).join(', '),
+    a.role==='superadmin'?'—':button('Изменить права',()=>renderAdminEditor((data.users||[]).find(u=>u.uid===a.uid)||{uid:a.uid,displayName:a.displayName||a.email}))
   ])));
   content.append(node('p','Назначение модератора доступно из раздела «Участники».'));
 }
 function render() {
+  const allowed = sections.filter(([key]) => data.permissions?.[key]).map(([key]) => key);
+  if (!allowed.includes(activeTab)) activeTab = allowed[0] || 'overview';
   renderStats(); renderTabs(); content.replaceChildren();
   if(activeTab==='overview') {
     content.append(node('h2','Обзор'),node('p','Приглашения и зарегистрированные участники считаются отдельно. Заблокированный участник сохраняет профиль и связи.'));

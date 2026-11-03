@@ -56,6 +56,20 @@ test('shared catalogs enforce incoming access, exclude private folders and revok
   assert.equal(await get(a.db, 'sharedLibraries/owner'), null);
 });
 
+test('ban marker revokes all client Firestore access without deleting the user profile', async () => {
+  const person = client('banned-person');
+  await person.store.register();
+  await env.withSecurityRulesDisabled(async (context) => {
+    await sdk.setDoc(sdk.doc(context.firestore(), 'bannedUsers/banned-person'), { uid: 'banned-person', reason: 'test' });
+  });
+  await assertFails(sdk.getDoc(sdk.doc(person.db, 'users/banned-person')));
+  await assertFails(sdk.getDoc(sdk.doc(person.db, 'userDirectory/banned-person@gmail.com')));
+  await assertFails(sdk.getDoc(sdk.doc(person.db, 'sharedLibraries/banned-person')));
+  await env.withSecurityRulesDisabled(async (context) => {
+    assert.equal((await sdk.getDoc(sdk.doc(context.firestore(), 'users/banned-person'))).exists(), true);
+  });
+});
+
 test('verified Google registration creates safe profile, exact email directory and immutable attribution', async () => {
   const anna = client('anna'); const boris = client('boris');
   await anna.store.register(); await boris.store.register();
