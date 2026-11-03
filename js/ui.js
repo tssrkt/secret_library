@@ -316,7 +316,7 @@ export function renderLibrary(index, onDownload = async () => {}, { ownerIndex =
   const registerFolderNote = (folderId, node) => {
     const nodes = noteNodes.get(folderId) || [];
     nodes.push(node); noteNodes.set(folderId, nodes);
-    setFolderNote(node, savedUserSettings?.settings.folderNotes[folderId] || '');
+    setFolderNote(node, readOnly ? (index.folderNotes?.[folderId] || '') : (savedUserSettings?.settings.folderNotes[folderId] || ''));
   };
   const enableNoteDrag = (viewport) => {
     let pointerId = null; let startX = 0; let startScroll = 0; let dragging = false;

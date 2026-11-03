@@ -9,7 +9,10 @@ export function sharedLibraryIndex(index, settings) {
   }
   const fields = ['id', 'parentId', 'fileName', 'extension', 'sourceType', 'size', 'modifiedTime', 'metadataStatus',
     'metadataVersion', 'title', 'authors', 'genres', 'series', 'seriesNumber', 'annotation', 'preview', 'language'];
-  return { version: index.version, rootFolderId: index.rootFolderId, updatedAt: index.updatedAt || '',
+  const folderNotes = Object.fromEntries(Object.entries(settings.folderNotes || {})
+    .filter(([folderId, note]) => allowed.has(folderId) && typeof note === 'string' && note.trim())
+    .map(([folderId, note]) => [folderId, note.trim()]));
+  return { version: index.version, rootFolderId: index.rootFolderId, updatedAt: index.updatedAt || '', folderNotes,
     folders: index.folders.filter((folder) => folder.id === index.rootFolderId || allowed.has(folder.id))
       .map(({ id, parentId, name }) => ({ id, parentId, name })),
     books: index.books.filter((book) => book.parentId === index.rootFolderId || allowed.has(book.parentId))

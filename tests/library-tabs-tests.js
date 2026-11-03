@@ -67,8 +67,9 @@ export async function runLibraryTabsTests(test, assert, equal) {
       { id: 'b', parentId: 'r' }, { id: 'c', parentId: 'b' }],
     books: [{ id: 'yes', parentId: 'a', title: '📚'.repeat(90000), coverFileId: 'private', metadataError: 'private' },
       { id: 'no', parentId: 'c' }, { id: 'root', parentId: 'r' }] };
-    const settings = { sharing: { excludedFolderIds: ['b'] } };
+    const settings = { sharing: { excludedFolderIds: ['b'] }, folderNotes: { a: '  Для друзей  ', b: 'Скрытая заметка', c: 'Заметка внутри исключённой папки', missing: 'Неизвестная папка' } };
     const visible = sharedLibraryIndex(index, settings);
+    equal(visible.folderNotes, { a: 'Для друзей' }, 'only notes for shared folders are published and whitespace is trimmed');
     equal(visible.books.map((book) => book.id), ['yes', 'root'], 'allowed folder descendants and root files are shared by default');
     assert(!JSON.stringify(visible).includes('private'), 'no private cover ID or diagnostics');
     const payload = await sharedLibraryPayload(index, settings);
