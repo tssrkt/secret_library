@@ -46,6 +46,7 @@ h1 { margin: 0; font: 750 clamp(2rem, 5vw, 3rem)/1.05 system-ui, sans-serif; whi
 #sign-in-button:not(:disabled):hover { background: var(--download-hover); }
 .account-actions > .search-icon-button, .account-actions > .notification-controls, .account-actions > .user-controls { margin: 0; }
 .account-actions > .search-icon-button { margin-right: -.15rem; }
+.account-actions > .notification-controls { margin-right: .35rem; }
 .user-controls { position: relative; }
 .avatar-button {
   width: 2.7rem;
