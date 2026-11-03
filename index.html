@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Тайная Библиотека</title>
   <link rel="stylesheet" href="./css/styles.css">
+  <link rel="stylesheet" href="./css/info.css">
 </head>
 <body>
   <main class="app-shell">
@@ -56,6 +57,8 @@
         <button id="advanced-search-button" class="advanced-search-link" type="button">Расширенный поиск</button>
       </form>
     </header>
+
+    <section id="document-view" class="document-view" aria-live="polite" hidden></section>
 
     <section id="status-panel" class="status-panel" aria-live="polite">
       <p id="status-text">Для доступа к библиотеке войдите через Google.</p>
@@ -118,5 +121,6 @@
     </footer>
   </main>
   <script type="module" src="./js/app.js"></script>
+  <script type="module" src="./js/document-view.js"></script>
 </body>
 </html>

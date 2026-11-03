@@ -22,11 +22,11 @@ export async function runPublicDocumentsTests(test, assert, equal) {
       assert(footer && footer.querySelector('a[href="./info.html"]') && footer.querySelector('a[href="./index.html"]'), 'document page has instruction and return-to-library links in the shared footer style');
       assert(!page.querySelector('.info-document > p a[href="./info.html"], .info-document > p a[href="./index.html"]'), 'navigation links are not embedded in the document body');
     }
-    assert(loaderHtml.includes("fetch('./index.html'") && loaderHtml.includes("querySelector('.app-header')"), 'document pages fetch the header from the main page');
-    assert(loaderHtml.includes("user && (user.emailAddress || user.displayName || user.photoLink)") && !loaderHtml.includes('user && session.expiresAt > Date.now()'), 'persisted account UI remains visible while the short-lived Drive token is expired');
-    assert(loaderHtml.includes("header.querySelector('.info-header-links')?.remove()"), 'shared document header does not show duplicate instruction/privacy links');
+    assert(loaderHtml.includes('window.location.replace') && loaderHtml.includes('#document='), 'direct document URLs route into the main application shell');
+    const documentRouter = await (await fetch('../js/document-view.js')).text();
+    assert(documentRouter.includes("fetch(page.url") && documentRouter.includes("history.pushState") && documentRouter.includes("document-view"), 'documents are loaded into the existing page without replacing its header');
     const infoStyles = await (await fetch('../css/info.css')).text();
-    assert(infoStyles.includes('.info-document h2 { margin: 10pt 0 4pt !important; }'), 'privacy headings use the same compact top spacing as instruction headings');
+    assert(infoStyles.includes('.info-document p') && infoStyles.includes('.info-document ul,') && infoStyles.includes('.info-document h1,'), 'instruction and privacy use shared paragraph, list and heading spacing rules');
     const styles = await (await fetch('../css/styles.css')).text();
     const ui = await (await fetch('../js/ui.js')).text();
     assert(styles.includes('#stats dd { font-weight: 700; }') && styles.includes('.folder-content-count { flex: none; margin-left: .45rem; color: #000; font-weight: 400;'), 'summary counts are bold while folder row counts stay regular');
