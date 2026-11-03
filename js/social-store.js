@@ -5,6 +5,8 @@ export function createSocialStore({ db, sdk, user }) {
     serverTimestamp, onSnapshot, writeBatch } = sdk;
   const uid = user.uid;
   const email = normalizeEmail(user.email);
+  const superAdminEmail = 'tssrkt777@gmail.com';
+  let superAdminUid = '';
   const ref = (...path) => doc(db, ...path);
   const data = (snapshot) => snapshot.exists() ? snapshot.data() : null;
   const profileRef = ref('users', uid);
@@ -29,6 +31,10 @@ export function createSocialStore({ db, sdk, user }) {
       else tx.update(profileRef, safe);
       if (!existing) tx.set(directory, { uid });
     });
+    // Resolve the known administrator's UID through the registered email directory.
+    // This is presentation-only; it does not grant or enforce any privileges.
+    const adminDirectory = data(await getDoc(ref('userDirectory', superAdminEmail)));
+    superAdminUid = typeof adminDirectory?.uid === 'string' ? adminDirectory.uid : '';
     const pending = await getDocs(collection(db, 'pendingInvites', email, 'shares'));
     for (const snapshot of pending.docs) {
       ensureCurrent();
@@ -124,7 +130,10 @@ export function createSocialStore({ db, sdk, user }) {
       try {
         const shares = [...collections.outgoing, ...collections.incoming];
         const ids = new Set(shares.filter((item) => item.active).flatMap((item) => [item.ownerUid, item.viewerUid]));
-        await Promise.all([...ids].map(async (id) => { profiles[id] = data(await getDoc(ref('users', id))); }));
+        await Promise.all([...ids].map(async (id) => {
+          const profile = data(await getDoc(ref('users', id)));
+          profiles[id] = id === superAdminUid ? { ...(profile || {}), isAdmin: true } : profile;
+        }));
         if (stopped || disposed || current !== revision) return;
         listener({ friends: friendsModel(uid, shares, profiles, collections.contacts), notifications: notificationsModel(uid, shares, collections.reads, profiles) });
       } catch (error) { if (!stopped && !disposed) onError(error); }

@@ -349,9 +349,8 @@ async function afterAuthorization() {
   reconnectRequired = false;
   ui.setReconnectRequired(false);
   ui.setAuthorized(true);
-  // Refresh the signed-in user's public admin marker, but never let this auxiliary check block Google sign-in.
-  try { await social.checkAccess(getAccessToken()); }
-  catch (error) { console.warn('Не удалось обновить статус администратора:', error); }
+  // The optional checkLibraryAccess callable is not deployed in the free Firebase project.
+  // Admin display labels are resolved from the registered administrator UID in social-store.
   void social.connect(getAccessToken());
   void ui.setUserAvatar(user);
   ui.clearError();
