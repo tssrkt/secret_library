@@ -51,9 +51,17 @@ export function createSharedCoverLoader({
         }
       }
 
-      const metadata = await extract(book, { signal });
+      let metadata;
+      try { metadata = await extract(book, { signal }); }
+      catch (error) {
+        console.warn('[Secret Library] Shared book cover extraction failed', { bookId: book.id, error });
+        throw error;
+      }
       signal?.throwIfAborted();
-      if (!metadata?.cover?.bytes || !metadata.cover.mimeType) return null;
+      if (!metadata?.cover?.bytes || !metadata.cover.mimeType) {
+        console.info('[Secret Library] No embedded cover found in shared book', { bookId: book.id });
+        return null;
+      }
       const blob = await resize(metadata.cover);
       signal?.throwIfAborted();
       const saved = await create(name, blob);

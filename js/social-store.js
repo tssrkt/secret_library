@@ -124,7 +124,7 @@ export function createSocialStore({ db, sdk, user }) {
       try {
         const shares = [...collections.outgoing, ...collections.incoming];
         const ids = new Set(shares.filter((item) => item.active).flatMap((item) => [item.ownerUid, item.viewerUid]));
-        await Promise.all([...ids].filter((id) => !profiles[id]).map(async (id) => { profiles[id] = data(await getDoc(ref('users', id))); }));
+        await Promise.all([...ids].map(async (id) => { profiles[id] = data(await getDoc(ref('users', id))); }));
         if (stopped || disposed || current !== revision) return;
         listener({ friends: friendsModel(uid, shares, profiles, collections.contacts), notifications: notificationsModel(uid, shares, collections.reads, profiles) });
       } catch (error) { if (!stopped && !disposed) onError(error); }

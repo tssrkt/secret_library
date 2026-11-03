@@ -160,7 +160,9 @@ export function createBookCard(book, onDownload, documentRef = document, options
         image.replaceWith(cover);
       }, { once: true });
       cover.replaceWith(image);
-    }).catch(() => {});
+    }).catch((error) => {
+      console.warn('[Secret Library] Cover loading failed', { bookId: book?.id, error });
+    });
   }
 
   const updateAnnotationClamp = () => {
