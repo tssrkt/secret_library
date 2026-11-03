@@ -69,7 +69,7 @@ export async function runLibraryTabsTests(test, assert, equal) {
       { id: 'no', parentId: 'c' }, { id: 'root', parentId: 'r' }] };
     const settings = { sharing: { excludedFolderIds: ['b'] } };
     const visible = sharedLibraryIndex(index, settings);
-    equal(visible.books.map((book) => book.id), ['yes'], 'excluded descendants and root files not shared');
+    equal(visible.books.map((book) => book.id), ['yes', 'root'], 'allowed folder descendants and root files are shared by default');
     assert(!JSON.stringify(visible).includes('private'), 'no private cover ID or diagnostics');
     const payload = await sharedLibraryPayload(index, settings);
     equal(JSON.parse(payload.chunks.join('')), visible, 'Unicode survives chunking');

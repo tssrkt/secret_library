@@ -12,7 +12,7 @@ export function sharedLibraryIndex(index, settings) {
   return { version: index.version, rootFolderId: index.rootFolderId, updatedAt: index.updatedAt || '',
     folders: index.folders.filter((folder) => folder.id === index.rootFolderId || allowed.has(folder.id))
       .map(({ id, parentId, name }) => ({ id, parentId, name })),
-    books: index.books.filter((book) => allowed.has(book.parentId))
+    books: index.books.filter((book) => book.parentId === index.rootFolderId || allowed.has(book.parentId))
       .map((book) => Object.fromEntries(fields.filter((field) => book[field] !== undefined).map((field) => [field, book[field]]))) };
 }
 
