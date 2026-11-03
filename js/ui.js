@@ -142,6 +142,8 @@ export function bindActions(actions) {
   reportSettingsError = actions.settingsError || reportSettingsError;
   elements.settings?.addEventListener('click', () => openSettings());
   elements.home?.addEventListener('click', (event) => {
+    // In document mode, let document-view.js switch back to the library view.
+    if (!document.querySelector('#document-view')?.hidden) return;
     event.preventDefault();
     actions.home?.();
   });
