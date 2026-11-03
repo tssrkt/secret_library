@@ -33,6 +33,13 @@ export async function runBinaryRecoveryTests(test, assert, equal) {
     equal(attempts, [text], 'no scanner reparse or sanitization for valid FB2');
     assert(metadata.cover.bytes.length > 0 && !metadata.binaryRecovery && !metadata.metadataWarning, 'normal cover unchanged');
   });
+  await test('FB2 JPEG cover declared as image/jpg is accepted and normalized', () => {
+    const text = source(binary('cover.jpg', PNG, 'image/jpg'));
+    const { metadata, attempts } = parseWithTrace(text);
+    equal(attempts, [text], 'legacy MIME alias does not trigger recovery');
+    equal(metadata.cover.mimeType, 'image/jpeg', 'JPEG alias normalized for cache and display');
+    assert(metadata.cover.bytes.length > 0 && !metadata.metadataWarning, 'cover extracted without unsupported-format warning');
+  });
   await test('raw bytes in cover recover metadata by removing only that payload', () => {
     const text = source();
     const original = bytes(text);

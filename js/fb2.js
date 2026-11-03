@@ -304,7 +304,8 @@ function parseFullDocument(bytes, Parser) {
   const binary = [...document.getElementsByTagNameNS('*', 'binary')]
     .find((element) => element.getAttribute('id') === metadata.coverId);
   if (!binary) return metadata;
-  const mimeType = binary.getAttribute('content-type')?.toLowerCase() || '';
+  const rawMimeType = binary.getAttribute('content-type')?.toLowerCase() || '';
+  const mimeType = rawMimeType === 'image/jpg' ? 'image/jpeg' : rawMimeType;
   if (!['image/jpeg', 'image/png', 'image/webp', 'image/gif'].includes(mimeType)) {
     return { ...metadata, metadataWarning: 'unsupported_cover_format' };
   }
