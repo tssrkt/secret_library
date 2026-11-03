@@ -64,7 +64,12 @@ async function logAdminEvent(actorUid, action, targetUid = null, details = {}) {
 }
 
 export const checkLibraryAccess = onCall({ region: 'europe-west1', invoker: 'public' }, async (request) => {
-  await requireSignedIn(request);
+  const uid = await requireSignedIn(request);
+  const [admin, profile] = await Promise.all([adminRef(uid).get(), db.doc(`users/${uid}`).get()]);
+  if (admin.exists && profile.exists) {
+    const isAdmin = admin.data()?.active === true;
+    if (profile.data()?.isAdmin !== isAdmin) await db.doc(`users/${uid}`).set({ isAdmin }, { merge: true });
+  }
   return { allowed: true };
 });
 
@@ -76,10 +81,14 @@ export const bootstrapAdmin = onCall({ region: 'europe-west1', invoker: 'public'
   const existing = await db.collection('adminUsers').limit(1).get();
   if (!existing.empty) {
     const current = await adminRef(uid).get();
-    if (current.exists && current.data().role === 'superadmin') return { ok: true, alreadyAdmin: true };
+    if (current.exists && current.data().role === 'superadmin') {
+      await db.doc(`users/${uid}`).set({ isAdmin: true }, { merge: true });
+      return { ok: true, alreadyAdmin: true };
+    }
     throw new HttpsError('failed-precondition', 'Главный администратор уже настроен.');
   }
   await adminRef(uid).set({ uid, email: ADMIN_EMAIL, role: 'superadmin', active: true, permissions: Object.fromEntries(ADMIN_SECTIONS.map((key) => [key, true])), createdAt: FieldValue.serverTimestamp(), createdBy: 'bootstrap' });
+  await db.doc(`users/${uid}`).set({ isAdmin: true }, { merge: true });
   await logAdminEvent(uid, 'bootstrap-admin');
   return { ok: true };
 });
@@ -126,8 +135,10 @@ export const setAdminPermissions = onCall({ region: 'europe-west1', invoker: 'pu
   if (!user.exists) throw new HttpsError('not-found', 'Участник не найден.');
   const existing = await adminRef(targetUid).get();
   if (existing.data()?.role === 'superadmin') throw new HttpsError('failed-precondition', 'Нельзя менять права главного администратора.');
-  await adminRef(targetUid).set({ uid: targetUid, email: normalEmail(request.data?.email) || normalEmail(existing.data()?.email), role: 'moderator', active: request.data?.active !== false, permissions, updatedAt: FieldValue.serverTimestamp(), updatedBy: uid }, { merge: true });
-  await logAdminEvent(uid, 'set-admin-permissions', targetUid, { permissions });
+  const active = request.data?.active !== false;
+  await adminRef(targetUid).set({ uid: targetUid, email: normalEmail(request.data?.email) || normalEmail(existing.data()?.email), role: 'moderator', active, permissions, updatedAt: FieldValue.serverTimestamp(), updatedBy: uid }, { merge: true });
+  await db.doc(`users/${targetUid}`).set({ isAdmin: active }, { merge: true });
+  await logAdminEvent(uid, 'set-admin-permissions', targetUid, { permissions, active });
   return { ok: true };
 });
 
@@ -142,7 +153,10 @@ export const banLibraryUser = onCall({ region: 'europe-west1', invoker: 'public'
   if (!profile.exists) throw new HttpsError('not-found', 'Участник не найден.');
   const authUser = await getAuth().getUser(targetUid).catch(() => null);
   await banRef(targetUid).set({ uid: targetUid, email: normalEmail(authUser?.email), displayName: profile.data()?.displayName || '', reason, bannedBy: uid, adminWasActive: admin.exists && admin.data()?.active === true, bannedAt: FieldValue.serverTimestamp() });
-  if (admin.exists) await adminRef(targetUid).update({ active: false, updatedAt: FieldValue.serverTimestamp(), updatedBy: uid });
+  if (admin.exists) {
+    await adminRef(targetUid).update({ active: false, updatedAt: FieldValue.serverTimestamp(), updatedBy: uid });
+    await db.doc(`users/${targetUid}`).set({ isAdmin: false }, { merge: true });
+  }
   await getAuth().revokeRefreshTokens(targetUid).catch(() => {});
   await logAdminEvent(uid, 'ban-user', targetUid, { reason });
   return { ok: true };
@@ -156,7 +170,10 @@ export const restoreLibraryUser = onCall({ region: 'europe-west1', invoker: 'pub
   if (!banned.exists) return { ok: true };
   await banRef(targetUid).delete();
   const admin = await adminRef(targetUid).get();
-  if (admin.exists && banned.data()?.adminWasActive === true) await adminRef(targetUid).update({ active: true, updatedAt: FieldValue.serverTimestamp(), updatedBy: uid });
+  if (admin.exists && banned.data()?.adminWasActive === true) {
+    await adminRef(targetUid).update({ active: true, updatedAt: FieldValue.serverTimestamp(), updatedBy: uid });
+    await db.doc(`users/${targetUid}`).set({ isAdmin: true }, { merge: true });
+  }
   await logAdminEvent(uid, 'restore-user', targetUid);
   return { ok: true };
 });

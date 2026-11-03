@@ -41,7 +41,7 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
       const openButton = document.createElement('button');
       openButton.type = 'button'; openButton.className = 'friend-library-button';
       openButton.textContent = friend.displayName;
-      if (friend.email) { const email = document.createElement('small'); email.textContent = friend.email; openButton.append(email); }
+      if (friend.isAdmin || friend.email) { const detail = document.createElement('small'); detail.textContent = friend.isAdmin ? 'Администратор' : friend.email; openButton.append(detail); }
       openButton.addEventListener('click', () => openLibrary(friend.uid));
       name.append(openButton);
       row.append(name);

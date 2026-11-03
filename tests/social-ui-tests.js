@@ -27,6 +27,15 @@ export async function runSocialUiTests(test, assert, equal) {
     assert(!notificationsModel('me', shares, { a: { seenSharedAt: 1 } })[0].unread, 'seen timestamp hides unread');
     assert(notificationsModel('me', [{ ...shares[0], sharedAt: 3 }], { a: { seenSharedAt: 1 } })[0].unread, 'regrant is unread');
   });
+  await test('friends table labels administrators without displaying their email', () => {
+    const page = document.createElement('div'); document.body.append(page);
+    const cleanup = mountFriends(page, stub({ friends: [{ uid: 'admin', displayName: 'Library owner', isAdmin: true, email: '', inbound: true, outbound: false }] }), () => {});
+    try {
+      const row = page.querySelector('tbody tr');
+      assert(row.textContent.includes('Администратор'), 'administrator label is visible');
+      assert(!row.textContent.includes('@') && !row.textContent.includes('private-admin@gmail.com'), 'email is not rendered');
+    } finally { cleanup(); page.remove(); }
+  });
   await test('friends table slices before rendering and switches action based on direction', async () => {
     const page = document.createElement('div'); document.body.append(page);
     const friends = Array.from({ length: 51 }, (_, i) => ({ uid: String(i), displayName: `User ${i}`, email: i === 0 ? 'reader@gmail.com' : '', inbound: i !== 1, outbound: i !== 0 }));

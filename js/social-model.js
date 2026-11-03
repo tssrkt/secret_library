@@ -13,8 +13,9 @@ export function friendsModel(uid, shares, profiles = {}, contacts = {}) {
     if (!share.active || (share.ownerUid !== uid && share.viewerUid !== uid)) continue;
     const other = share.ownerUid === uid ? share.viewerUid : share.ownerUid;
     if (other === uid || !profiles[other]) continue;
+    const isAdmin = profiles[other].isAdmin === true;
     const friend = friends.get(other) || { uid: other, displayName: profiles[other].displayName || 'Пользователь',
-      email: contacts[other]?.email || '', inbound: false, outbound: false };
+      isAdmin, email: isAdmin ? '' : (contacts[other]?.email || ''), inbound: false, outbound: false };
     if (share.ownerUid === uid) friend.outbound = true; else friend.inbound = true;
     friends.set(other, friend);
   }

@@ -81,6 +81,7 @@ test('verified Google registration creates safe profile, exact email directory a
   await assertFails(sdk.updateDoc(sdk.doc(anna.db, 'users/boris'), { displayName: 'forged' }));
   await assertFails(sdk.updateDoc(sdk.doc(anna.db, 'users/anna'), { email: 'leak@gmail.com' }));
   await assertFails(sdk.updateDoc(sdk.doc(anna.db, 'users/anna'), { invitedByUid: 'boris' }));
+  await assertFails(sdk.updateDoc(sdk.doc(anna.db, 'users/anna'), { isAdmin: true }), 'ordinary users cannot mark themselves as administrators');
   const unverified = env.authenticatedContext('unverified', { email: 'unverified@gmail.com', email_verified: false, firebase: { sign_in_provider: 'google.com' } }).firestore();
   await assertFails(sdk.getDoc(sdk.doc(unverified, 'users/anna')));
   await assertFails(sdk.getDoc(sdk.doc(env.unauthenticatedContext().firestore(), 'users/anna')));
@@ -123,6 +124,11 @@ test('private known email cannot be read by recipient or third party and never l
   const shares = [await get(a.db, 'libraryShares/a__b')];
   assert.equal(friendsModel('b', shares, { a: { displayName: 'A', email: 'DO NOT LEAK' } })[0].email, '');
   assert.equal(friendsModel('a', shares, { b: { displayName: 'B' } }, { b: { email: 'b@gmail.com' } })[0].email, 'b@gmail.com');
+  const adminFriend = friendsModel('viewer', [{ ownerUid: 'admin', viewerUid: 'viewer', active: true }],
+    { admin: { displayName: 'Library owner', isAdmin: true, email: 'private-admin@gmail.com' } },
+    { admin: { email: 'private-admin@gmail.com' } })[0];
+  assert.equal(adminFriend.isAdmin, true);
+  assert.equal(adminFriend.email, '', 'admin email is suppressed even when stored in known contacts');
 });
 
 test('pending invites claim atomically for own email; earliest inviter is permanent', async () => {

@@ -39,12 +39,15 @@ service cloud.firestore {
       allow list, delete: if false;
       function shape() {
         let d = request.resource.data;
-        return d.keys().hasOnly(['displayName', 'photoURL', 'createdAt', 'invitedByUid'])
+        return d.keys().hasOnly(['displayName', 'photoURL', 'createdAt', 'invitedByUid', 'isAdmin'])
           && d.keys().hasAll(['displayName', 'photoURL', 'createdAt', 'invitedByUid'])
+          && (!('isAdmin' in d) || d.isAdmin is bool)
           && d.displayName is string && d.displayName.size() <= 160
           && d.photoURL is string && d.photoURL.size() <= 2048;
       }
-      allow create: if own(uid) && shape() && request.resource.data.createdAt == request.time
+      allow create: if own(uid) && shape()
+        && request.resource.data.keys().hasOnly(['displayName', 'photoURL', 'createdAt', 'invitedByUid'])
+        && request.resource.data.createdAt == request.time
         && ((!exists(/databases/$(database)/documents/pendingInvites/$(email())) && request.resource.data.invitedByUid == null)
           || request.resource.data.invitedByUid == get(/databases/$(database)/documents/pendingInvites/$(email())).data.firstOwnerUid);
       allow update: if own(uid) && shape()
