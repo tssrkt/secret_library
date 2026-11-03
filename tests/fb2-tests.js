@@ -1114,7 +1114,7 @@ await test('annotation modal keeps close action fixed and uses readable computed
       <div class="annotation-modal-content">
         <div class="modal-header">
           <h2><span class="annotation-modal-book-title">«A very long book title that wraps onto several lines in this deliberately narrow dialog»</span> <span class="annotation-modal-authors">First Author, Second Author и другие</span></h2>
-          <button id="annotation-modal-close" class="secondary compact">×</button>
+          <button id="annotation-modal-close" class="secondary compact"><span aria-hidden="true">×</span></button>
         </div>
         <p class="annotation-modal-genres">Biography, History</p>
         <p id="annotation-modal-text">Full annotation text.</p>
@@ -1133,6 +1133,7 @@ await test('annotation modal keeps close action fixed and uses readable computed
   const closeRect = close.getBoundingClientRect();
   assert(getComputedStyle(modal).position === 'relative' && getComputedStyle(close).position === 'absolute', 'close button is positioned against modal');
   assert(Math.abs(closeRect.top - modalRect.top - 14) < 1 && Math.abs(modalRect.right - closeRect.right - 16) < 1, 'close button remains at modal top-right');
+  assert(getComputedStyle(close.querySelector('span')).top === '-5px', 'close glyph is optically shifted upward inside its fixed square button');
   assert(Number.parseFloat(getComputedStyle(fixture.querySelector('.modal-header h2')).paddingRight) >= 40, 'heading reserves room for close button');
   equal([
     getComputedStyle(title).fontSize,

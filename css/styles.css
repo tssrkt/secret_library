@@ -437,6 +437,7 @@ dd { margin: 0; color: #000; font-weight: 400; font-variant-numeric: tabular-num
 .annotation-modal-book-title { font-size: 18px; font-weight: 600; }
 .annotation-modal-authors { font-size: 16px; font-weight: 400; }
 #annotation-modal-close { position: absolute; z-index: 2; top: 14px; right: 16px; bottom: auto; width: 2rem; height: 2rem; min-width: 2rem; min-height: 2rem; max-height: 2rem; padding: 0; display: grid; place-items: center; align-self: start; justify-self: end; aspect-ratio: 1; line-height: 1; }
+#annotation-modal-close > span { position: relative; top: -5px; display: block; line-height: 1; }
 .annotation-modal-genres { margin: .45rem 0 0; flex: 0 0 auto; color: #756b60; font-size: 15px; }
 .annotation-modal-content > #annotation-modal-text {
   min-height: 0;
