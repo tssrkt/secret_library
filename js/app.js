@@ -9,6 +9,7 @@ import {
   saveBuildingIndex, saveIndex,
 } from './library-index.js';
 import { createLibraryRefresher, scanStatus, scanFailureMessage } from './library-refresh.js';
+import { scanLibrary } from './library-tree.js';
 import { indexPendingBooks, resetProcessingBooks } from './metadata-indexer.js';
 import {
   canResumeBuildingIndex, prepareBuildingIndex, updateBuildProgress, validateCompletedIndex,
@@ -139,15 +140,15 @@ async function ensureMinimumBookAccess(index) {
   const reason = 'В вашей папке всего ' + count + ' книг, а нужно не менее ' + MINIMUM_LIBRARY_BOOKS + '!';
   ui.setStatus(reason + ' Выберите другую корневую папку.');
   while (true) {
-    const folder = await chooseRootFolder({ listChildren: listFolderChildren, getFolder,
+    const folder = await chooseRootFolder({ listChildren: listFolderChildren, getFolder, scanFolder: scanLibrary,
       description: reason + ' Выберите корневую папку, где после сканирования найдётся не менее ' + MINIMUM_LIBRARY_BOOKS + ' книг. Учитываются книги во вложенных папках.' });
     if (!folder) {
       ui.setStatus('Доступ к каталогу закрыт: нужно не менее ' + MINIMUM_LIBRARY_BOOKS + ' книг. Выберите подходящую корневую папку через личное меню.');
       return false;
     }
     if (folder.id === activeRootFolderId) {
-      ui.setStatus(reason + ' Выберите другую корневую папку.');
-      continue;
+      await rebuildIndex();
+      return false;
     }
     await saveRootFolderPreference(folder.id, folder.resourceKey);
     window.location.reload();
@@ -375,7 +376,7 @@ async function afterAuthorization() {
   if (!activeRootFolderId) {
     ui.setAuthorized(true);
     ui.setStatus('Выберите корневую папку вашей библиотеки.');
-    const folder = await chooseRootFolder({ listChildren: listFolderChildren, getFolder });
+    const folder = await chooseRootFolder({ listChildren: listFolderChildren, getFolder, scanFolder: scanLibrary });
     if (!folder) {
       ui.setStatus('Корневая папка не выбрана. Выберите её через личное меню.');
       return;
@@ -461,7 +462,7 @@ async function changeRootFolder() {
   if (!authorizedOwner || metadataController || libraryRefresher.running) return;
   ui.clearError();
   try {
-    const folder = await chooseRootFolder({ listChildren: listFolderChildren, getFolder });
+    const folder = await chooseRootFolder({ listChildren: listFolderChildren, getFolder, scanFolder: scanLibrary });
     if (!folder || folder.id === activeRootFolderId) return;
     if (!window.confirm(`Сменить корневую папку на «${folder.name}»? Текущий каталог останется сохранён, а для новой папки будет создан отдельный индекс.`)) return;
     await saveRootFolderPreference(folder.id, folder.resourceKey);

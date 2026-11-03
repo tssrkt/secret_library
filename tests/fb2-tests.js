@@ -1543,6 +1543,10 @@ await test('root folder picker navigates folders, carries resource keys and retu
       calls.push(['get', folderId, options.resourceKey || '']);
       return { id: folderId, name: 'Книги', resourceKey: 'folder-key' };
     },
+    scanFolder: async (folderId, options) => {
+      calls.push(['scan', folderId, options.rootResourceKey || '']);
+      return { books: Array.from({ length: 11 }), folders: [{ id: folderId }] };
+    },
   });
   await Promise.resolve(); await Promise.resolve();
   assert(document.querySelector('.root-folder-dialog [data-refresh]'), 'folder picker exposes refresh button');
@@ -1551,11 +1555,12 @@ await test('root folder picker navigates folders, carries resource keys and retu
   document.querySelector('.root-folder-dialog [data-refresh]').click();
   await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
   assert(document.querySelector('.root-folder-entry'), 'refresh reloads newly added folders');
+  assert(document.querySelector('.root-folder-status').textContent.includes('11'), 'refresh scans files and reports book count');
   document.querySelector('.root-folder-entry').click();
   await Promise.resolve(); await Promise.resolve();
   document.querySelector('.root-folder-dialog [data-select]').click();
   equal(await selected, { id: 'folder-a', name: 'Книги', resourceKey: 'folder-key' }, 'selected folder metadata returned');
-  equal(calls, [['list', 'root', ''], ['list', 'root', ''], ['list', 'folder-a', 'folder-key'], ['get', 'folder-a', 'folder-key']], 'resource key follows folder navigation');
+  equal(calls, [['list', 'root', ''], ['list', 'root', ''], ['scan', 'root', ''], ['list', 'folder-a', 'folder-key'], ['get', 'folder-a', 'folder-key']], 'resource key follows folder navigation and refresh scans files');
   assert(document.querySelector('.root-folder-backdrop') === null, 'picker closes after selection');
 });
 await runUserSettingsTests(test, assert, equal);

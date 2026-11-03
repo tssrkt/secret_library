@@ -1,4 +1,4 @@
-export function chooseRootFolder({ listChildren, getFolder, description = 'Выберите папку с книгами. Сайт будет сканировать её и все вложенные папки.', documentRef = document }) {
+export function chooseRootFolder({ listChildren, getFolder, scanFolder, description = 'Выберите папку с книгами. Сайт будет сканировать её и все вложенные папки.', documentRef = document }) {
   return new Promise((resolve, reject) => {
     const backdrop = documentRef.createElement('div');
     backdrop.className = 'modal-backdrop root-folder-backdrop';
@@ -38,7 +38,7 @@ export function chooseRootFolder({ listChildren, getFolder, description = 'Вы�
       select.disabled = path.length === 1 || busy;
       refresh.disabled = busy;
     };
-    const load = async () => {
+    const load = async ({ scanFiles = false } = {}) => {
       if (busy) return;
       busy = true; status.textContent = 'Загружаем папки…'; list.replaceChildren(); renderPath();
       try {
@@ -46,7 +46,13 @@ export function chooseRootFolder({ listChildren, getFolder, description = 'Вы�
         const children = await listChildren(currentFolder.id, { resourceKey: currentFolder.resourceKey });
         const folders = children.filter((item) => item.mimeType === 'application/vnd.google-apps.folder')
           .sort((a, b) => a.name.localeCompare(b.name, 'ru'));
-        status.textContent = folders.length ? 'Откройте папку или выберите текущую.' : 'В этой папке нет вложенных папок.';
+        let scanSummary = '';
+        if (scanFiles && scanFolder) {
+          status.textContent = '\u0421\u043a\u0430\u043d\u0438\u0440\u0443\u044e \u0444\u0430\u0439\u043b\u044b \u0438 \u0432\u043b\u043e\u0436\u0435\u043d\u043d\u044b\u0435 \u043f\u0430\u043f\u043a\u0438?';
+          const scanned = await scanFolder(currentFolder.id, { rootResourceKey: currentFolder.resourceKey || '' });
+          scanSummary = ' \u041d\u0430\u0439\u0434\u0435\u043d\u043e \u043a\u043d\u0438\u0433: ' + scanned.books.length.toLocaleString('ru-RU') + '; \u043f\u0430\u043f\u043e\u043a: ' + Math.max(0, scanned.folders.length - 1).toLocaleString('ru-RU') + '.';
+        }
+        status.textContent = (folders.length ? '\u0412\u043b\u043e\u0436\u0435\u043d\u043d\u044b\u0435 \u043f\u0430\u043f\u043a\u0438 \u043e\u0442\u043e\u0431\u0440\u0430\u0436\u0435\u043d\u044b \u043d\u0438\u0436\u0435.' : '\u0412 \u044d\u0442\u043e\u0439 \u043f\u0430\u043f\u043a\u0435 \u043d\u0435\u0442 \u0432\u043b\u043e\u0436\u0435\u043d\u043d\u044b\u0445 \u043f\u0430\u043f\u043e\u043a.') + scanSummary;
         for (const folder of folders) {
           const li = documentRef.createElement('li');
           const button = documentRef.createElement('button');
@@ -58,7 +64,7 @@ export function chooseRootFolder({ listChildren, getFolder, description = 'Вы�
         status.textContent = error.message || 'Не удалось прочитать содержимое папки.';
       } finally { busy = false; renderPath(); }
     };
-    refresh.addEventListener('click', () => { void load(); });
+    refresh.addEventListener('click', () => { void load({ scanFiles: true }); });
     select.addEventListener('click', async () => {
       if (busy || path.length === 1) return;
       busy = true; select.disabled = true; status.textContent = 'Проверяем выбранную папку…';
