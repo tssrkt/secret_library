@@ -27,7 +27,7 @@ export function createUserSettingsController({ container, index, onError, clearE
       element('p', 'Выберите папки библиотеки, которые будут доступны вашим друзьям.'));
     const status = element('p', 'Загрузка настроек…');
     status.setAttribute('role', 'status');
-    page.append(element('h2', 'Настройки'), section);
+    page.append(section);
     section.append(status);
     container.replaceChildren(page);
     unmount = mountSections(page);

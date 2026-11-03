@@ -572,10 +572,14 @@ dd { margin: 0; color: #000; font-weight: 400; font-variant-numeric: tabular-num
 .friends-table th, .friends-table td { text-align: left; padding: .6rem .35rem; border-bottom: 1px solid #e5dbce; }
 .friends-table small { display: block; overflow-wrap: anywhere; }
 .friends-table .settings-save-button { height: auto; min-height: 34px; padding: 0 .3rem; white-space: nowrap; }
-.friend-library-button { display: block; padding: 0; color: inherit; background: transparent; font: inherit; font-weight: 650; text-align: left; overflow-wrap: anywhere; }
-.friend-library-button:hover { color: #65452e; background: transparent; text-decoration: underline; }
-.friend-library-button:focus-visible { outline: 2px solid #8a623b; outline-offset: 2px; }
+.friends-table td:first-child { padding: 0; }
+.friend-library-button { display: block; width: 100%; min-height: 100%; padding: .6rem .35rem; color: inherit; background: transparent; font: inherit; font-weight: 650; text-align: left; overflow-wrap: anywhere; border-radius: 0; }
+.friend-library-button:hover { color: inherit; background: #f2eadf; text-decoration: none; }
+.friend-library-button:focus-visible { outline: 2px solid #8a623b; outline-offset: -2px; }
 .friend-library-button small { display: block; font-size: .85em; font-weight: 400; }
+.friend-status-mark { display: inline-block; min-width: 1.4em; font-size: 1.25rem; font-weight: 750; line-height: 1; text-align: center; }
+.friend-status-mark.is-yes { color: #21833b; }
+.friend-status-mark.is-no { color: #c62828; }
 @media (max-width: 1000px) {
   .social-header .quick-search-form { right: 0; }
   .app-header.quick-search-open { padding-bottom: 4.5rem; }

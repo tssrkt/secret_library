@@ -504,3 +504,18 @@ try {
   ui.showError(readableError(error));
   ui.setBusy(false);
 }
+
+const sharedSearchQuery = new URLSearchParams(window.location.search).get('q');
+if (sharedSearchQuery) {
+  const quickSearchInput = document.querySelector('#quick-search-input');
+  if (quickSearchInput) quickSearchInput.value = sharedSearchQuery;
+}
+const headerAction = window.location.hash.slice(1);
+const headerActionButtons = {
+  'sign-in': '#sign-in-button', settings: '#settings-button', refresh: '#refresh-button',
+  'change-root': '#change-root-folder-button', metadata: '#metadata-button', retry: '#retry-metadata-button',
+  'sign-out': '#sign-out-button', search: '#book-search-button', notifications: '#notifications-button',
+};
+if (headerActionButtons[headerAction]) {
+  document.querySelector(headerActionButtons[headerAction])?.click();
+}

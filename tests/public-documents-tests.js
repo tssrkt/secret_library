@@ -2,10 +2,26 @@ export async function runPublicDocumentsTests(test, assert, equal) {
   await test('public instruction preserves document structure and owner link without application scripts', async () => {
     const html = await (await fetch('../info.html')).text();
     const page = new DOMParser().parseFromString(html, 'text/html');
-    assert(!page.querySelector('script'), 'public page does not start app, Drive or Firebase code');
+    assert(!page.querySelector('script[src*="app.js"], script[src*="auth.js"], script[src*="firebase"]')
+      && page.querySelector('script[src="./js/document-header.js"]'), 'public page loads only the shared-header controller, not app, Drive or Firebase code');
     assert(page.querySelectorAll('h1, h2, h3').length > 0 && page.querySelectorAll('ol, ul').length > 0, 'DOCX headings and lists remain structured HTML');
     const link = [...page.querySelectorAll('a')].find((item) => item.textContent.includes('сообщите владельцу «Тайной Библиотеки»'));
     assert(link && link.href === 'https://t.me/ptica_govorun_bot' && link.target === '_blank' && link.rel.includes('noopener'), 'owner phrase is the safe Telegram link');
+  });
+  await test('instruction and privacy mount the shared main-page header from one source', async () => {
+    const [instructionHtml, privacyHtml, loaderHtml, homeHtml] = await Promise.all([
+      fetch('../info.html').then((response) => response.text()),
+      fetch('../privacy.html').then((response) => response.text()),
+      fetch('../js/document-header.js').then((response) => response.text()),
+      fetch('../index.html').then((response) => response.text()),
+    ]);
+    for (const html of [instructionHtml, privacyHtml]) {
+      const page = new DOMParser().parseFromString(html, 'text/html');
+      assert(page.querySelector('#shared-header') && page.querySelector('script[src="./js/document-header.js"]'), 'document page uses the shared-header loader');
+    }
+    assert(loaderHtml.includes("fetch('./index.html'") && loaderHtml.includes("querySelector('.app-header')"), 'document pages fetch the header from the main page');
+    const home = new DOMParser().parseFromString(homeHtml, 'text/html');
+    assert(home.querySelector('#book-search-button') && home.querySelector('#notifications-button') && home.querySelector('#avatar-button'), 'shared source contains search, notifications and avatar');
   });
   await test('privacy and instruction menu items follow settings and precede logout', async () => {
     const html = await (await fetch('../index.html')).text();

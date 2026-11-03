@@ -45,7 +45,15 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
       openButton.addEventListener('click', () => openLibrary(friend.uid));
       name.append(openButton);
       row.append(name);
-      for (const value of [friend.inbound, friend.outbound]) { const cell = document.createElement('td'); cell.textContent = value ? 'Да' : '—'; row.append(cell); }
+      for (const value of [friend.inbound, friend.outbound]) {
+        const cell = document.createElement('td');
+        const mark = document.createElement('span');
+        mark.className = value ? 'friend-status-mark is-yes' : 'friend-status-mark is-no';
+        mark.textContent = value ? '✓' : '✕';
+        mark.setAttribute('role', 'img');
+        mark.setAttribute('aria-label', value ? 'Да' : 'Нет');
+        cell.append(mark); row.append(cell);
+      }
       const action = document.createElement('td');
       const button = document.createElement('button');
       button.type = 'button'; button.className = 'settings-save-button';

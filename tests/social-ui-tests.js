@@ -40,9 +40,9 @@ export async function runSocialUiTests(test, assert, equal) {
       const profileButton = rows[0].querySelector('.friend-library-button');
       assert(profileButton && profileButton.textContent.includes('User 0') && profileButton.textContent.includes('reader@gmail.com'), 'friend name and email are one library button');
       profileButton.click(); equal(openedLibraries, ['0'], 'friend library button opens the selected user');
-      equal([...rows[0].children].slice(1).map((cell) => cell.textContent), ['Да', '—', 'ПОДЕЛИТЬСЯ'], 'inbound only');
-      equal([...rows[1].children].slice(1).map((cell) => cell.textContent), ['—', 'Да', 'ЗАКРЫТЬ ДОСТУП'], 'outbound only');
-      equal([...rows[2].children].slice(1).map((cell) => cell.textContent), ['Да', 'Да', 'ЗАКРЫТЬ ДОСТУП'], 'mutual');
+      equal([...rows[0].children].slice(1).map((cell, i) => i < 2 ? cell.querySelector('.friend-status-mark')?.getAttribute('aria-label') : cell.textContent), ['Да', 'Нет', 'ПОДЕЛИТЬСЯ'], 'inbound only');
+      equal([...rows[1].children].slice(1).map((cell, i) => i < 2 ? cell.querySelector('.friend-status-mark')?.getAttribute('aria-label') : cell.textContent), ['Нет', 'Да', 'ЗАКРЫТЬ ДОСТУП'], 'outbound only');
+      equal([...rows[2].children].slice(1).map((cell, i) => i < 2 ? cell.querySelector('.friend-status-mark')?.getAttribute('aria-label') : cell.textContent), ['Да', 'Да', 'ЗАКРЫТЬ ДОСТУП'], 'mutual');
       rows[0].querySelector('.settings-save-button').click(); await tick(); equal(social.calls[0], ['0', true], 'share action');
       page.querySelector('[aria-label="Страница 2"]').click(); equal(page.querySelectorAll('tbody tr').length, 1, 'second page is a slice');
       social.update({ friends: friends.slice(0, 50) });
