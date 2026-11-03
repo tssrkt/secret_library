@@ -23,10 +23,9 @@ async function renderDocument(key, { updateHistory = true } = {}) {
     const parsed = new DOMParser().parseFromString(await response.text(), 'text/html');
     const article = parsed.querySelector('.info-document');
     if (!article) throw new Error('Не найден текст документа');
-    const footer = document.createElement('nav');
-    footer.className = 'document-navigation';
-    footer.setAttribute('aria-label', 'Навигация по документам');
-    footer.innerHTML = '<a href="./info.html" data-document="info">Инструкция</a><a href="./privacy.html" data-document="privacy">Конфиденциальность</a><a href="./index.html" data-document-home>Вернуться в библиотеку</a>';
+    const footer = document.createElement('footer');
+    footer.className = 'app-footer';
+    footer.innerHTML = '<a href="./info.html" data-document="info">Инструкция</a><a href="./privacy.html" data-document="privacy">Политика конфиденциальности</a><a href="./index.html" data-document-home>Вернуться в библиотеку</a>';
     view.replaceChildren(document.importNode(article, true), footer);
     activePage = key;
     document.title = page.title;
