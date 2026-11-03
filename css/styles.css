@@ -153,7 +153,6 @@ button:disabled { cursor: wait; opacity: .6; }
 .library-tab-strip.dragging button { cursor: grabbing; }
 .library-tabs.expanded .library-tab-strip { flex-wrap: wrap; overflow: visible; }
 #library-selection-message { margin: .8rem 0; }
-.viewing-friend-library #refresh-button, .viewing-friend-library #metadata-button, .viewing-friend-library #retry-metadata-button { display: none; }
 .status-panel:has(#indexing-errors:not([hidden])) { flex-wrap: wrap; }
 #indexing-errors { flex-basis: 100%; min-width: 0; font-size: .85rem; }
 #indexing-errors button { padding: .35rem .55rem; margin: .2rem; }
@@ -437,7 +436,7 @@ dd { margin: 0; color: #000; font-weight: 400; font-variant-numeric: tabular-num
 .modal-header h2 { margin: 0; padding-right: 3.25rem; font-size: 18px; font-weight: 400; overflow-wrap: anywhere; }
 .annotation-modal-book-title { font-size: 18px; font-weight: 600; }
 .annotation-modal-authors { font-size: 16px; font-weight: 400; }
-#annotation-modal-close { position: absolute; z-index: 2; top: 14px; right: 16px; }
+#annotation-modal-close { position: absolute; z-index: 2; top: 14px; right: 16px; bottom: auto; width: 2rem; height: 2rem; min-width: 2rem; min-height: 2rem; max-height: 2rem; padding: 0; display: grid; place-items: center; align-self: start; justify-self: end; aspect-ratio: 1; line-height: 1; }
 .annotation-modal-genres { margin: .45rem 0 0; flex: 0 0 auto; color: #756b60; font-size: 15px; }
 .annotation-modal-content > #annotation-modal-text {
   min-height: 0;
@@ -585,7 +584,7 @@ dd { margin: 0; color: #000; font-weight: 400; font-variant-numeric: tabular-num
 .friends-table small { display: block; overflow-wrap: anywhere; }
 .friends-table .settings-save-button { height: auto; min-height: 34px; padding: 0 .3rem; white-space: nowrap; }
 .friends-table td:first-child { padding: 0; }
-.friend-library-button { display: block; width: 100%; min-height: 100%; padding: .6rem .35rem; color: inherit; background: transparent; font: inherit; font-weight: 650; text-align: left; overflow-wrap: anywhere; border-radius: 0; }
+.friend-library-button { display: block; width: 100%; min-height: 100%; padding: .6rem .35rem .6rem calc(.35rem + 5px); color: inherit; background: transparent; font: inherit; font-weight: 650; text-align: left; overflow-wrap: anywhere; border-radius: 0; }
 .friend-library-button:hover { color: inherit; background: #f2eadf; text-decoration: none; }
 .friend-library-button:focus-visible { outline: 2px solid #8a623b; outline-offset: -2px; }
 .friend-library-button small { display: block; font-size: .85em; font-weight: 400; }

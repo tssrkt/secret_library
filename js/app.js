@@ -469,16 +469,21 @@ function signOut() {
   ui.setStatus('Вы вышли. Для доступа к библиотеке войдите через Google.');
 }
 
+const runOnOwnLibrary = (action) => async () => {
+  if (selection.selected) selection.select('');
+  await action();
+};
+
 ui.bindActions({
   settingsError: (error) => ui.showError(readableError(error)),
   home: () => ui.showLibraryHome(),
   signIn,
-  refresh: rebuildIndex,
+  refresh: runOnOwnLibrary(rebuildIndex),
   changeRootFolder,
   rebuild: rebuildIndex,
   signOut,
-  indexMetadata: () => runMetadataIndexing(),
-  retryMetadata: () => runMetadataIndexing({ retryErrors: true }),
+  indexMetadata: runOnOwnLibrary(() => runMetadataIndexing()),
+  retryMetadata: runOnOwnLibrary(() => runMetadataIndexing({ retryErrors: true })),
   stopMetadata: stopMetadataIndexing,
 });
 
