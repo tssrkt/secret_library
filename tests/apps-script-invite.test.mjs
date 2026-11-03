@@ -73,7 +73,7 @@ function harness({ authUser, pendingFields, directoryStatus = 404, pendingStatus
   const invoke = (overrides = {}) => context.doPost({
     parameter: { payload: JSON.stringify({ ...payload, ...overrides }) }
   });
-  return { invoke, sent, calls, properties, payload };
+  return { invoke, sent, calls, properties, payload, context };
 }
 
 function response(status, body) {
@@ -154,4 +154,17 @@ test('does not send if the owner profile cannot be read under Firestore rules', 
   const result = app.invoke();
   assert.equal(app.sent.length, 0);
   assert.match(result.content, /Не удалось проверить профиль владельца/);
+});
+
+test('prevents changing a library share involving the superadmin on the server', () => {
+  const app = harness();
+  app.context.requireAdminApi = () => ({ uid: 'moderator', admin: { role: 'moderator' } });
+  app.context.fsGet = path => {
+    if (path === 'libraryShares/share-1') return { id: 'share-1', ownerUid: 'owner-uid', viewerUid: 'superadmin-uid', active: true };
+    if (path === 'adminUsers/superadmin-uid') return { uid: 'superadmin-uid', role: 'superadmin' };
+    return null;
+  };
+  app.context.fsSet = () => assert.fail('must not mutate a protected share');
+  app.context.fsAddEvent = () => assert.fail('must not log a blocked mutation as completed');
+  assert.throws(() => app.context.setLibraryShareApi({}, { id: 'share-1', active: false }), /Нельзя изменять доступ/);
 });

@@ -429,6 +429,10 @@ function setLibraryShareApi(actor, data) {
   if (!id || typeof data.active !== 'boolean') throw new Error('Некорректный доступ.');
   const current = fsGet('libraryShares/' + encodeURIComponent(id));
   if (!current) throw new Error('Связь доступа не найдена.');
+  const protectedUids = [current.ownerUid, current.viewerUid].filter(Boolean);
+  if (protectedUids.some(uid => fsGet('adminUsers/' + uid)?.role === 'superadmin')) {
+    throw new Error('Нельзя изменять доступ, связанный с главным администратором.');
+  }
   fsSet('libraryShares/' + encodeURIComponent(id), { active: data.active, revokedAt: data.active ? null : new Date() });
   fsAddEvent(actor.uid, data.active ? 'admin-open-share' : 'admin-close-share', current.viewerUid || null, { ownerUid: current.ownerUid || '' });
   return { ok: true };

@@ -45,7 +45,14 @@ function gasRequest(action, payload) {
 }
 function say(message, error = false) { status.textContent = message; status.classList.toggle('error', error); }
 function node(tag, text, cls) { const e = document.createElement(tag); if (text != null) e.textContent = text; if (cls) e.className = cls; return e; }
-function button(text, action, cls = '') { const b = node('button', text, cls); b.addEventListener('click', action); return b; }
+function button(text, action, cls = '') {
+  const b = node('button', text, cls);
+  b.addEventListener('click', async () => {
+    try { await action(); }
+    catch (error) { say(error?.message || 'Операция не выполнена.', true); }
+  });
+  return b;
+}
 function table(headers, rows) {
   const t = node('table'), thead = node('thead'), hr = node('tr'), body = node('tbody');
   headers.forEach(h => hr.append(node('th', h))); thead.append(hr); t.append(thead, body);
@@ -87,8 +94,9 @@ function renderUsers() {
     const statusText = u.banned ? 'Забанен' : u.admin ? 'Администратор' : 'Активен';
     const actions = node('div',null,'actions');
     if (u.uid !== superAdminUid) {
-      if (u.banned) actions.append(button('Восстановить', async()=>{await call('restoreLibraryUser')({uid:u.uid}); await refresh();}));
-      else actions.append(button('Заблокировать',async()=>{const reason=window.prompt('Причина блокировки (необязательно):','');if(reason===null)return;await call('banLibraryUser')({uid:u.uid,reason});await refresh();},'danger'));
+      if (u.banned) {
+        if (data.permissions?.banned) actions.append(button('Восстановить', async()=>{await call('restoreLibraryUser')({uid:u.uid}); await refresh();}));
+      } else actions.append(button('Заблокировать',async()=>{const reason=window.prompt('Причина блокировки (необязательно):','');if(reason===null)return;await call('banLibraryUser')({uid:u.uid,reason});await refresh();},'danger'));
     }
     if (data.permissions?.admins && !u.banned && !u.admin) actions.append(button('Назначить модератором',()=>{activeTab='admins';renderAdminEditor(u);}));
     return [who,rel,statusText,actions];
