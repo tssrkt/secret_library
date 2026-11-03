@@ -75,6 +75,7 @@ function renderTabs() {
   [...tabs.children].forEach((b,i) => b.setAttribute('aria-pressed', String(sections.filter(([key]) => data.permissions?.[key])[i]?.[0] === activeTab)));
 }
 function renderUsers() {
+  const superAdminUid = (data.admins || []).find(a => a.role === 'superadmin')?.uid;
   const users = [...(data.users || [])].sort((a,b)=>(a.displayName||'').localeCompare(b.displayName||'','ru'));
   const byUid = new Map(users.map(u => [u.uid,u]));
   const children = new Map();
@@ -85,8 +86,10 @@ function renderUsers() {
     rel.append(node('div', 'Приглашённые: '+(children.get(u.uid)||[]).map(x=>x.displayName||x.uid).join(', ') || '—'));
     const statusText = u.banned ? 'Забанен' : u.admin ? 'Администратор' : 'Активен';
     const actions = node('div',null,'actions');
-    if (u.banned) actions.append(button('Восстановить', async()=>{await call('restoreLibraryUser')({uid:u.uid}); await refresh();}));
-    else actions.append(button('Заблокировать',async()=>{const reason=window.prompt('Причина блокировки (необязательно):','');if(reason===null)return;await call('banLibraryUser')({uid:u.uid,reason});await refresh();},'danger'));
+    if (u.uid !== superAdminUid) {
+      if (u.banned) actions.append(button('Восстановить', async()=>{await call('restoreLibraryUser')({uid:u.uid}); await refresh();}));
+      else actions.append(button('Заблокировать',async()=>{const reason=window.prompt('Причина блокировки (необязательно):','');if(reason===null)return;await call('banLibraryUser')({uid:u.uid,reason});await refresh();},'danger'));
+    }
     if (data.permissions?.admins && !u.banned && !u.admin) actions.append(button('Назначить модератором',()=>{activeTab='admins';renderAdminEditor(u);}));
     return [who,rel,statusText,actions];
   });
@@ -135,11 +138,12 @@ function renderInvites() {
 }
 function renderShares() {
   const users=new Map((data.users||[]).map(u=>[u.uid,u]));
+  const superAdminUid = (data.admins || []).find(a => a.role === 'superadmin')?.uid;
   content.append(table(['Владелец','Получатель','Статус','Действие'],(data.shares||[]).map(s=>[
     details(users.get(s.ownerUid)?.displayName,s.ownerUid,s.ownerUid),
     details(users.get(s.viewerUid)?.displayName,s.viewerUid,s.viewerUid),
     s.active?'Активен':'Закрыт',
-    button(s.active?'Закрыть доступ':'Доступ закрыт',async()=>{if(!s.active)return;const sure=confirm('Закрыть доступ к этой библиотеке?');if(!sure)return;await call('adminSetLibraryShare')({id:s.id,active:false});await refresh();},s.active?'danger':'')
+    s.ownerUid === superAdminUid || s.viewerUid === superAdminUid ? '—' : button(s.active?'Закрыть доступ':'Доступ закрыт',async()=>{if(!s.active)return;const sure=confirm('Закрыть доступ к этой библиотеке?');if(!sure)return;await call('adminSetLibraryShare')({id:s.id,active:false});await refresh();},s.active?'danger':'')
   ])));
 }
 function renderEvents() {
