@@ -41,7 +41,7 @@ function renderTabs() {
   [...tabs.children].forEach((b,i) => b.setAttribute('aria-pressed', String(sections.filter(([key]) => data.permissions?.[key])[i]?.[0] === activeTab)));
 }
 function renderUsers() {
-  const users = data.users || [];
+  const users = [...(data.users || [])].sort((a,b)=>(a.displayName||'').localeCompare(b.displayName||'','ru'));
   const byUid = new Map(users.map(u => [u.uid,u]));
   const children = new Map();
   users.forEach(u => { if (u.invitedByUid && byUid.has(u.invitedByUid)) { const arr=children.get(u.invitedByUid)||[]; arr.push(u); children.set(u.invitedByUid,arr); } });
@@ -74,6 +74,19 @@ function renderRelations() {
   }
   roots.sort((a,b)=>(a.displayName||'').localeCompare(b.displayName||'','ru')).forEach(u=>tree.append(branch(u)));
   content.append(tree);
+  content.append(node('h3','Алфавитный список и типы отношений'));
+  const active = (data.shares||[]).filter(s=>s.active);
+  content.append(table(['Участник','Пригласитель','Приглашённые','Связи доступа'],[...(data.users||[])].sort((a,b)=>(a.displayName||'').localeCompare(b.displayName||'','ru')).map(u=>{
+    const invited=(data.users||[]).filter(x=>x.invitedByUid===u.uid).map(x=>x.displayName||x.uid);
+    const outgoing=active.filter(s=>s.ownerUid===u.uid).map(s=>s.viewerUid);
+    const incoming=active.filter(s=>s.viewerUid===u.uid).map(s=>s.ownerUid);
+    const others=new Set([...outgoing,...incoming]);
+    const types=[...others].map(other=>{
+      const out=outgoing.includes(other), inc=incoming.includes(other), name=(data.users||[]).find(x=>x.uid===other)?.displayName||other;
+      return (out&&inc?'Взаимные: ':out?'Делится: ':'Пользуется: ')+name;
+    });
+    return [details(u.displayName,'',u.uid),(data.users||[]).find(x=>x.uid===u.invitedByUid)?.displayName||u.invitedByUid||'—',invited.join(', ')||'—',types.join('; ')||'—'];
+  })));
   content.append(node('h3','Отдельные связи доступа'));
   content.append(table(['Владелец библиотеки','Пользователь','Доступ'],(data.shares||[]).map(s=>[
     details(byUid.get(s.ownerUid)?.displayName,s.ownerUid,s.ownerUid),

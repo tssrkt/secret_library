@@ -85,8 +85,9 @@ export const bootstrapAdmin = onCall({ region: 'europe-west1', invoker: 'public'
 });
 
 export const getAdminDashboard = onCall({ region: 'europe-west1', invoker: 'public' }, async (request) => {
-  const { uid, admin } = await requireAdmin(request, 'overview');
+  const { uid, admin } = await requireAdmin(request);
   const allPermissions = admin.role === 'superadmin' ? Object.fromEntries(ADMIN_SECTIONS.map((key) => [key, true])) : (admin.permissions || {});
+  if (!Object.values(allPermissions).some(Boolean)) throw new HttpsError('permission-denied', 'Не назначены права для просмотра админки.');
   const [users, invites, shares, admins, banned, events] = await Promise.all([
     db.collection('users').get(),
     db.collection('pendingInvites').get(),
