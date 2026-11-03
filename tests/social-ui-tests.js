@@ -23,6 +23,7 @@ export async function runSocialUiTests(test, assert, equal) {
     const friends = friendsModel('me', shares, profiles, { b: { email: 'known@gmail.com' } });
     equal(friends.map((item) => [item.uid, item.inbound, item.outbound, item.email]), [['a', true, true, ''], ['b', false, true, 'known@gmail.com']], 'direction, unique person and stable uid tiebreak');
     equal(validateShareEmail(' Ab.C+tag@Gmail.Com ', 'me@gmail.com'), 'ab.c+tag@gmail.com', 'trim lowercase only');
+    equal(friendsModel('me', [{ ownerUid: 'owner', viewerUid: 'me', active: true, ownerEmail: 'owner@gmail.com' }], { owner: { displayName: 'Owner' } })[0].email, 'owner@gmail.com', 'incoming friend displays the email attached to their share');
     assert(notificationsModel('me', shares)[0].mutual, 'reciprocal share');
     assert(!notificationsModel('me', shares, { a: { seenSharedAt: 1 } })[0].unread, 'seen timestamp hides unread');
     assert(notificationsModel('me', [{ ...shares[0], sharedAt: 3 }], { a: { seenSharedAt: 1 } })[0].unread, 'regrant is unread');

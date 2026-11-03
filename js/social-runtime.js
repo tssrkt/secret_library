@@ -68,6 +68,7 @@ export const social = {
       shared = createSharedLibraryStore(session);
       invitationUser = session.user;
       await store.register();
+      await store.syncShareEmails().catch(() => {});
       if (current !== generation) return;
       emit({ status: 'ready', message: '' });
       stop = store.subscribe((snapshot) => { if (current === generation) { emit(snapshot); watchCatalogs(snapshot.friends); } },

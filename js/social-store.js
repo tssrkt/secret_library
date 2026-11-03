@@ -12,7 +12,7 @@ export function createSocialStore({ db, sdk, user }) {
   const profileRef = ref('users', uid);
   const pendingRef = (address, owner) => ref('pendingInvites', address, 'shares', owner);
   const relationshipRef = (owner, viewer) => ref('libraryShares', shareId(owner, viewer));
-  const newShare = (ownerUid, viewerUid) => ({ ownerUid, viewerUid, active: true, sharedAt: serverTimestamp(), revokedAt: null });
+  const newShare = (ownerUid, viewerUid, ownerEmail = ownerUid === uid ? email : '') => ({ ownerUid, viewerUid, ...(ownerEmail ? { ownerEmail: normalizeEmail(ownerEmail) } : {}), active: true, sharedAt: serverTimestamp(), revokedAt: null });
   let disposed = false;
   const ensureCurrent = () => { if (disposed) throw new Error('Сеанс социальной части завершён.'); };
 
@@ -44,7 +44,7 @@ export function createSocialStore({ db, sdk, user }) {
         const share = relationshipRef(invite.ownerUid, uid);
         const existing = data(await tx.get(share));
         ensureCurrent();
-        if (!existing?.active) tx.set(share, newShare(invite.ownerUid, uid));
+        if (!existing?.active) tx.set(share, newShare(invite.ownerUid, uid, invite.ownerEmail || ''));
         tx.update(snapshot.ref, { claimedUid: uid, claimedAt: serverTimestamp() });
       });
     }
@@ -71,7 +71,7 @@ export function createSocialStore({ db, sdk, user }) {
       const first = data(await tx.get(firstRef));
       ensureCurrent();
       if (existing?.active) return 'Этот пользователь ещё не зарегистрирован. Приглашение уже сохранено.';
-      tx.set(pending, { ownerUid: uid, inviteeEmail: address, active: true,
+      tx.set(pending, { ownerUid: uid, ownerEmail: email, inviteeEmail: address, active: true,
         createdAt: serverTimestamp(), claimedUid: null, claimedAt: null });
       // Immutable first invitation makes attribution enforceable without server code.
       if (!first) tx.set(firstRef, { firstOwnerUid: uid, createdAt: serverTimestamp() });
@@ -86,11 +86,28 @@ export function createSocialStore({ db, sdk, user }) {
       const share = relationshipRef(uid, otherUid);
       const existing = data(await tx.get(share));
       ensureCurrent();
-      if (Boolean(existing?.active) === active) return false;
+      if (Boolean(existing?.active) === active) {
+        if (active && !existing.ownerEmail) { tx.update(share, { ownerEmail: email }); return true; }
+        return false;
+      }
       if (active) tx.set(share, newShare(uid, otherUid));
       else tx.update(share, { active: false, revokedAt: serverTimestamp() });
       return true;
     });
+  }
+
+  async function syncShareEmails() {
+    ensureCurrent();
+    const outgoing = await getDocs(query(collection(db, 'libraryShares'), where('ownerUid', '==', uid)));
+    for (const snapshot of outgoing.docs) {
+      const share = snapshot.data();
+      if (!share.active || share.ownerEmail) continue;
+      await runTransaction(db, async (tx) => {
+        const current = data(await tx.get(snapshot.ref));
+        ensureCurrent();
+        if (current?.active && !current.ownerEmail) tx.update(snapshot.ref, { ownerEmail: email });
+      });
+    }
   }
 
   async function syncKnownContacts() {
@@ -152,5 +169,5 @@ export function createSocialStore({ db, sdk, user }) {
     ];
     return () => { stopped = true; stops.forEach((stop) => stop()); };
   }
-  return { uid, register, shareWithEmail, setSharing, syncKnownContacts, markSeen, subscribe, dispose() { disposed = true; } };
+  return { uid, register, shareWithEmail, setSharing, syncShareEmails, syncKnownContacts, markSeen, subscribe, dispose() { disposed = true; } };
 }

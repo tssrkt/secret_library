@@ -15,8 +15,9 @@ export function friendsModel(uid, shares, profiles = {}, contacts = {}) {
     if (other === uid || !profiles[other]) continue;
     const isAdmin = profiles[other].isAdmin === true;
     const friend = friends.get(other) || { uid: other, displayName: profiles[other].displayName || 'Пользователь',
-      isAdmin, email: isAdmin ? '' : (contacts[other]?.email || ''), inbound: false, outbound: false };
+      isAdmin, email: isAdmin ? '' : (contacts[other]?.email || (share.ownerUid === other ? share.ownerEmail : '') || ''), inbound: false, outbound: false };
     if (share.ownerUid === uid) friend.outbound = true; else friend.inbound = true;
+    if (!isAdmin && share.ownerUid === other && !friend.email) friend.email = contacts[other]?.email || share.ownerEmail || '';
     friends.set(other, friend);
   }
   return [...friends.values()].sort((a, b) => a.displayName.localeCompare(b.displayName, 'ru') || a.uid.localeCompare(b.uid));

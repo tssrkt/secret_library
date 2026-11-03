@@ -100,7 +100,8 @@ test('shares are directional, duplicate clicks are idempotent and revoke never c
   const results = await Promise.all([a.store.shareWithEmail(' B@GMAIL.COM '), a.store.shareWithEmail('b@gmail.com')]);
   assert(results.some((result) => result.includes('Доступ предоставлен')));
   const initial = await get(a.db, 'libraryShares/a__b');
-  assert.equal(initial.active, true); assert.equal(await get(a.db, 'libraryShares/b__a'), null);
+  assert.equal(initial.active, true); assert.equal(initial.ownerEmail, 'a@gmail.com');
+  assert.equal(await get(a.db, 'libraryShares/b__a'), null);
   await a.store.shareWithEmail('b@gmail.com');
   assert.deepEqual((await get(a.db, 'libraryShares/a__b')).sharedAt, initial.sharedAt);
   await b.store.setSharing('a', true);
@@ -129,13 +130,27 @@ test('private known email cannot be read by recipient or third party and never l
   await assertFails(sdk.getDocs(sdk.collection(c.db, 'users/a/knownContacts')));
   await assertFails(sdk.setDoc(sdk.doc(b.db, 'users/a/knownContacts/b'), { email: 'b@gmail.com' }));
   const shares = [await get(a.db, 'libraryShares/a__b')];
-  assert.equal(friendsModel('b', shares, { a: { displayName: 'A', email: 'DO NOT LEAK' } })[0].email, '');
+  assert.equal(friendsModel('b', shares, { a: { displayName: 'A', email: 'DO NOT LEAK' } })[0].email, 'a@gmail.com', 'recipient sees inviter email from their active share only');
   assert.equal(friendsModel('a', shares, { b: { displayName: 'B' } }, { b: { email: 'b@gmail.com' } })[0].email, 'b@gmail.com');
   const adminFriend = friendsModel('viewer', [{ ownerUid: 'admin', viewerUid: 'viewer', active: true }],
     { admin: { displayName: 'Library owner', isAdmin: true, email: 'private-admin@gmail.com' } },
     { admin: { email: 'private-admin@gmail.com' } })[0];
   assert.equal(adminFriend.isAdmin, true);
   assert.equal(adminFriend.email, '', 'admin email is suppressed even when stored in known contacts');
+});
+
+test('legacy active shares gain owner email without changing access', async () => {
+  const a = client('legacy-owner'); const b = client('legacy-viewer');
+  await a.store.register(); await b.store.register();
+  await env.withSecurityRulesDisabled(async (context) => {
+    await sdk.setDoc(sdk.doc(context.firestore(), 'libraryShares/legacy-owner__legacy-viewer'), {
+      ownerUid: 'legacy-owner', viewerUid: 'legacy-viewer', active: true, sharedAt: sdk.Timestamp.fromMillis(1000), revokedAt: null,
+    });
+  });
+  await a.store.syncShareEmails();
+  const share = await get(b.db, 'libraryShares/legacy-owner__legacy-viewer');
+  assert.equal(share.ownerEmail, 'legacy-owner@gmail.com');
+  assert.equal(friendsModel('legacy-viewer', [share], { 'legacy-owner': { displayName: 'Owner' } })[0].email, 'legacy-owner@gmail.com');
 });
 
 test('pending invites claim atomically for own email; earliest inviter is permanent', async () => {
@@ -150,6 +165,7 @@ test('pending invites claim atomically for own email; earliest inviter is perman
   assert.equal((await get(n.db, 'users/new')).invitedByUid, 'a');
   const share = await get(n.db, 'libraryShares/a__new');
   assert.equal(share.active, true);
+  assert.equal(share.ownerEmail, 'a@gmail.com');
   const pending = await get(a.db, 'pendingInvites/new@gmail.com/shares/a');
   assert.equal(pending.claimedUid, 'new'); assert(pending.claimedAt);
   await n.store.register();
@@ -231,7 +247,7 @@ test('live subscriptions update friends and notifications after reciprocal share
   try {
     await a.store.setSharing('b');
     await until(() => state?.friends.length === 1 && state.notifications.length === 1);
-    assert.equal(state.friends[0].email, '');
+    assert.equal(state.friends[0].email, 'a@gmail.com');
     assert.equal(state.friends[0].inbound, true); assert.equal(state.friends[0].outbound, false);
     observed.length = 0;
     await assertFails(sdk.updateDoc(sdk.doc(b.db, 'libraryShares/a__b'), { active: false, revokedAt: sdk.serverTimestamp() }));

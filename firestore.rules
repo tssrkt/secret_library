@@ -92,8 +92,9 @@ service cloud.firestore {
       allow delete: if false;
       function shape() {
         let d = request.resource.data;
-        return d.keys().hasOnly(['ownerUid', 'viewerUid', 'active', 'sharedAt', 'revokedAt'])
+        return d.keys().hasOnly(['ownerUid', 'viewerUid', 'ownerEmail', 'active', 'sharedAt', 'revokedAt'])
           && d.keys().hasAll(['ownerUid', 'viewerUid', 'active', 'sharedAt', 'revokedAt'])
+          && (!('ownerEmail' in d) || (validEmail(d.ownerEmail) && ((d.ownerUid == me() && d.ownerEmail == email()) || (d.ownerUid != me() && d.ownerEmail == get(pendingPath(email(), d.ownerUid)).data.ownerEmail))))
           && d.ownerUid is string && d.viewerUid is string && d.ownerUid != d.viewerUid
           && id == d.ownerUid + '__' + d.viewerUid && d.active is bool && d.sharedAt is timestamp
           && existsAfter(userPath(d.ownerUid)) && existsAfter(userPath(d.viewerUid));
@@ -108,7 +109,9 @@ service cloud.firestore {
       allow create: if registered() && shape() && activation() && (request.resource.data.ownerUid == me() || claim());
       allow update: if registered() && shape() && request.resource.data.ownerUid == resource.data.ownerUid
         && request.resource.data.viewerUid == resource.data.viewerUid
-        && ((resource.data.active == false && activation() && (resource.data.ownerUid == me() || claim()))
+        && ((resource.data.ownerUid == me() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['ownerEmail'])
+            && !('ownerEmail' in resource.data) && request.resource.data.ownerEmail == email())
+          || (resource.data.active == false && activation() && (resource.data.ownerUid == me() || claim()))
           || (resource.data.ownerUid == me() && resource.data.active == true && request.resource.data.active == false
             && request.resource.data.sharedAt == resource.data.sharedAt && request.resource.data.revokedAt == request.time));
     }
@@ -125,8 +128,8 @@ service cloud.firestore {
         allow delete: if false;
         allow create: if own(owner) && registered() && validEmail(address) && address != email()
           && !exists(/databases/$(database)/documents/userDirectory/$(address))
-          && request.resource.data.keys().hasOnly(['ownerUid', 'inviteeEmail', 'active', 'createdAt', 'claimedUid', 'claimedAt'])
-          && request.resource.data.ownerUid == owner && request.resource.data.inviteeEmail == address
+          && request.resource.data.keys().hasOnly(['ownerUid', 'ownerEmail', 'inviteeEmail', 'active', 'createdAt', 'claimedUid', 'claimedAt'])
+          && request.resource.data.ownerUid == owner && request.resource.data.ownerEmail == email() && request.resource.data.inviteeEmail == address
           && request.resource.data.active == true && request.resource.data.createdAt == request.time
           && request.resource.data.claimedUid == null && request.resource.data.claimedAt == null
           && existsAfter(/databases/$(database)/documents/pendingInvites/$(address));
