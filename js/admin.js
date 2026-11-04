@@ -199,7 +199,7 @@ function renderUsers() {
     if (data.permissions?.admins && !u.banned && !u.admin) actions.append(button('Назначить модератором',()=>{activeTab='admins';renderAdminEditor(u);}));
     return [who,rel,statusText,actions];
   });
-  content.append(table(['Участник','Приглашения','Статус','Действия'],rows));
+  content.append(paginatedTable(['Участник','Приглашения','Статус','Действия'],rows));
 }
 function renderRelations() {
   const byUid = new Map((data.users||[]).map(u=>[u.uid,u]));
@@ -309,7 +309,7 @@ function renderInvites() {
     invitationActionState(i) || button('Отменить приглашение',async()=>{if(!confirm('Отменить это приглашение?'))return;try{await call('adminRevokeInvitation')({email:i.email,ownerUid:i.ownerUid||i.id});await refresh();}catch(e){say(e?.message||'Не удалось отменить приглашение.',true);}},'danger')
   ]);
   const rowClasses = invitations.map(i => i.claimedUid ? '' : 'invitation-unaccepted');
-  content.append(table(['Адрес приглашения','Пригласитель UID','Приглашённый UID','Статус письма','Создано','Действие'],rows,[],rowClasses));
+  content.append(paginatedTable(['Адрес приглашения','Пригласитель UID','Приглашённый UID','Статус письма','Создано','Действие'],rows,25,[],rowClasses));
 }
 function renderShares() {
   const users=new Map((data.users||[]).map(u=>[u.uid,u]));
@@ -327,18 +327,20 @@ function renderShares() {
     ];
   });
   const rowClasses = shares.map(s => ownerColors.get(s.ownerUid));
-  content.append(table(['Владелец','Получатель','Статус','Действие'],rows,[],rowClasses));
+  content.append(paginatedTable(['Владелец','Получатель','Статус','Действие'],rows,25,[],rowClasses));
 }
 function renderEvents() {
-  content.append(table(['Время','Администратор UID','Событие','Участник UID','Подробности'],(data.events||[]).map(e=>[
+  const rows = (data.events||[]).map(e=>[
     dateLabel(e.createdAt),userLink((data.users||[]).find(u=>u.uid===e.actorUid)||{uid:e.actorUid},e.actorUid),e.action,e.targetUid ? userLink((data.users||[]).find(u=>u.uid===e.targetUid)||{uid:e.targetUid},e.targetUid) : '—',JSON.stringify(e.details||{})
-  ])));
+  ]);
+  content.append(paginatedTable(['Время','Администратор UID','Событие','Участник UID','Подробности'],rows));
 }
 function renderBanned() {
-  content.append(table(['Участник','Причина','Кем заблокирован','Дата','Действие'],(data.banned||[]).map(u=>[
+  const rows = (data.banned||[]).map(u=>[
     userLink(u),u.reason,u.bannedBy,dateLabel(u.bannedAt),
     button('Восстановить',async()=>{await call('restoreLibraryUser')({uid:u.uid});await refresh();})
-  ])));
+  ]);
+  content.append(paginatedTable(['Участник','Причина','Кем заблокирован','Дата','Действие'],rows));
 }
 function renderAdminEditor(user=null) {
   content.replaceChildren(node('h2',user?'Права модератора':'Администраторы'));
@@ -352,10 +354,11 @@ function renderAdminEditor(user=null) {
     form.append(button('Сохранить права',async()=>{try{const permissions=Object.fromEntries(checks.map(([k,i])=>[k,i.checked]));await call('setAdminPermissions')({uid:user.uid,email:existing?.email||'',permissions,active:activeInput.checked});await refresh();}catch(e){say(e?.message||'Не удалось сохранить права.',true);}},'primary'));
     form.append(button('Отмена',()=>render()));content.append(form);return;
   }
-  content.append(table(['Участник','Роль','Статус','Права','Действие'],(data.admins||[]).map(a=>[
+  const rows = (data.admins||[]).map(a=>[
     userLink((data.users||[]).find(u=>u.uid===a.uid)||a,a.uid),a.role,a.active?'Активен':'Отключён',Object.entries(a.permissions||{}).filter(([,v])=>v).map(([k])=>sections.find(s=>s[0]===k)?.[1]||k).join(', '),
     a.role==='superadmin'?'—':button('Изменить права',()=>renderAdminEditor((data.users||[]).find(u=>u.uid===a.uid)||{uid:a.uid,displayName:a.displayName||a.email}))
-  ])));
+  ]);
+  content.append(paginatedTable(['Участник','Роль','Статус','Права','Действие'],rows));
   content.append(node('p','Назначение модератора доступно из раздела «Участники».'));
 }
 function renderTexts() {
