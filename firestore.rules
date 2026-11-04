@@ -83,7 +83,8 @@ service cloud.firestore {
       }
     }
     match /userDirectory/{address} {
-      allow get: if registered() || (signed() && address == email());
+      // Email directory entries are private: a user can resolve only their own address.
+      allow get: if signed() && address == email();
       allow list, update, delete: if false;
       allow create: if signed() && address == email() && validEmail(address)
         && request.resource.data.keys().hasOnly(['uid']) && request.resource.data.uid == me()
@@ -120,7 +121,8 @@ service cloud.firestore {
             && request.resource.data.sharedAt == resource.data.sharedAt && request.resource.data.revokedAt == request.time));
     }
     match /pendingInvites/{address} {
-      allow get: if signed();
+      // The invitation root (including first inviter UID) is visible only to its recipient.
+      allow get: if signed() && address == email();
       allow list, update, delete: if false;
       allow create: if registered() && validEmail(address) && address != email()
         && request.resource.data.keys().hasOnly(['firstOwnerUid', 'createdAt'])
@@ -131,7 +133,6 @@ service cloud.firestore {
         allow list: if signed() && address == email();
         allow delete: if false;
         allow create: if own(owner) && registered() && validEmail(address) && address != email()
-          && !exists(/databases/$(database)/documents/userDirectory/$(address))
           && request.resource.data.keys().hasOnly(['ownerUid', 'ownerEmail', 'inviteeEmail', 'active', 'createdAt', 'claimedUid', 'claimedAt'])
           && request.resource.data.ownerUid == owner && request.resource.data.ownerEmail == email() && request.resource.data.inviteeEmail == address
           && request.resource.data.active == true && request.resource.data.createdAt == request.time
@@ -143,9 +144,9 @@ service cloud.firestore {
           && getAfter(sharePath(owner, me())).data.active == true;
       }
     }
-    // Owner-scoped collection-group lookup restores only email addresses they entered.
+    // Owners see invitations they created; recipients see only invitations addressed to their own email.
     match /{path=**}/shares/{owner} {
-      allow list: if registered() && resource.data.ownerUid == me();
+      allow list: if registered() && (resource.data.ownerUid == me() || resource.data.inviteeEmail == email());
     }
   }
 }

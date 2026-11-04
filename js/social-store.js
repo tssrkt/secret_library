@@ -5,7 +5,6 @@ export function createSocialStore({ db, sdk, user }) {
     serverTimestamp, onSnapshot, writeBatch } = sdk;
   const uid = user.uid;
   const email = normalizeEmail(user.email);
-  const superAdminEmail = 'tssrkt777@gmail.com';
   const founderUid = 'aA89pCYsKNbWWePmAveUVrG34F82';
   let superAdminUid = '';
   const ref = (...path) => doc(db, ...path);
@@ -35,55 +34,57 @@ export function createSocialStore({ db, sdk, user }) {
       else tx.update(profileRef, safe);
       if (!existing) tx.set(directory, { uid });
     });
-    // Resolve the known administrator's UID through the registered email directory.
-    // This is presentation-only; it does not grant or enforce any privileges.
-    const adminDirectory = data(await getDoc(ref('userDirectory', superAdminEmail)));
-    superAdminUid = typeof adminDirectory?.uid === 'string' ? adminDirectory.uid : '';
+    // The founder UID is fixed in the security model; no email-directory lookup is needed.
+    superAdminUid = founderUid;
     const pending = await getDocs(collection(db, 'pendingInvites', email, 'shares'));
     for (const snapshot of pending.docs) {
       ensureCurrent();
-      await runTransaction(db, async (tx) => {
-        const invite = data(await tx.get(snapshot.ref));
-        if (!invite?.active || invite.claimedUid) return;
-        const share = relationshipRef(invite.ownerUid, uid);
-        const existing = data(await tx.get(share));
-        ensureCurrent();
-        if (!existing?.active) tx.set(share, newShare(invite.ownerUid, uid, invite.ownerEmail || ''));
-        tx.update(snapshot.ref, { claimedUid: uid, claimedAt: serverTimestamp() });
-      });
+      await claimInvitation(snapshot.ref);
     }
   }
 
   async function shareWithEmail(value) {
     ensureCurrent();
     const address = validateShareEmail(value, email);
-    return runTransaction(db, async (tx) => {
-      const target = data(await tx.get(ref('userDirectory', address)));
-      if (target) {
-        if (target.uid === uid) throw new Error('Нельзя поделиться библиотекой с самим собой.');
-        const share = relationshipRef(uid, target.uid);
-        const existing = data(await tx.get(share));
-        ensureCurrent();
-        tx.set(ref('users', uid, 'knownContacts', target.uid), { email: address });
-        if (existing?.active) return 'Этот пользователь уже имеет доступ к вашей библиотеке.';
-        tx.set(share, newShare(uid, target.uid));
-        return 'Этот пользователь уже зарегистрирован. Доступ предоставлен.';
-      }
-      const pending = pendingRef(address, uid);
+    const pending = pendingRef(address, uid);
+    const firstRef = ref('pendingInvites', address);
+    const writeInvitation = (createFirstOwner) => runTransaction(db, async (tx) => {
       const existing = data(await tx.get(pending));
-      const firstRef = ref('pendingInvites', address);
-      const first = data(await tx.get(firstRef));
       ensureCurrent();
       if (existing?.active) {
-        // Repair invitations created by older clients before returning the existing-invite message.
         if (!existing.ownerEmail) tx.update(pending, { ownerEmail: email });
-        return 'Этот пользователь ещё не зарегистрирован. Приглашение уже сохранено.';
+        return 'existing';
       }
       tx.set(pending, { ownerUid: uid, ownerEmail: email, inviteeEmail: address, active: true,
         createdAt: serverTimestamp(), claimedUid: null, claimedAt: null });
-      // Immutable first invitation makes attribution enforceable without server code.
-      if (!first) tx.set(firstRef, { firstOwnerUid: uid, createdAt: serverTimestamp() });
-      return 'Приглашение сохранено.';
+      // First inviter is written only when the root document does not yet exist.
+      // A create-only rule rejects this write when another invitation created it first.
+      if (createFirstOwner) tx.set(firstRef, { firstOwnerUid: uid, createdAt: serverTimestamp() });
+      return 'created';
+    });
+    try {
+      const result = await writeInvitation(true);
+      return result === 'existing' ? 'Приглашение уже сохранено.' : 'Приглашение сохранено.';
+    } catch (error) {
+      if (error?.code !== 'permission-denied') throw error;
+      // The root already exists: add this owner's invitation without reading the
+      // recipient's first-inviter record. The recipient alone can read that root.
+      const result = await writeInvitation(false);
+      return result === 'existing' ? 'Приглашение уже сохранено.' : 'Приглашение сохранено.';
+    }
+  }
+
+  async function claimInvitation(invitationRef) {
+    ensureCurrent();
+    return runTransaction(db, async (tx) => {
+      const invite = data(await tx.get(invitationRef));
+      if (!invite?.active || invite.claimedUid) return false;
+      const share = relationshipRef(invite.ownerUid, uid);
+      const existing = data(await tx.get(share));
+      ensureCurrent();
+      if (!existing?.active) tx.set(share, newShare(invite.ownerUid, uid, invite.ownerEmail || ''));
+      tx.update(invitationRef, { claimedUid: uid, claimedAt: serverTimestamp() });
+      return true;
     });
   }
 
@@ -171,7 +172,17 @@ export function createSocialStore({ db, sdk, user }) {
       collections[key] = map ? Object.fromEntries(snapshot.docs.map((item) => [item.id, item.data()])) : snapshot.docs.map((item) => item.data());
       void emit();
     }, onError);
+    const incomingInvites = query(collectionGroup(db, 'shares'), where('inviteeEmail', '==', email));
+    const stopIncomingInvites = onSnapshot(incomingInvites, (snapshot) => {
+      for (const item of snapshot.docs) {
+        const invite = item.data();
+        if (invite.active === true && !invite.claimedUid) {
+          void claimInvitation(item.ref).catch(onError);
+        }
+      }
+    }, onError);
     const stops = [
+      stopIncomingInvites,
       watch(query(collection(db, 'libraryShares'), where('ownerUid', '==', uid)), 'outgoing'),
       watch(query(collection(db, 'libraryShares'), where('viewerUid', '==', uid)), 'incoming'),
       watch(query(collectionGroup(db, 'shares'), where('ownerUid', '==', uid)), 'invitations'),

@@ -95,7 +95,10 @@ test('ban marker revokes all client Firestore access without deleting the user p
 test('verified Google registration with an invitation creates a safe profile and immutable attribution', async () => {
   const anna = client('anna'); const boris = client('boris');
   await register(anna); await register(boris);
-  assert.deepEqual((await get(anna.db, 'userDirectory/boris@gmail.com')), { uid: 'boris' });
+  await assertFails(sdk.getDoc(sdk.doc(anna.db, 'userDirectory/boris@gmail.com')));
+  assert.deepEqual(await get(boris.db, 'userDirectory/boris@gmail.com'), { uid: 'boris' });
+  await assertSucceeds(sdk.getDoc(sdk.doc(boris.db, 'pendingInvites/boris@gmail.com')));
+  await assertFails(sdk.getDoc(sdk.doc(anna.db, 'pendingInvites/boris@gmail.com')));
   assert.deepEqual(Object.keys(await get(anna.db, 'users/boris')).sort(), ['createdAt', 'displayName', 'invitedByUid', 'photoURL']);
   assert.equal((await get(anna.db, 'users/anna')).invitedByUid, FOUNDER_UID);
   assert.equal((await get(anna.db, 'users/boris')).invitedByUid, FOUNDER_UID);
@@ -128,11 +131,28 @@ test('only the fixed founder may create a profile without an invitation', async 
   assert.equal((await get(stranger.db, 'users/uninvited-person')).invitedByUid, FOUNDER_UID);
 });
 
+test('an already registered recipient claims a new email invitation live', async () => {
+  const a = client('live-inviter'); const b = client('live-recipient');
+  await register(a); await register(b);
+  let state; let failure;
+  const stop = b.store.subscribe((next) => { state = next; }, (error) => { failure = error; });
+  try {
+    await a.store.shareWithEmail(b.user.email);
+    for (let i = 0; i < 150 && !failure && !state?.friends?.some((friend) => friend.uid === a.user.uid); i++) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    if (failure) throw failure;
+    assert(state?.friends?.some((friend) => friend.uid === a.user.uid), 'recipient sees the new share without reconnecting');
+    assert.equal((await get(a.db, `pendingInvites/${b.user.email}/shares/${a.user.uid}`)).claimedUid, b.user.uid);
+  } finally { stop(); b.store.dispose(); }
+});
+
 test('shares are directional, duplicate clicks are idempotent and revoke never changes reverse access', async () => {
   const a = client('a'); const b = client('b'); const c = client('c');
   await register(a); await register(b); await register(c);
   const results = await Promise.all([a.store.shareWithEmail(' B@GMAIL.COM '), a.store.shareWithEmail('b@gmail.com')]);
-  assert(results.some((result) => result.includes('Доступ предоставлен')));
+  assert(results.some((result) => result.includes('Приглашение сохранено')));
+  await b.store.register();
   const initial = await get(a.db, 'libraryShares/a__b');
   assert.equal(initial.active, true); assert.equal(initial.ownerEmail, 'a@gmail.com');
   assert.equal(await get(a.db, 'libraryShares/b__a'), null);
@@ -159,6 +179,8 @@ test('private known email cannot be read by recipient or third party and never l
   const a = client('a'); const b = client('b'); const c = client('c');
   for (const person of [a, b, c]) await register(person);
   await a.store.shareWithEmail('b@gmail.com');
+  await b.store.register();
+  await a.store.syncKnownContacts();
   assert.equal((await get(a.db, 'users/a/knownContacts/b')).email, 'b@gmail.com');
   await assertFails(sdk.getDoc(sdk.doc(b.db, 'users/a/knownContacts/b')));
   await assertFails(sdk.getDocs(sdk.collection(c.db, 'users/a/knownContacts')));

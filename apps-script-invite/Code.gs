@@ -51,16 +51,14 @@ function doPost(e) {
     stage = 'verify-pending-invitation';
     const invitation = readPendingInvitation(idToken, email, user.localId);
     if (!invitation) throw new Error('Приглашение не найдено. Повторите попытку из библиотеки.');
-    if (invitation.claimedUid || readUserDirectory(idToken, email)) {
-      return responsePage(requestId, true, 'Пользователь уже зарегистрировался. Приглашение не требуется.');
+    if (invitation.claimedUid) {
+      return responsePage(requestId, true, 'Запрос обработан. Если получателю нужно приглашение, письмо отправлено.');
     }
     stage = 'reserve-send';
     reservation = reserveSend(user.localId, email, invitation.emailSentAt || (invitation.emailStatus === 'sent' ? invitation.createdAt : null));
-    if (reservation.status === 'cooldown') {
-      return responsePage(requestId, false, 'Повторная отправка будет возможна через ' + formatCooldown(reservation.remainingMs) + '.');
-    }
-    if (reservation.status === 'sending') {
-      return responsePage(requestId, true, 'Приглашение уже отправляется. Подождите немного.');
+    if (reservation.status === 'cooldown' || reservation.status === 'sending') {
+      // Do not reveal whether an address belongs to an existing member.
+      return responsePage(requestId, true, 'Запрос обработан. Если получателю нужно приглашение, письмо отправлено.');
     }
 
     stage = 'send-email';
@@ -68,14 +66,14 @@ function doPost(e) {
     MailApp.sendEmail({
       to: email,
       subject: 'Приглашение в «Тайную Библиотеку»',
-      body: renderInvitationEmailTemplate(inviterName),
+      body: renderInvitationEmailTemplate(inviterName) + '\n\nЕсли вы уже участвуете в Тайной Библиотеке, просто откройте её — приглашение появится автоматически.',
       name: 'Тайная Библиотека'
     });
 
     stage = 'mark-sent';
     finishSend(user.localId, email, true);
     reservation = null;
-    return responsePage(requestId, true, 'Приглашение отправлено.');
+    return responsePage(requestId, true, 'Запрос обработан. Если получателю нужно приглашение, письмо отправлено.');
   } catch (error) {
     if (reservation && reservation.status === 'reserved') {
       try { finishSend(reservation.uid, reservation.email, false); } catch (_) {}
@@ -166,12 +164,6 @@ function readPendingInvitation(idToken, email, uid) {
   };
 }
 
-function formatCooldown(milliseconds) {
-  const seconds = Math.max(0, Math.ceil(milliseconds / 1000));
-  const minutes = Math.floor(seconds / 60);
-  return minutes ? minutes + ' мин ' + (seconds % 60) + ' сек' : seconds + ' сек';
-}
-
 function handleInvitationStatuses(input) {
   const idToken = String(input.idToken || '');
   const emails = Array.isArray(input.emails) ? input.emails.slice(0, 100).map(normalizeEmail) : [];
@@ -192,21 +184,6 @@ function handleInvitationStatuses(input) {
     statuses[email] = { lastSentAt: lastSentAt, cooldownUntil: lastSentAt ? lastSentAt + RESEND_COOLDOWN_MS : 0 };
   });
   return statuses;
-}
-
-function readUserDirectory(idToken, email) {
-  const path = '/projects/' + FIREBASE_PROJECT_ID +
-    '/databases/(default)/documents/userDirectory/' + encodeURIComponent(email);
-  const response = UrlFetchApp.fetch('https://firestore.googleapis.com/v1' + path, {
-    method: 'get',
-    headers: { Authorization: 'Bearer ' + idToken },
-    muteHttpExceptions: true
-  });
-  if (response.getResponseCode() === 404) return false;
-  if (response.getResponseCode() !== 200) {
-    throw new Error('Не удалось проверить регистрацию получателя в Firebase. Повторите попытку.');
-  }
-  return true;
 }
 
 function reservationKey(uid, email) {

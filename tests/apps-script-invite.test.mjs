@@ -6,7 +6,7 @@ import { createHash } from 'node:crypto';
 
 const source = await readFile(new URL('../apps-script-invite/Code.gs', import.meta.url), 'utf8');
 
-function harness({ authUser, pendingFields, directoryStatus = 404, pendingStatus = 200, profileStatus = 200 } = {}) {
+function harness({ authUser, pendingFields, pendingStatus = 200, profileStatus = 200 } = {}) {
   const properties = new Map();
   const sent = [];
   const calls = [];
@@ -37,7 +37,6 @@ function harness({ authUser, pendingFields, directoryStatus = 404, pendingStatus
         if (url.includes('/users/')) {
           return response(profileStatus, { fields: { displayName: { stringValue: 'Ада' } } });
         }
-        if (url.includes('/userDirectory/')) return response(directoryStatus, {});
         if (url.includes('/pendingInvites/')) return response(pendingStatus, { fields: pending });
         throw new Error('Unexpected URL');
       }
@@ -65,6 +64,7 @@ function harness({ authUser, pendingFields, directoryStatus = 404, pendingStatus
   };
   vm.createContext(context);
   vm.runInContext(source, context);
+  context.fsGet = () => null;
   const payload = {
     requestId: 'request_1234567890',
     email: 'friend@gmail.com',
@@ -91,10 +91,10 @@ test('sends only after Firebase identity and owner-scoped Firestore reads are va
   assert.equal(app.sent[0].subject, 'Приглашение в «Тайную Библиотеку»');
   assert.match(app.sent[0].body, /Ада приглашает/);
   assert.match(result.content, /secret-library-invite-result/);
-  assert.match(result.content, /Приглашение отправлено/);
+  assert.match(result.content, /Запрос обработан/);
   assert(app.calls.some((call) => call.url.includes('accounts:lookup')));
   assert(app.calls.some((call) => call.options.headers?.Authorization === 'Bearer ' + app.payload.idToken));
-  assert.equal(app.calls.length, 4, 'Firebase account, owner profile, invitation and recipient directory are checked');
+  assert.equal(app.calls.length, 3, 'Firebase account, owner profile and owner-scoped invitation are checked; directory lookup stays server-side');
 });
 
 test('repeated delivery is blocked for one hour instead of sending a duplicate', () => {
@@ -102,7 +102,7 @@ test('repeated delivery is blocked for one hour instead of sending a duplicate',
   app.invoke();
   const second = app.invoke();
   assert.equal(app.sent.length, 1);
-  assert.match(second.content, /Повторная отправка будет возможна через/);
+  assert.match(second.content, /Запрос обработан/);
 });
 
 test('resends the same pending invitation after one hour', () => {
@@ -113,7 +113,7 @@ test('resends the same pending invitation after one hour', () => {
   app.properties.set(key, JSON.stringify({ status: 'sent', at: oldTime, lastSentAt: oldTime }));
   const result = app.invoke();
   assert.equal(app.sent.length, 2);
-  assert.match(result.content, /Приглашение отправлено/);
+  assert.match(result.content, /Запрос обработан/);
 });
 
 test('invitation status endpoint returns the persisted cooldown timestamp for the owner only', () => {
@@ -163,11 +163,17 @@ test('does not send if the pending invitation belongs to another owner', () => {
   assert.match(result.content, /Приглашение не найдено/);
 });
 
-test('does not send to an already registered recipient', () => {
-  const app = harness({ directoryStatus: 200 });
-  const result = app.invoke();
-  assert.equal(app.sent.length, 0);
-  assert.match(result.content, /Пользователь уже зарегистрировался/);
+test('invitation delivery does not reveal whether the recipient email is registered', () => {
+  const registered = harness();
+  const unregistered = harness();
+  const registeredResult = registered.invoke();
+  const unregisteredResult = unregistered.invoke();
+  assert.equal(registered.sent.length, 1);
+  assert.equal(unregistered.sent.length, 1);
+  assert.equal(registeredResult.content, unregisteredResult.content);
+  assert(!registered.calls.some((call) => call.url.includes('/userDirectory/')));
+  assert(!unregistered.calls.some((call) => call.url.includes('/userDirectory/')));
+  assert.match(registered.sent[0].body, /Если вы уже участвуете в Тайной Библиотеке/);
 });
 
 test('does not send if the owner profile cannot be read under Firestore rules', () => {
