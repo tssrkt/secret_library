@@ -18,6 +18,7 @@ function doPost(e) {
   let requestId = '';
   let stage = 'parse-request';
   let reservation = null;
+  let emailSent = false;
   let adminRequest = false;
   try {
     const raw = e && e.parameter && e.parameter.payload;
@@ -69,14 +70,15 @@ function doPost(e) {
       body: renderInvitationEmailTemplate(inviterName) + '\n\nЕсли вы уже участвуете в Тайной Библиотеке, просто откройте её — приглашение появится автоматически.',
       name: 'Тайная Библиотека'
     });
+    emailSent = true;
 
     stage = 'mark-sent';
-    finishSend(user.localId, email, true);
+    finishSend(user.localId, email, true, reservation.reservationId);
     reservation = null;
     return responsePage(requestId, true, 'Запрос обработан. Если получателю нужно приглашение, письмо отправлено.');
   } catch (error) {
-    if (reservation && reservation.status === 'reserved') {
-      try { finishSend(reservation.uid, reservation.email, false); } catch (_) {}
+    if (reservation && reservation.status === 'reserved' && !emailSent) {
+      try { finishSend(reservation.uid, reservation.email, false, reservation.reservationId); } catch (_) {}
     }
     console.error('Invitation mailer failed', {
       stage: stage,
@@ -216,35 +218,56 @@ function reserveSend(uid, email, firestoreSentAt) {
     }
     const dailyKey = 'daily:' + uid;
     const recent = JSON.parse(properties.getProperty(dailyKey) || '[]')
-      .filter(function (timestamp) { return Number.isFinite(timestamp) && now - timestamp < 24 * 60 * 60 * 1000; });
+      .map(function (entry) {
+        return typeof entry === 'number' ? { id: 'legacy:' + entry, at: entry, status: 'sent' } : entry;
+      })
+      .filter(function (entry) {
+        return entry && Number.isFinite(Number(entry.at)) && now - Number(entry.at) < 24 * 60 * 60 * 1000;
+      });
     if (recent.length >= MAX_INVITES_PER_USER_PER_DAY) {
       throw new Error('Достигнут дневной лимит приглашений. Попробуйте завтра.');
     }
-    properties.setProperty(key, JSON.stringify({ status: 'sending', at: now, lastSentAt: lastSentAt }));
-    return { status: 'reserved', uid: uid, email: email, key: key, dailyKey: dailyKey, recent: recent };
+    const reservationId = Utilities.getUuid();
+    recent.push({ id: reservationId, at: now, status: 'reserved' });
+    properties.setProperty(dailyKey, JSON.stringify(recent));
+    properties.setProperty(key, JSON.stringify({ status: 'sending', at: now, lastSentAt: lastSentAt, reservationId: reservationId }));
+    return { status: 'reserved', uid: uid, email: email, key: key, dailyKey: dailyKey, reservationId: reservationId };
   } finally {
     lock.releaseLock();
   }
 }
 
-function finishSend(uid, email, success) {
+function finishSend(uid, email, success, reservationId) {
   const lock = LockService.getScriptLock();
   lock.waitLock(10000);
   try {
     const properties = PropertiesService.getScriptProperties();
     const key = reservationKey(uid, email);
     const current = JSON.parse(properties.getProperty(key) || 'null');
+    const dailyKey = 'daily:' + uid;
+    const now = Date.now();
+    const recent = JSON.parse(properties.getProperty(dailyKey) || '[]')
+      .map(function (entry) {
+        return typeof entry === 'number' ? { id: 'legacy:' + entry, at: entry, status: 'sent' } : entry;
+      })
+      .filter(function (entry) {
+        return entry && Number.isFinite(Number(entry.at)) && now - Number(entry.at) < 24 * 60 * 60 * 1000;
+      });
     if (success) {
-      const sentAt = Date.now();
+      const sentAt = now;
       properties.setProperty(key, JSON.stringify({ status: 'sent', at: sentAt, lastSentAt: sentAt }));
-      const dailyKey = 'daily:' + uid;
-      const recent = JSON.parse(properties.getProperty(dailyKey) || '[]')
-        .filter(function (timestamp) { return Number.isFinite(timestamp) && Date.now() - timestamp < 24 * 60 * 60 * 1000; });
-      recent.push(Date.now());
-      properties.setProperty(dailyKey, JSON.stringify(recent));
+      const reservation = recent.find(function (entry) { return entry.id === reservationId; });
+      if (reservation) {
+        reservation.at = sentAt;
+        reservation.status = 'sent';
+      }
     } else {
-      properties.setProperty(key, JSON.stringify({ status: 'failed', at: Date.now(), lastSentAt: Number(current?.lastSentAt) || 0 }));
+      properties.setProperty(key, JSON.stringify({ status: 'failed', at: now, lastSentAt: Number(current?.lastSentAt) || 0 }));
+      for (let i = recent.length - 1; i >= 0; i--) {
+        if (recent[i].id === reservationId) recent.splice(i, 1);
+      }
     }
+    properties.setProperty(dailyKey, JSON.stringify(recent));
   } finally {
     lock.releaseLock();
   }

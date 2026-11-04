@@ -10,6 +10,7 @@ function harness({ authUser, pendingFields, pendingStatus = 200, profileStatus =
   const properties = new Map();
   const sent = [];
   const calls = [];
+  let uuidCounter = 0;
   const user = authUser || {
     localId: 'owner-uid', email: 'owner@gmail.com', emailVerified: true,
     displayName: 'Ада', providerUserInfo: [{ providerId: 'google.com' }]
@@ -59,7 +60,8 @@ function harness({ authUser, pendingFields, pendingStatus = 200, profileStatus =
     Utilities: {
       DigestAlgorithm: { SHA_256: 'SHA_256' },
       Charset: { UTF_8: 'UTF_8' },
-      computeDigest(_algorithm, value) { return [...createHash('sha256').update(value).digest()]; }
+      computeDigest(_algorithm, value) { return [...createHash('sha256').update(value).digest()]; },
+      getUuid() { return `reservation-${++uuidCounter}`; }
     }
   };
   vm.createContext(context);
@@ -95,6 +97,40 @@ test('sends only after Firebase identity and owner-scoped Firestore reads are va
   assert(app.calls.some((call) => call.url.includes('accounts:lookup')));
   assert(app.calls.some((call) => call.options.headers?.Authorization === 'Bearer ' + app.payload.idToken));
   assert.equal(app.calls.length, 3, 'Firebase account, owner profile and owner-scoped invitation are checked; directory lookup stays server-side');
+});
+
+test('daily invitation limit counts in-flight reservations before emails are sent', () => {
+  const app = harness();
+  const reservations = [];
+  for (let i = 0; i < 10; i++) {
+    reservations.push(app.context.reserveSend('owner-uid', `friend-${i}@gmail.com`, null));
+  }
+  assert.equal(reservations.length, 10);
+  assert.throws(
+    () => app.context.reserveSend('owner-uid', 'friend-11@gmail.com', null),
+    /Достигнут дневной лимит приглашений/
+  );
+  assert.equal(app.sent.length, 0, 'the test fills the quota using reservations without sending mail');
+});
+
+test('failed invitation send releases its daily reservation', () => {
+  const app = harness();
+  const reservation = app.context.reserveSend('owner-uid', 'failed@gmail.com', null);
+  app.context.finishSend('owner-uid', 'failed@gmail.com', false, reservation.reservationId);
+  const next = app.context.reserveSend('owner-uid', 'next@gmail.com', null);
+  assert.equal(next.status, 'reserved');
+  const daily = JSON.parse(app.properties.get('daily:owner-uid'));
+  assert.equal(daily.length, 1);
+  assert.equal(daily[0].id, next.reservationId);
+});
+
+test('legacy daily counters remain enforced during reservation migration', () => {
+  const app = harness();
+  app.properties.set('daily:owner-uid', JSON.stringify(Array.from({ length: 10 }, (_, i) => Date.now() - i * 1000)));
+  assert.throws(
+    () => app.context.reserveSend('owner-uid', 'friend@gmail.com', null),
+    /Достигнут дневной лимит приглашений/
+  );
 });
 
 test('repeated delivery is blocked for one hour instead of sending a duplicate', () => {
