@@ -42,6 +42,23 @@ export async function runSocialUiTests(test, assert, equal) {
       assert(social.calls.filter((call) => call === 'syncKnownContacts').length === 2, 'new friend triggers another contact sync');
     } finally { cleanup(); page.remove(); }
   });
+  await test('newly sent invitation appears immediately without waiting for Firestore refresh', async () => {
+    const page = document.createElement('div'); document.body.append(page);
+    const social = stub({ invitations: [] });
+    social.shareWithEmail = async (email) => { social.calls.push(email); return 'Приглашение отправлено.'; };
+    const cleanup = mountFriends(page, social, () => {});
+    try {
+      const form = page.querySelector('.social-share-form');
+      form.elements.email.value = '  NewFriend@gmail.com ';
+      form.requestSubmit();
+      await tick(); await tick();
+      const section = page.querySelector('.sent-invitations-section');
+      assert(section.textContent.includes('newfriend@gmail.com'), 'new invitation appears in the table immediately');
+      assert(section.querySelector('tbody tr button'), 'resend action is rendered without reload');
+      assert(form.elements.email.value === '', 'email field resets after successful send');
+    } finally { cleanup(); page.remove(); }
+  });
+
   await test('sent invitations show a one-hour resend cooldown and the calculated tooltip', async () => {
     const recentPage = document.createElement('div'); document.body.append(recentPage);
     const recentSentAt = Date.now() - 30 * 60 * 1000;

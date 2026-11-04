@@ -47,6 +47,8 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
   let invitationStatusSignature = null;
   let statusRefreshRevision = 0;
   let invitationStatuses = {};
+  // Keep a just-sent invitation visible while Firestore's live query catches up.
+  const optimisticInvitations = new Map();
   let serviceMessage = '';
   const busy = new Set();
   let cooldownButtons = [];
@@ -201,8 +203,18 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
     renderInvitations();
   };
   const unsubscribe = social.subscribe((next) => {
-    snapshot = next;
-    const inviteSignature = (next.invitations || []).map((invite) => String(invite.inviteeEmail || '').toLowerCase()).sort().join('|');
+    const actualInvitations = next.invitations || [];
+    const actualEmails = new Set(actualInvitations.map((invite) => String(invite.inviteeEmail || '').trim().toLowerCase()));
+    const friendEmails = new Set((next.friends || []).map((friend) => String(friend.email || '').trim().toLowerCase()).filter(Boolean));
+    for (const email of optimisticInvitations.keys()) {
+      if (actualEmails.has(email) || friendEmails.has(email)) optimisticInvitations.delete(email);
+    }
+    const mergedInvitations = [...actualInvitations];
+    for (const [email, invite] of optimisticInvitations) {
+      if (!actualEmails.has(email) && !friendEmails.has(email)) mergedInvitations.push(invite);
+    }
+    snapshot = { ...next, invitations: mergedInvitations };
+    const inviteSignature = (snapshot.invitations || []).map((invite) => String(invite.inviteeEmail || '').toLowerCase()).sort().join('|');
     if (inviteSignature !== invitationStatusSignature) {
       invitationStatusSignature = inviteSignature;
       void refreshInvitationStatuses();
@@ -230,6 +242,19 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
       if (!closed) {
         message.textContent = result;
         if (result === 'Приглашение отправлено.') {
+          const normalizedEmail = String(email || '').trim().toLowerCase();
+          if (normalizedEmail && !snapshot.invitations.some((invite) => String(invite.inviteeEmail || '').trim().toLowerCase() === normalizedEmail)) {
+            optimisticInvitations.set(normalizedEmail, {
+              inviteeEmail: normalizedEmail,
+              ownerUid: social.uid || '',
+              active: true,
+              createdAt: Date.now(),
+              emailSentAt: Date.now(),
+            });
+            snapshot = { ...snapshot, invitations: [...(snapshot.invitations || []), optimisticInvitations.get(normalizedEmail)] };
+            invitationStatusSignature = (snapshot.invitations || []).map((invite) => String(invite.inviteeEmail || '').toLowerCase()).sort().join('|');
+            render();
+          }
           form.reset();
           void refreshInvitationStatuses([email]);
         }
