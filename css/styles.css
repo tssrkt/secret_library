@@ -559,6 +559,7 @@ dd { margin: 0; color: #000; font-weight: 400; font-variant-numeric: tabular-num
   background: var(--download-accent);
 }
 .settings-save-button:not(:disabled):hover { background: var(--download-hover); }
+.notifications-panel .notification-share-button { padding-inline: calc(.3rem + 7px); }
 .social-header .quick-search-form { right: 10.05rem; }
 .notification-controls { position: relative; flex: none; }
 .notification-button { position: relative; }

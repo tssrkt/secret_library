@@ -22,7 +22,7 @@ export function createNotificationsController({ button, panel, avatarButton, clo
       const text = document.createElement('p'); text.textContent = `${item.displayName} поделился с вами своей библиотекой`; row.append(text);
       if (item.mutual) { const mutual = document.createElement('small'); mutual.textContent = 'Вы уже делитесь'; row.append(mutual); }
       else {
-        const action = document.createElement('button'); action.type = 'button'; action.className = 'settings-save-button';
+        const action = document.createElement('button'); action.type = 'button'; action.className = 'settings-save-button notification-share-button';
         action.textContent = 'ПОДЕЛИТЬСЯ В ОТВЕТ'; action.disabled = busy.has(item.ownerUid) || snapshot.status !== 'ready';
         action.addEventListener('click', async () => {
           if (busy.has(item.ownerUid)) return;
