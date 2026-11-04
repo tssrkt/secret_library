@@ -97,15 +97,17 @@ export const getAdminDashboard = onCall({ region: 'europe-west1', invoker: 'publ
   const { uid, admin } = await requireAdmin(request);
   const allPermissions = admin.role === 'superadmin' ? Object.fromEntries(ADMIN_SECTIONS.map((key) => [key, true])) : (admin.permissions || {});
   if (!Object.values(allPermissions).some(Boolean)) throw new HttpsError('permission-denied', 'Не назначены права для просмотра админки.');
-  const [users, invites, shares, admins, banned, events] = await Promise.all([
+  const [users, invites, shares, admins, banned, events, directory] = await Promise.all([
     db.collection('users').get(),
     db.collection('pendingInvites').get(),
     db.collection('libraryShares').get(),
     db.collection('adminUsers').get(),
     db.collection('bannedUsers').get(),
-    db.collection('adminEvents').orderBy('createdAt', 'desc').limit(100).get()
+    db.collection('adminEvents').orderBy('createdAt', 'desc').limit(100).get(),
+    db.collection('userDirectory').get()
   ]);
-  const userRows = users.docs.map((d) => ({ uid: d.id, ...d.data(), banned: banned.docs.some((b) => b.id === d.id), admin: admins.docs.some((a) => a.id === d.id) }));
+  const emailByUid = new Map(directory.docs.map((d) => [d.data().uid, d.id]));
+  const userRows = users.docs.map((d) => ({ uid: d.id, ...d.data(), email: emailByUid.get(d.id) || d.data().email || '', banned: banned.docs.some((b) => b.id === d.id), admin: admins.docs.some((a) => a.id === d.id) }));
   const inviteRows = [];
   for (const invite of invites.docs) {
     const child = await invite.ref.collection('shares').get();
