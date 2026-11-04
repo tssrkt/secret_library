@@ -78,6 +78,39 @@ test('shared catalogs enforce incoming access, exclude private folders and revok
   assert.equal(await get(a.db, 'sharedLibraries/owner'), null);
 });
 
+test('shared-library chunks and covers require a live manifest and bounded pending revision', async () => {
+  const owner = client('orphan-owner'); const stranger = client('orphan-stranger');
+  await register(owner); await register(stranger);
+  const orphanChunk = sdk.doc(owner.db, 'sharedLibraries/orphan-owner/versions/ghost/chunks/0');
+  const orphanCover = sdk.doc(owner.db, 'sharedLibraries/orphan-owner/covers/ghost-book');
+  await assertFails(sdk.setDoc(orphanChunk, { position: 0, json: '{}' }));
+  await assertFails(sdk.setDoc(orphanCover, { sourceKey: 'a'.repeat(64), mimeType: 'image/webp', data: 'dGlueQ==' }));
+
+  await assertSucceeds(sdk.setDoc(sdk.doc(owner.db, 'sharedLibraries/orphan-owner'), {
+    revision: '', signature: '', chunkCount: 0, pendingRevision: 'revision-1', pendingChunkCount: 1,
+  }));
+  await assertSucceeds(sdk.setDoc(sdk.doc(owner.db, 'sharedLibraries/orphan-owner/versions/revision-1/chunks/0'), {
+    position: 0, json: '{}',
+  }));
+  await assertFails(sdk.setDoc(sdk.doc(owner.db, 'sharedLibraries/orphan-owner/versions/revision-1/chunks/1'), {
+    position: 1, json: '{}',
+  }));
+  await assertSucceeds(sdk.setDoc(sdk.doc(owner.db, 'sharedLibraries/orphan-owner/covers/book-1'), {
+    sourceKey: 'b'.repeat(64), mimeType: 'image/webp', data: 'dGlueQ==',
+  }));
+  await assertFails(sdk.setDoc(sdk.doc(stranger.db, 'sharedLibraries/orphan-owner/versions/revision-1/chunks/0'), {
+    position: 0, json: '{}',
+  }));
+
+  await assertSucceeds(sdk.deleteDoc(sdk.doc(owner.db, 'sharedLibraries/orphan-owner')));
+  await assertFails(sdk.setDoc(sdk.doc(owner.db, 'sharedLibraries/orphan-owner/versions/revision-2/chunks/0'), {
+    position: 0, json: '{}',
+  }));
+  await assertFails(sdk.setDoc(sdk.doc(owner.db, 'sharedLibraries/orphan-owner/covers/book-2'), {
+    sourceKey: 'c'.repeat(64), mimeType: 'image/webp', data: 'dGlueQ==',
+  }));
+});
+
 test('ban marker revokes all client Firestore access without deleting the user profile', async () => {
   const person = client('banned-person');
   await register(person);

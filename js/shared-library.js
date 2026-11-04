@@ -98,7 +98,19 @@ export function createSharedLibraryStore({ db, sdk, user, downloadCover = downlo
     unpublish() {
       queue = queue.catch(() => {}).then(async () => {
         ensureCurrent();
+        const current = await sdk.getDocFromServer(manifest(user.uid));
+        const header = current.exists() ? current.data() : {};
         await sdk.deleteDoc(manifest(user.uid));
+        const revisions = [...new Set([header.revision, header.pendingRevision].filter((value) => typeof value === 'string' && value))];
+        for (const revision of revisions) {
+          const snapshot = await sdk.getDocsFromServer(chunks(user.uid, revision));
+          for (let start = 0; start < snapshot.docs.length; start += 100) {
+            ensureCurrent();
+            const batch = sdk.writeBatch(db);
+            snapshot.docs.slice(start, start + 100).forEach((doc) => batch.delete(doc.ref));
+            await batch.commit();
+          }
+        }
         const snapshot = await sdk.getDocsFromServer(covers(user.uid));
         for (let start = 0; start < snapshot.docs.length; start += 100) {
           ensureCurrent();
@@ -111,7 +123,10 @@ export function createSharedLibraryStore({ db, sdk, user, downloadCover = downlo
     },
     watchManifest(owner, next, error) {
       return sdk.onSnapshot(manifest(owner), { includeMetadataChanges: true }, (snapshot) => {
-        if (!snapshot.metadata.fromCache && !snapshot.metadata.hasPendingWrites) next(snapshot.exists() ? snapshot.data() : null);
+        if (!snapshot.metadata.fromCache && !snapshot.metadata.hasPendingWrites) {
+          const value = snapshot.exists() ? snapshot.data() : null;
+          next(value?.revision ? value : null);
+        }
       }, error);
     },
     publish(index, settings) {
@@ -121,14 +136,26 @@ export function createSharedLibraryStore({ db, sdk, user, downloadCover = downlo
         const payload = await sharedLibraryPayload(index, settings);
         const before = await sdk.getDocFromServer(manifest(user.uid));
         const previous = before.exists() ? before.data() : {};
+        const revision = crypto.randomUUID();
+        if (before.exists() && previous.pendingRevision && previous.pendingRevision !== revision) {
+          const stale = await sdk.getDocsFromServer(chunks(user.uid, previous.pendingRevision));
+          for (let start = 0; start < stale.docs.length; start += 100) {
+            const batch = sdk.writeBatch(db);
+            stale.docs.slice(start, start + 100).forEach((doc) => batch.delete(doc.ref));
+            await batch.commit();
+          }
+        }
+        await sdk.setDoc(manifest(user.uid), before.exists()
+          ? { ...previous, pendingRevision: revision, pendingChunkCount: payload.chunks.length }
+          : { revision: '', signature: '', chunkCount: 0, pendingRevision: revision, pendingChunkCount: payload.chunks.length });
         const coversSignature = await syncCovers(index, projection, previous.coversSignature || '');
         if (before.exists() && previous.signature === payload.signature) {
-          if (previous.coversSignature !== coversSignature) {
-            await sdk.setDoc(manifest(user.uid), { ...previous, coversSignature });
-          }
+          await sdk.setDoc(manifest(user.uid), {
+            revision: previous.revision, signature: previous.signature,
+            chunkCount: previous.chunkCount, coversSignature,
+          });
           return;
         }
-        const revision = crypto.randomUUID();
         for (let start = 0; start < payload.chunks.length; start += 10) {
           const batch = sdk.writeBatch(db);
           payload.chunks.slice(start, start + 10).forEach((json, offset) => batch.set(sdk.doc(chunks(user.uid, revision), String(start + offset)), { position: start + offset, json }));
@@ -136,8 +163,8 @@ export function createSharedLibraryStore({ db, sdk, user, downloadCover = downlo
         }
         ensureCurrent();
         await sdk.setDoc(manifest(user.uid), { revision, signature: payload.signature, chunkCount: payload.chunks.length, coversSignature });
-        if (before.exists()) {
-          const old = await sdk.getDocsFromServer(chunks(user.uid, before.data().revision));
+        if (before.exists() && previous.revision) {
+          const old = await sdk.getDocsFromServer(chunks(user.uid, previous.revision));
           for (let start = 0; start < old.docs.length; start += 100) {
             const batch = sdk.writeBatch(db);
             old.docs.slice(start, start + 100).forEach((doc) => batch.delete(doc.ref));
@@ -161,6 +188,7 @@ export function createSharedLibraryStore({ db, sdk, user, downloadCover = downlo
       const before = await sdk.getDocFromServer(manifest(owner));
       if (!before.exists()) throw new Error('Библиотека недоступна.');
       const header = before.data();
+      if (!header.revision || !header.chunkCount) throw new Error('Библиотека ещё не готова.');
       if (expected && header.revision !== expected) throw new Error('Библиотека обновляется. Выберите её ещё раз.');
       const snapshot = await sdk.getDocsFromServer(chunks(owner, header.revision));
       const parts = snapshot.docs.map((doc) => doc.data()).sort((a, b) => a.position - b.position);
