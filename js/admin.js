@@ -69,19 +69,19 @@ function button(text, action, cls = '') {
   });
   return b;
 }
-function table(headers, rows, columnClasses = []) {
+function table(headers, rows, columnClasses = [], rowClasses = []) {
   const t = node('table'), thead = node('thead'), hr = node('tr'), body = node('tbody');
   headers.forEach((h, index) => hr.append(node('th', h, columnClasses[index] || ''))); if (headers.length) thead.append(hr); t.append(thead, body);
-  rows.forEach(row => { const tr = node('tr'); row.forEach((value, index) => { const td = node('td', null, columnClasses[index] || ''); if (value instanceof Node) td.append(value); else td.textContent = label(value); tr.append(td); }); body.append(tr); });
+  rows.forEach((row, rowIndex) => { const tr = node('tr', null, rowClasses[rowIndex] || ''); row.forEach((value, index) => { const td = node('td', null, columnClasses[index] || ''); if (value instanceof Node) td.append(value); else td.textContent = label(value); tr.append(td); }); body.append(tr); });
   return t;
 }
-function paginatedTable(headers, rows, pageSize = 25, columnClasses = []) {
+function paginatedTable(headers, rows, pageSize = 25, columnClasses = [], rowClasses = []) {
   const wrap = node('div', null, 'paginated-list');
   let page = 0;
   const renderPage = () => {
     const pageCount = Math.max(1, Math.ceil(rows.length / pageSize));
     page = Math.min(page, pageCount - 1);
-    wrap.replaceChildren(table(headers, rows.slice(page * pageSize, (page + 1) * pageSize), columnClasses));
+    wrap.replaceChildren(table(headers, rows.slice(page * pageSize, (page + 1) * pageSize), columnClasses, rowClasses.slice(page * pageSize, (page + 1) * pageSize)));
     const controls = node('div', null, 'pagination');
     const start = rows.length ? page * pageSize + 1 : 0;
     const end = Math.min((page + 1) * pageSize, rows.length);
@@ -288,11 +288,19 @@ function renderRelations() {
   });
   content.append(paginatedTable(['Участник','Пригласитель','Приглашённые','Связи доступа'],alphabeticRows,25,['','inviter-column','invited-column','']));
   content.append(node('h3','Отдельные связи доступа'));
-  const shareRows = (data.shares||[]).map(s=>[
-    userLink(byUid.get(s.ownerUid),s.ownerUid),
-    userLink(byUid.get(s.viewerUid),s.viewerUid),s.active?'Активен':'Закрыт'
-  ]);
-  content.append(paginatedTable(['Владелец библиотеки','Пользователь','Доступ'],shareRows));
+  const ownerName = uid => byUid.get(uid)?.displayName || byUid.get(uid)?.email || uid || '';
+  const sortedShares = [...(data.shares || [])].sort((a,b) => ownerName(a.ownerUid).localeCompare(ownerName(b.ownerUid),'ru') || ownerName(a.viewerUid).localeCompare(ownerName(b.viewerUid),'ru') || String(a.id || '').localeCompare(String(b.id || '')));
+  const ownerColors = new Map();
+  const shareRows = sortedShares.map(s=>{
+    if (!ownerColors.has(s.ownerUid)) ownerColors.set(s.ownerUid, ownerColors.size % 2 === 0 ? 'share-owner-green' : 'share-owner-yellow');
+    return [
+      userLink(byUid.get(s.ownerUid),s.ownerUid),
+      userLink(byUid.get(s.viewerUid),s.viewerUid),
+      node('span',s.active?'Активен':'Закрыт',s.active?'':'share-closed')
+    ];
+  });
+  const shareRowClasses = sortedShares.map(s => ownerColors.get(s.ownerUid));
+  content.append(paginatedTable(['Владелец библиотеки','Пользователь','Доступ'],shareRows,25,[],shareRowClasses));
 }
 function renderInvites() {
   content.append(table(['Адрес приглашения','Пригласитель UID','Приглашённый UID','Статус письма','Создано','Действие'],(data.invitations||[]).map(i=>[
