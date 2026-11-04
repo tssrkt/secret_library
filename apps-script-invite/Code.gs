@@ -336,6 +336,12 @@ function handleAdminRequest(input) {
   const actor = requireAdminApi(user.localId);
   switch (action) {
     case 'getAdminDashboard': return getAdminDashboardApi(actor);
+    case 'getAdminDashboardSummary': return getAdminDashboardSummaryApi(actor);
+    case 'getAdminCollectionPage': return getAdminCollectionPageApi(actor, data);
+    case 'getAdminBranch': return getAdminBranchApi(actor, data);
+    case 'getAdminRelationshipRoots': return getAdminRelationshipRootsApi(actor, data);
+    case 'getAdminUserHistory': return getAdminUserHistoryApi(actor, data);
+    case 'getAdminUserCard': return getAdminUserCardApi(actor, data);
     case 'setInvitationEmailTemplate': return setInvitationEmailTemplateApi(actor, data);
     case 'setAdminPermissions': return setAdminPermissionsApi(actor, data);
     case 'banLibraryUser': return banLibraryUserApi(actor, data);
@@ -389,6 +395,269 @@ function getAdminDashboardApi(actor) {
   };
 }
 
+function getAdminDashboardSummaryApi(actor) {
+  const p = actor.admin.role === 'superadmin'
+    ? Object.fromEntries(ADMIN_SECTIONS_API.map(k => [k, true])) : (actor.admin.permissions || {});
+  if (!Object.values(p).some(Boolean)) throw new Error('Не назначены права для просмотра админки.');
+  const counts = {
+    users: p.users ? fsCount('users') : null,
+    invitations: p.invites ? fsCount('shares', { fieldPath: 'inviteeEmail', op: 'NOT_EQUAL', value: { nullValue: null } }, true) : null,
+    acceptedInvitations: p.invites ? fsCount('shares', { fieldPath: 'claimedUid', op: 'NOT_EQUAL', value: { nullValue: null } }, true) : null,
+    shares: p.shares ? fsCount('libraryShares', { fieldPath: 'active', op: 'EQUAL', value: { booleanValue: true } }) : null,
+    admins: p.admins ? fsCount('adminUsers') : null,
+    banned: p.banned ? fsCount('bannedUsers') : null
+  };
+  const superadminUid = fsFindSuperAdminUid();
+  return { permissions: p, counts, superAdminUid: superadminUid, invitationEmailTemplate: p.texts ? getInvitationEmailTemplate() : null };
+}
+
+function fsFindSuperAdminUid() {
+  const response = fsFetch(FIRESTORE_REST_ROOT.slice(0, -1) + ':runQuery', 'post', {
+    structuredQuery: {
+      from: [{ collectionId: 'adminUsers' }],
+      where: { fieldFilter: { field: { fieldPath: 'role' }, op: 'EQUAL', value: { stringValue: 'superadmin' } } },
+      limit: 1
+    }
+  });
+  if (response.code !== 200) throw new Error('Не удалось определить главного администратора.');
+  const document = JSON.parse(response.text).find(row => row && row.document)?.document;
+  return document ? document.name.split('/').pop() : null;
+}
+function fsCount(collectionId, filter, allDescendants) {
+  const structuredQuery = { from: [{ collectionId, ...(allDescendants ? { allDescendants: true } : {}) }] };
+  if (Array.isArray(filter)) structuredQuery.where = { compositeFilter: { op: 'AND', filters: filter.map(item => ({ fieldFilter: { field: { fieldPath: item.fieldPath }, op: item.op, value: item.value } })) } };
+  else if (filter) structuredQuery.where = { fieldFilter: { field: { fieldPath: filter.fieldPath }, op: filter.op, value: filter.value } };
+  const response = fsFetch(FIRESTORE_REST_ROOT.slice(0, -1) + ':runAggregationQuery', 'post', {
+    structuredAggregationQuery: { structuredQuery, aggregations: [{ count: {}, alias: 'total' }] }
+  });
+  if (response.code !== 200) throw new Error('Не удалось получить счётчики Firebase (' + response.code + ').');
+  const rows = JSON.parse(response.text);
+  const value = rows.find(row => row && row.result)?.result?.aggregateFields?.total?.integerValue;
+  return Number(value || 0);
+}
+function getAdminCollectionPageApi(actor, data) {
+  const config = {
+    users: ['users', 'users'], invites: ['invites', 'pendingInvites'],
+    shares: ['shares', 'libraryShares'], events: ['events', 'adminEvents'],
+    banned: ['banned', 'bannedUsers'], admins: ['admins', 'adminUsers']
+  };
+  const section = String(data.section || '');
+  if (!config[section]) throw new Error('Неизвестный раздел админки.');
+  requireAdminApi(actor.uid, config[section][0]);
+  let page;
+  if (section === 'invites') page = fsQueryInvitationPage(25, data.cursor || '', data.filter || '');
+  else if (section === 'users' && String(data.search || '').trim()) page = fsQueryUsersSearchPage(25, data.cursor || '', String(data.search).trim());
+  else if ((section === 'shares' || section === 'admins') && ['active', 'inactive'].includes(data.filter)) {
+    page = fsQueryFilteredPage(config[section][1], 'active', data.filter === 'active', 25, data.cursor || '');
+  } else page = fsQueryPage(config[section][1], 25, data.cursor || '');
+  if (section === 'users') {
+    const flags = fsGetAdminUserFlags(page.items.map(user => user.id));
+    page.items = page.items.map(user => ({ ...user, uid: user.id, banned: flags.banned.has(user.id), admin: flags.admins.has(user.id) }));
+  }
+  return page;
+}
+
+function fsGetAdminUserFlags(uids) {
+  const result = { banned: new Set(), admins: new Set() };
+  if (!uids.length) return result;
+  fsQueryDocumentIds('bannedUsers', uids).forEach(uid => result.banned.add(uid));
+  fsQueryDocumentIds('adminUsers', uids).forEach(uid => result.admins.add(uid));
+  return result;
+}
+function fsQueryDocumentIds(collectionId, ids) {
+  const values = ids.slice(0, 30).map(uid => ({ referenceValue: 'projects/' + FIREBASE_PROJECT_ID + '/databases/(default)/documents/' + collectionId + '/' + uid }));
+  if (!values.length) return [];
+  const response = fsFetch(FIRESTORE_REST_ROOT.slice(0, -1) + ':runQuery', 'post', {
+    structuredQuery: { from: [{ collectionId }], where: { fieldFilter: { field: { fieldPath: '__name__' }, op: 'IN', value: { arrayValue: { values } } } }, limit: values.length }
+  });
+  if (response.code !== 200) throw new Error('Не удалось получить статусы участников.');
+  return JSON.parse(response.text).filter(row => row && row.document).map(row => row.document.name.split('/').pop());
+}
+function getAdminRelationshipRootsApi(actor, data) {
+  requireAdminApi(actor.uid, 'relationships');
+  return fsQueryFilteredPage('users', 'invitedByUid', null, 25, data.cursor || '');
+}
+function getAdminBranchApi(actor, data) {
+  requireAdminApi(actor.uid, 'relationships');
+  const uid = String(data.uid || '');
+  if (!uid || uid.length > 128) throw new Error('Некорректный UID участника.');
+  return fsQueryFilteredPage('users', 'invitedByUid', uid, 25, data.cursor || '');
+}
+
+function getAdminUserCardApi(actor, data) {
+  const current = requireAdminApi(actor.uid);
+  if (current.admin.role !== 'superadmin' && current.admin.permissions?.users !== true && current.admin.permissions?.relationships !== true) {
+    throw new Error('Недостаточно прав для просмотра карточки участника.');
+  }
+  const uid = String(data.uid || '');
+  if (!uid || uid.length > 128) throw new Error('Некорректный UID участника.');
+  const profile = fsGet('users/' + encodeURIComponent(uid));
+  if (!profile) throw new Error('Участник не найден.');
+  const directory = fsQueryGroupByField('userDirectory', 'uid', uid, 1)[0];
+  const inviter = profile.invitedByUid ? fsGet('users/' + encodeURIComponent(profile.invitedByUid)) : null;
+  const invited = fsQueryFilteredPage('users', 'invitedByUid', uid, 100, '').items;
+  const outgoing = fsQueryGroupByField('libraryShares', 'ownerUid', uid, 100);
+  const incoming = fsQueryGroupByField('libraryShares', 'viewerUid', uid, 100);
+  return {
+    user: { ...profile, uid, email: directory?.id ? decodeURIComponent(directory.id) : '' },
+    inviter: inviter ? { ...inviter, uid: profile.invitedByUid } : null,
+    invited: invited.map(user => ({ ...user, uid: user.id })),
+    admin: fsGet('adminUsers/' + encodeURIComponent(uid)),
+    banned: fsGet('bannedUsers/' + encodeURIComponent(uid)),
+    outgoing: outgoing.filter(share => share.active === true),
+    incoming: incoming.filter(share => share.active === true)
+  };
+}
+function getAdminUserHistoryApi(actor, data) {
+  requireAdminApi(actor.uid, 'users');
+  const uid = String(data.uid || '');
+  if (!uid || uid.length > 128) throw new Error('Некорректный UID участника.');
+  const invitations = fsQueryGroupByField('shares', 'ownerUid', uid, 100, true)
+    .concat(fsQueryGroupByField('shares', 'claimedUid', uid, 100, true));
+  const events = fsQueryGroupByField('adminEvents', 'targetUid', uid, 100)
+    .concat(fsQueryGroupByField('adminEvents', 'actorUid', uid, 100));
+  return {
+    outgoing: fsQueryGroupByField('libraryShares', 'ownerUid', uid, 100),
+    incoming: fsQueryGroupByField('libraryShares', 'viewerUid', uid, 100),
+    invitations: [...new Map(invitations.map(item => [item.id + ':' + item.email, item])).values()],
+    events: [...new Map(events.map(item => [item.id, item])).values()].sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0)).slice(0, 100)
+  };
+}
+
+function fsQueryPage(path, pageSize, cursor) {
+  return fsQueryFilteredPage(path, '', '', pageSize, cursor);
+}
+
+function fsQueryFilteredPage(path, filterField, filterValue, pageSize, cursor, filterOp) {
+  const size = Math.max(1, Math.min(100, Number(pageSize) || 25));
+  const structuredQuery = {
+    from: [{ collectionId: path }],
+    orderBy: [{ field: { fieldPath: '__name__' }, direction: 'ASCENDING' }],
+    limit: size + 1
+  };
+  if (filterField) structuredQuery.where = { fieldFilter: {
+    field: { fieldPath: filterField }, op: filterOp || 'EQUAL', value: filterValue === null ? { nullValue: null } : typeof filterValue === 'boolean' ? { booleanValue: filterValue } : { stringValue: String(filterValue) }
+  } };
+  if (cursor) {
+    let decoded;
+    try { decoded = JSON.parse(Utilities.newBlob(Utilities.base64DecodeWebSafe(cursor)).getDataAsString()); }
+    catch (_) { throw new Error('Некорректный курсор страницы.'); }
+    const expectedPrefix = 'projects/' + FIREBASE_PROJECT_ID + '/databases/(default)/documents/' + path + '/';
+    if (decoded.path !== path || typeof decoded.name !== 'string' || !decoded.name.startsWith(expectedPrefix) || decoded.name !== expectedPrefix + decoded.id || String(decoded.id).includes('/')) throw new Error('Некорректный курсор страницы.');
+    structuredQuery.startAt = { before: false, values: [{ referenceValue: decoded.name }] };
+  }
+  const response = fsFetch(FIRESTORE_REST_ROOT.slice(0, -1) + ':runQuery', 'post', { structuredQuery });
+  if (response.code !== 200) throw new Error('Не удалось загрузить страницу Firebase (' + response.code + ').');
+  const rows = JSON.parse(response.text).filter(row => row && row.document).map(row => ({
+    id: row.document.name.split('/').pop(), ...fsDecodeFields(row.document.fields || {}), _documentName: row.document.name
+  }));
+  const hasMore = rows.length > size;
+  const items = rows.slice(0, size);
+  const last = items[items.length - 1];
+  const lastDocumentName = last?._documentName || '';
+  items.forEach(item => delete item._documentName);
+  return {
+    items, hasMore,
+    nextCursor: hasMore && last ? Utilities.base64EncodeWebSafe(JSON.stringify({ path, id: last.id, name: lastDocumentName })) : null
+  };
+}
+
+function fsQueryUsersSearchPage(pageSize, cursor, search) {
+  const size = Math.max(1, Math.min(100, Number(pageSize) || 25));
+  const term = String(search || '').trim();
+  if (!term || term.length > 80) throw new Error('Поисковый запрос должен содержать от 1 до 80 символов.');
+  const structuredQuery = {
+    from: [{ collectionId: 'users' }],
+    where: { compositeFilter: { op: 'AND', filters: [
+      { fieldFilter: { field: { fieldPath: 'displayName' }, op: 'GREATER_THAN_OR_EQUAL', value: { stringValue: term } } },
+      { fieldFilter: { field: { fieldPath: 'displayName' }, op: 'LESS_THAN_OR_EQUAL', value: { stringValue: term + '\uf8ff' } } }
+    ] } },
+    orderBy: [
+      { field: { fieldPath: 'displayName' }, direction: 'ASCENDING' },
+      { field: { fieldPath: '__name__' }, direction: 'ASCENDING' }
+    ],
+    limit: size + 1
+  };
+  if (cursor) {
+    let decoded;
+    try { decoded = JSON.parse(Utilities.newBlob(Utilities.base64DecodeWebSafe(cursor)).getDataAsString()); }
+    catch (_) { throw new Error('Некорректный курсор поиска.'); }
+    const prefix = 'projects/' + FIREBASE_PROJECT_ID + '/databases/(default)/documents/users/';
+    if (decoded.path !== '@users-search' || typeof decoded.name !== 'string' || !decoded.name.startsWith(prefix) || decoded.name !== prefix + decoded.id || typeof decoded.displayName !== 'string') throw new Error('Некорректный курсор поиска.');
+    structuredQuery.startAt = { before: false, values: [{ stringValue: decoded.displayName }, { referenceValue: decoded.name }] };
+  }
+  const response = fsFetch(FIRESTORE_REST_ROOT.slice(0, -1) + ':runQuery', 'post', { structuredQuery });
+  if (response.code !== 200) throw new Error('Не удалось выполнить поиск участников (' + response.code + ').');
+  const rows = JSON.parse(response.text).filter(row => row && row.document).map(row => ({
+    id: row.document.name.split('/').pop(), ...fsDecodeFields(row.document.fields || {}), _documentName: row.document.name
+  }));
+  const hasMore = rows.length > size;
+  const items = rows.slice(0, size);
+  const last = items[items.length - 1];
+  const lastDocumentName = last?._documentName || '';
+  const lastDisplayName = last?.displayName || '';
+  items.forEach(item => delete item._documentName);
+  return { items, hasMore, nextCursor: hasMore && last ? Utilities.base64EncodeWebSafe(JSON.stringify({
+    path: '@users-search', id: last.id, name: lastDocumentName, displayName: lastDisplayName
+  })) : null };
+}
+function fsQueryInvitationPage(pageSize, cursor, filter) {
+  const size = Math.max(1, Math.min(100, Number(pageSize) || 25));
+  const structuredQuery = {
+    from: [{ collectionId: 'shares', allDescendants: true }],
+    where: filter === 'accepted'
+      ? { fieldFilter: { field: { fieldPath: 'claimedUid' }, op: 'NOT_EQUAL', value: { nullValue: null } } }
+      : filter === 'pending'
+        ? { fieldFilter: { field: { fieldPath: 'claimedUid' }, op: 'EQUAL', value: { nullValue: null } } }
+        : filter === 'revoked'
+          ? { fieldFilter: { field: { fieldPath: 'active' }, op: 'EQUAL', value: { booleanValue: false } } }
+          : { fieldFilter: { field: { fieldPath: 'inviteeEmail' }, op: 'NOT_EQUAL', value: { nullValue: null } } },
+    orderBy: [{ field: { fieldPath: '__name__' }, direction: 'ASCENDING' }],
+    limit: size + 1
+  };
+  if (cursor) {
+    let decoded;
+    try { decoded = JSON.parse(Utilities.newBlob(Utilities.base64DecodeWebSafe(cursor)).getDataAsString()); }
+    catch (_) { throw new Error('Некорректный курсор страницы.'); }
+    if (decoded.path !== '@invites' || typeof decoded.name !== 'string' ||
+        !decoded.name.startsWith('projects/' + FIREBASE_PROJECT_ID + '/databases/(default)/documents/pendingInvites/') || !decoded.name.includes('/shares/') ||
+        decoded.name.split('/').pop() !== decoded.id) throw new Error('Некорректный курсор страницы.');
+    structuredQuery.startAt = { before: false, values: [{ referenceValue: decoded.name }] };
+  }
+  const response = fsFetch(FIRESTORE_REST_ROOT.slice(0, -1) + ':runQuery', 'post', { structuredQuery });
+  if (response.code !== 200) throw new Error('Не удалось загрузить приглашения Firebase (' + response.code + ').');
+  const rows = JSON.parse(response.text).filter(row => row && row.document &&
+    row.document.name.includes('/documents/pendingInvites/') && row.document.name.includes('/shares/'))
+    .map(row => ({
+      id: row.document.name.split('/').pop(),
+      email: decodeURIComponent(row.document.name.split('/documents/pendingInvites/')[1].split('/shares/')[0]),
+      ...fsDecodeFields(row.document.fields || {}), _documentName: row.document.name
+    }));
+  const hasMore = rows.length > size;
+  const items = rows.slice(0, size);
+  const last = items[items.length - 1];
+  const lastDocumentName = last?._documentName || '';
+  items.forEach(item => delete item._documentName);
+  return { items, hasMore, nextCursor: hasMore && last
+    ? Utilities.base64EncodeWebSafe(JSON.stringify({ path: '@invites', id: last.id, name: lastDocumentName }))
+    : null };
+}
+function fsQueryGroupByField(collectionId, field, value, limit, nestedOnly) {
+  const structuredQuery = {
+    from: [{ collectionId, allDescendants: true }],
+    where: { fieldFilter: { field: { fieldPath: field }, op: 'EQUAL', value: { stringValue: String(value) } } },
+    limit: Math.min(100, Number(limit) || 100)
+  };
+  const response = fsFetch(FIRESTORE_REST_ROOT.slice(0, -1) + ':runQuery', 'post', { structuredQuery });
+  if (response.code !== 200) throw new Error('Не удалось загрузить историю участника.');
+  return JSON.parse(response.text).filter(row => row && row.document)
+    .filter(row => !nestedOnly || row.document.name.includes('/pendingInvites/'))
+    .map(row => ({
+      id: row.document.name.split('/').pop(),
+      ...(nestedOnly ? { email: decodeURIComponent(row.document.name.split('/documents/pendingInvites/')[1].split('/shares/')[0]) } : {}),
+      ...fsDecodeFields(row.document.fields || {})
+    }));
+}
 function getInvitationEmailTemplate() {
   const saved = fsGet('systemSettings/invitationEmail');
   return typeof saved?.body === 'string' ? saved.body : [

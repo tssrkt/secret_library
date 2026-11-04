@@ -5,6 +5,7 @@ import { INVITATION_MAILER_URL } from './config.js';
 const $ = (selector) => document.querySelector(selector);
 const authPanel = $('#auth'), dashboard = $('#dashboard'), status = $('#status'), stats = $('#stats'), tabs = $('#tabs'), content = $('#content');
 let session, call, data, activeTab = 'users';
+let pageStates = {};
 const sections = [
   ['users','Участники'],['relationships','Связи'],['invites','Приглашения'],
   ['shares','Доступ к библиотекам'],['events','Журнал событий'],['banned','Забаненные'],['admins','Администраторы'],['texts','Тексты']
@@ -116,46 +117,126 @@ function userLinks(users) {
   users.forEach((user, index) => { if (index) wrap.append(document.createTextNode(', ')); wrap.append(userLink(user, user.uid)); });
   return wrap;
 }
-function renderUserCard(uid) {
-  const user = (data.users || []).find(u => u.uid === uid) || (data.banned || []).find(u => u.uid === uid) || (data.admins || []).find(u => u.uid === uid) || { uid };
-  const admin = (data.admins || []).find(a => a.uid === uid);
-  const ban = (data.banned || []).find(u => u.uid === uid);
-  const byUid = new Map((data.users || []).map(u => [u.uid, u]));
-  const invitedBy = byUid.get(user.invitedByUid);
-  const invitedUsers = (data.users || []).filter(u => u.invitedByUid === uid);
-  const shares = (data.shares || []).filter(s => s.ownerUid === uid || s.viewerUid === uid);
-  const bannedUids = new Set((data.banned || []).map(u => u.uid));
-  const personLabel = (personUid) => {
-    const person = byUid.get(personUid) || (data.banned || []).find(u => u.uid === personUid) || (data.admins || []).find(a => a.uid === personUid);
-    const name = person?.displayName || person?.email || personUid;
-    return bannedUids.has(personUid) || person?.banned ? `${name} (заблокирован)` : name;
-  };
-  const incoming = shares.filter(s => s.viewerUid === uid);
-  const outgoing = shares.filter(s => s.ownerUid === uid);
-  const rows = [
-    ['Имя', user.displayName || 'Без имени'],
-    ['UID', uid],
-    ['Электронная почта', user.email || admin?.email || ban?.email || 'Не указана в профиле'],
-    ['Пригласил', invitedBy ? (invitedBy.displayName || invitedBy.uid) : (user.invitedByUid || '—')],
-    ['Приглашённые участники', invitedUsers.map(u => personLabel(u.uid)).join(', ') || '—'],
-    ['Статус', ban || user.banned ? 'Заблокирован' : 'Активен'],
-    ['Права администратора', admin ? `${admin.role || 'moderator'} · ${admin.active === true ? 'активен' : 'отключён'}` : 'Нет'],
-    ...(ban || user.banned ? [['Причина блокировки', ban?.reason || 'Не указана']] : []),
-    ['Пользуется', incoming.length ? incoming.map(s => `${personLabel(s.ownerUid)}${s.active ? '' : ' (доступ отозван)'}`).join(', ') : '—'],
-    ['Делится', outgoing.length ? outgoing.map(s => `${personLabel(s.viewerUid)}${s.active ? '' : ' (доступ отозван)'}`).join(', ') : '—']
-  ];
-  content.replaceChildren(node('h2', 'Карточка пользователя'), button('← Назад к списку', () => render(), 'secondary'));
-  const cardTable = table([], rows.map(([field, value]) => [node('strong', field), value]));
-  cardTable.style.width = 'auto';
-  content.append(cardTable);
-  const actions = node('div', null, 'actions');
-  actions.append(button('Скопировать UID', async () => { await navigator.clipboard.writeText(uid); say('UID скопирован.'); }));
-  if (data.permissions?.admins && !user.banned && !admin) actions.append(button('Назначить администратором', () => { activeTab = 'admins'; renderAdminEditor(user); }));
-  content.append(actions);
+async function renderUserCard(uid) {
+  content.replaceChildren(node('h2', 'Карточка участника'), button('← Назад к списку', () => render(), 'secondary'), node('p', 'Загружаем текущий статус…'));
+  try {
+    const card = await call('getAdminUserCard')({ uid });
+    const user = card.user || { uid };
+    const personLabel = person => person?.displayName || person?.uid || '—';
+    const rows = [
+      ['Имя', user.displayName || 'Без имени'], ['UID', uid], ['Электронная почта', user.email || 'Не указана'],
+      ['Пригласил', card.inviter ? personLabel(card.inviter) : (user.invitedByUid || '—')],
+      ['Приглашённые участники', (card.invited || []).map(personLabel).join(', ') || '—'],
+      ['Статус', card.banned ? 'Заблокирован' : 'Активен'],
+      ['Права администратора', card.admin ? `${card.admin.role || 'moderator'} · ${card.admin.active === true ? 'активен' : 'отключён'}` : 'Нет'],
+      ...(card.banned ? [['Причина блокировки', card.banned.reason || 'Не указана']] : []),
+      ['Пользуется библиотеками', (card.incoming || []).map(share => `${share.ownerEmail || share.ownerUid}`).join(', ') || '—'],
+      ['Делится библиотеками', (card.outgoing || []).map(share => `${share.viewerEmail || share.viewerUid}`).join(', ') || '—']
+    ];
+    content.replaceChildren(node('h2', 'Карточка участника'), button('← Назад к списку', () => render(), 'secondary'));
+    const cardTable = table([], rows.map(([field, value]) => [node('strong', field), value]));
+    cardTable.style.width = 'auto';
+    content.append(cardTable);
+    const actions = node('div', null, 'actions');
+    actions.append(button('Скопировать UID', async () => { await navigator.clipboard.writeText(uid); say('UID скопирован.'); }));
+    if (data.permissions?.admins && !card.banned && !card.admin) actions.append(button('Назначить администратором', () => { activeTab = 'admins'; renderAdminEditor(user); }));
+    if (data.permissions?.users) actions.append(button('История участника', async () => {
+      const history = await call('getAdminUserHistory')({ uid });
+      const section = node('section');
+      section.append(node('h3', 'История приглашений и связей'));
+      const addHistory = (title, items, fields) => {
+        section.append(node('h4', title));
+        if (!items?.length) { section.append(node('p', 'Записей нет.', 'muted')); return; }
+        section.append(table(fields, items.map(item => fields.map(field => {
+          const key = ({ 'Владелец': 'ownerUid', 'Получатель': 'viewerUid', 'Событие': 'action', 'Дата': 'createdAt', 'Email': 'email', 'Статус': 'active' })[field] || field;
+          const value = field === 'UID' ? (item.targetUid || item.actorUid || item.id) : item[key];
+          return key === 'createdAt' ? dateLabel(value) : key === 'active' ? (value ? 'Активна' : 'Закрыта') : value ?? '—';
+        }))));
+      };
+      addHistory('Исходящие доступы', history.outgoing, ['Владелец', 'Получатель', 'Статус']);
+      addHistory('Входящие доступы', history.incoming, ['Владелец', 'Получатель', 'Статус']);
+      addHistory('Приглашения', history.invitations, ['Email', 'Владелец', 'Дата']);
+      addHistory('События', history.events, ['Дата', 'Событие', 'UID']);
+      content.append(section);
+    }));
+    content.append(actions);
+  } catch (error) {
+    content.replaceChildren(node('h2', 'Карточка участника'), button('← Назад к списку', () => render(), 'secondary'), node('p', error?.message || 'Не удалось загрузить карточку.', 'error'));
+  }
+}
+async function loadActivePage(reset = false) {
+  const sectionMap = { users: 'users', invites: 'invites', shares: 'shares', events: 'events', banned: 'banned', admins: 'admins' };
+  const section = sectionMap[activeTab];
+  if (activeTab === 'relationships') {
+    if (reset || !pageStates.relationships) pageStates.relationships = { cursorStack: [null], index: 0, page: null, loading: false };
+    const state = pageStates.relationships;
+    state.loading = true;
+    say('Загружаем корневые ветви…');
+    state.page = await call('getAdminRelationshipRoots')({ cursor: state.cursorStack[state.index] });
+    data.users = state.page.items || [];
+    state.loading = false;
+    return;
+  }
+  if (!section) return;
+  if (reset || !pageStates[activeTab]) pageStates[activeTab] = { cursorStack: [null], index: 0, page: null, loading: false, search: pageStates[activeTab]?.search || '', filter: pageStates[activeTab]?.filter || '' };
+  const state = pageStates[activeTab];
+  state.loading = true;
+  say('Загружаем страницу…');
+  try {
+    state.page = await call('getAdminCollectionPage')({ section, cursor: state.cursorStack[state.index], search: state.search || '', filter: state.filter || '' });
+    const destination = { users: 'users', invites: 'invitations', shares: 'shares', events: 'events', banned: 'banned', admins: 'admins' }[activeTab];
+    data[destination] = state.page.items || [];
+    state.loading = false;
+  } catch (error) { state.loading = false; throw error; }
+}
+function renderRemoteControls() {
+  const state = pageStates[activeTab];
+  if (!state?.page) return;
+  const controls = node('div', null, 'pagination');
+  const filterOptions = activeTab === 'invites'
+    ? [['', 'Все приглашения'], ['pending', 'Не принятые'], ['accepted', 'Принятые'], ['revoked', 'Отозванные']]
+    : ['shares', 'admins'].includes(activeTab)
+      ? [['', 'Все записи'], ['active', 'Активные'], ['inactive', 'Неактивные']]
+      : [];
+  if (filterOptions.length) {
+    const filter = node('select');
+    filterOptions.forEach(([value, title]) => { const option = node('option', title); option.value = value; filter.append(option); });
+    filter.value = state.filter || '';
+    controls.append(filter, button('Применить', async () => { state.filter = filter.value; state.cursorStack = [null]; state.index = 0; await loadActivePage(); render(); }, 'secondary'));
+  }
+  if (activeTab === 'users') {
+    const search = node('input');
+    search.type = 'search'; search.placeholder = 'Поиск по началу имени'; search.value = state.search || ''; search.setAttribute('aria-label', 'Поиск по началу имени');
+    controls.append(search, button('Найти', async () => { state.search = search.value.trim(); state.cursorStack = [null]; state.index = 0; await loadActivePage(); render(); }, 'secondary'));
+    if (state.search) controls.append(button('Сбросить', async () => { state.search = ''; state.cursorStack = [null]; state.index = 0; await loadActivePage(); render(); }, 'secondary'));
+  }
+  const start = state.page.items.length ? state.index * 25 + 1 : 0;
+  const end = start ? start + state.page.items.length - 1 : 0;
+  controls.append(node('span', `${start}–${end}${state.page.hasMore ? ' и далее' : ''}`));
+  const previous = button('← Назад', async () => {
+    if (state.index <= 0) return;
+    state.index--;
+    await loadActivePage();
+    render();
+  }, 'secondary');
+  previous.disabled = state.index === 0 || state.loading;
+  const next = button('Далее →', async () => {
+    if (!state.page?.hasMore || !state.page.nextCursor) return;
+    state.cursorStack = state.cursorStack.slice(0, state.index + 1);
+    state.cursorStack.push(state.page.nextCursor);
+    state.index++;
+    await loadActivePage();
+    render();
+  }, 'secondary');
+  next.disabled = !state.page.hasMore || state.loading;
+  controls.append(previous, next);
+  content.append(controls);
 }
 async function refresh() {
   say('Загружаем данные администратора…');
-  data = await call('getAdminDashboard')({});
+  data = await call('getAdminDashboardSummary')({});
+  pageStates = {};
+  await loadActivePage(true);
   render();
   say('Данные обновлены.');
 }
@@ -170,137 +251,81 @@ function renderStats() {
 function renderTabs() {
   tabs.replaceChildren();
   sections.filter(([key]) => data.permissions?.[key]).forEach(([key,title]) => {
-    tabs.append(button(title, () => { activeTab = key; render(); }, 'tab'));
+    tabs.append(button(title, async () => { activeTab = key; try { await loadActivePage(true); render(); } catch (error) { say(error?.message || 'Не удалось загрузить раздел.', true); } }, 'tab'));
   });
   [...tabs.children].forEach((b,i) => b.setAttribute('aria-pressed', String(sections.filter(([key]) => data.permissions?.[key])[i]?.[0] === activeTab)));
 }
 function renderUsers() {
-  const superAdminUid = (data.admins || []).find(a => a.role === 'superadmin')?.uid;
+  const superAdminUid = data.superAdminUid;
   const users = [...(data.users || [])].sort((a,b)=>(a.displayName||'').localeCompare(b.displayName||'','ru'));
-  const byUid = new Map(users.map(u => [u.uid,u]));
-  const children = new Map();
-  users.forEach(u => { if (u.invitedByUid && byUid.has(u.invitedByUid)) { const arr=children.get(u.invitedByUid)||[]; arr.push(u); children.set(u.invitedByUid,arr); } });
-  const rows = users.map(u => {
-    const who = userLink(u);
-    const rel = node('div', null, 'user-invitations');
-    const inviterLine = node('div', null, 'inviter-line'); inviterLine.append(document.createTextNode('Пригласитель: '), byUid.has(u.invitedByUid) ? userLink(byUid.get(u.invitedByUid)) : node('span', u.invitedByUid || '—')); rel.append(inviterLine);
-    const invited = children.get(u.uid) || [];
-    const invitedLine = node('div', null, invited.length ? 'invited-line' : 'invited-empty');
-    if (invited.length) invitedLine.append(document.createTextNode('Приглашённые: '), userLinks(invited));
-    else invitedLine.textContent = 'Приглашенных нет.';
-    rel.append(invitedLine);
-    const statusText = u.banned ? 'Забанен' : u.admin ? 'Администратор' : 'Активен';
-    const actions = node('div',null,'actions');
-    if (u.uid !== superAdminUid) {
-      if (u.banned) {
-        if (data.permissions?.banned) actions.append(button('Восстановить', async()=>{await call('restoreLibraryUser')({uid:u.uid}); await refresh();}));
-      } else actions.append(button('Заблокировать',async()=>{const reason=window.prompt('Причина блокировки (необязательно):','');if(reason===null)return;await call('banLibraryUser')({uid:u.uid,reason});await refresh();},'danger'));
+  const rows = users.map(user => {
+    const inviter = user.invitedByUid ? userLink({ uid: user.invitedByUid }) : '—';
+    const relation = node('div', null, 'user-invitations');
+    relation.append(node('div', null, 'inviter-line'));
+    relation.firstChild.append(document.createTextNode('Пригласитель: '), inviter instanceof Node ? inviter : document.createTextNode(inviter));
+    relation.append(node('div', 'Ветвь приглашений: раздел «Связи»', 'muted'));
+    const statusText = user.banned ? 'Забанен' : user.admin ? 'Администратор' : 'Активен';
+    const actions = node('div', null, 'actions');
+    if (user.uid !== superAdminUid) {
+      if (user.banned) {
+        if (data.permissions?.banned) actions.append(button('Восстановить', async () => { await call('restoreLibraryUser')({ uid: user.uid }); await refresh(); }));
+      } else actions.append(button('Заблокировать', async () => {
+        const reason = window.prompt('Причина блокировки (необязательно):', '');
+        if (reason === null) return;
+        await call('banLibraryUser')({ uid: user.uid, reason });
+        await refresh();
+      }, 'danger'));
     }
-    if (data.permissions?.admins && !u.banned && !u.admin) actions.append(button('Назначить модератором',()=>{activeTab='admins';renderAdminEditor(u);}));
-    return [who,rel,statusText,actions];
+    if (data.permissions?.admins && !user.banned && !user.admin) actions.append(button('Назначить модератором', () => { activeTab = 'admins'; renderAdminEditor(user); }));
+    return [userLink(user), relation, statusText, actions];
   });
-  content.append(paginatedTable(['Участник','Приглашения','Статус','Действия'],rows));
+  content.append(paginatedTable(['Участник', 'Приглашения', 'Статус', 'Действия'], rows));
 }
 function renderRelations() {
-  const byUid = new Map((data.users||[]).map(u=>[u.uid,u]));
+  content.append(node('h2', 'Пригласительная иерархия'));
+  content.append(node('p', 'Ветви участников загружаются только при раскрытии.'));
   const tree = node('div');
-  const childMap = new Map();
-  (data.users||[]).forEach(u=>{if(u.invitedByUid){const a=childMap.get(u.invitedByUid)||[];a.push(u);childMap.set(u.invitedByUid,a);}});
-  const roots=(data.users||[]).filter(u=>!u.invitedByUid||!byUid.has(u.invitedByUid));
-  function branch(u, depth=0, seen=new Set()) {
-    if(seen.has(u.uid)) return node('div','Цикл связей обнаружен');
-    const next=new Set(seen); next.add(u.uid);
-    const box=node('div',null,'relationship'); box.style.marginLeft=(depth*18)+'px';
-    const children=(childMap.get(u.uid)||[]).sort((a,b)=>(a.displayName||'').localeCompare(b.displayName||'','ru'));
-    const line=node('div',null,'relationship-line');
-    const childList=node('div',null,'relationship-children');
-    let toggle=null;
-    const toggleBranch=()=>{
-      if (!children.length) return;
-      const collapsed=childList.classList.toggle('collapsed');
-      if (toggle) {
-        toggle.textContent=collapsed?'\u25B8':'\u25BE';
-        toggle.setAttribute('aria-expanded',String(!collapsed));
-        toggle.setAttribute('aria-label',(collapsed?'\u0420\u0430\u0437\u0432\u0435\u0440\u043d\u0443\u0442\u044c':'\u0421\u0432\u0435\u0440\u043d\u0443\u0442\u044c')+' \u0432\u0435\u0442\u043a\u0443 '+(u.displayName||u.uid));
-      }
-    };
-    if (children.length) {
-      toggle=button('\u25BE',toggleBranch,'tree-toggle');
-      toggle.setAttribute('aria-expanded','true');
-      toggle.setAttribute('aria-label','\u0421\u0432\u0435\u0440\u043d\u0443\u0442\u044c \u0432\u0435\u0442\u043a\u0443 '+(u.displayName||u.uid));
-      line.append(toggle);
-    } else {
-      line.append(node('span','', 'tree-toggle-placeholder'));
-    }
-    const name=button((u.displayName||'\u0411\u0435\u0437 \u0438\u043c\u0435\u043d\u0438')+(u.banned?' \u00B7 \u0437\u0430\u0431\u0430\u043d':''),()=>renderUserCard(u.uid),'tree-name-button');
-    name.title='\u041e\u0442\u043a\u0440\u044b\u0442\u044c \u043a\u0430\u0440\u0442\u043e\u0447\u043a\u0443 \u043f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u044f. UID: '+u.uid;
-    line.append(name);
-    const copy=button('\u2398',async()=>{
+  function branch(user, depth = 0, seen = new Set()) {
+    if (seen.has(user.uid)) return node('div', 'Цикл связей обнаружен.', 'error');
+    const nextSeen = new Set(seen); nextSeen.add(user.uid);
+    const wrap = node('div', null, 'relationship');
+    wrap.style.marginLeft = `${depth * 18}px`;
+    const line = node('div', null, 'relationship-line');
+    const children = node('div', null, 'relationship-children collapsed');
+    let loaded = false;
+    let cursor = null;
+    let loading = false;
+    const toggle = button('▸', async () => {
+      if (!loaded && !loading) await loadChildren();
+      const collapsed = children.classList.toggle('collapsed');
+      toggle.textContent = collapsed ? '▸' : '▾';
+      toggle.setAttribute('aria-expanded', String(!collapsed));
+    }, 'tree-toggle');
+    toggle.setAttribute('aria-expanded', 'false');
+    toggle.setAttribute('aria-label', 'Раскрыть ветку ' + (user.displayName || user.uid));
+    line.append(toggle, userLink(user));
+    wrap.append(line, children);
+    async function loadChildren(next = false) {
+      if (loading) return;
+      loading = true;
       try {
-        await navigator.clipboard.writeText(String(u.uid));
-        const feedback=node('span','UID \u0441\u043a\u043e\u043f\u0438\u0440\u043e\u0432\u0430\u043d','uid-copy-feedback');
-        line.append(feedback);
-        setTimeout(()=>feedback.remove(),1600);
-      } catch (error) {
-        say('\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u0441\u043a\u043e\u043f\u0438\u0440\u043e\u0432\u0430\u0442\u044c UID. \u0420\u0430\u0437\u0440\u0435\u0448\u0438\u0442\u0435 \u0434\u043e\u0441\u0442\u0443\u043f \u043a \u0431\u0443\u0444\u0435\u0440\u0443 \u043e\u0431\u043c\u0435\u043d\u0430 \u0438 \u043f\u043e\u0432\u0442\u043e\u0440\u0438\u0442\u0435.',true);
-      }
-    },'uid-copy-button');
-    copy.title='\u0421\u043a\u043e\u043f\u0438\u0440\u043e\u0432\u0430\u0442\u044c UID';
-    copy.setAttribute('aria-label','\u0421\u043a\u043e\u043f\u0438\u0440\u043e\u0432\u0430\u0442\u044c UID \u043f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u044f '+(u.displayName||u.uid));
-    line.append(copy); box.append(line);
-    children.forEach(c=>childList.append(branch(c,depth+1,next)));
-    box.append(childList);
-    return box;
+        const page = await call('getAdminBranch')({ uid: user.uid, cursor: next ? cursor : null });
+        if (!next) children.replaceChildren();
+        (page.items || []).forEach(child => children.append(branch(child, depth + 1, nextSeen)));
+        cursor = page.nextCursor;
+        loaded = true;
+        if (page.hasMore && cursor) children.append(button('Показать ещё', async () => {
+          const moreButton = children.lastElementChild;
+          await loadChildren(true);
+          moreButton?.remove();
+        }, 'secondary'));
+        if (!page.items?.length && !next) children.append(node('span', 'Приглашённых нет.', 'muted'));
+      } finally { loading = false; }
+    }
+    return wrap;
   }
-  roots.sort((a,b)=>(a.displayName||'').localeCompare(b.displayName||'','ru')).forEach(u=>tree.append(branch(u)));
+  (data.users || []).forEach(user => tree.append(branch(user)));
   content.append(tree);
-  content.append(node('h3','Алфавитный список и типы отношений'));
-  const active = (data.shares||[]).filter(s=>s.active);
-  const users = data.users || [];
-  const invitedByUid = new Map();
-  const outgoingByUid = new Map();
-  const incomingByUid = new Map();
-  users.forEach(u => invitedByUid.set(u.uid, []));
-  users.forEach(u => { if (u.invitedByUid && invitedByUid.has(u.invitedByUid)) invitedByUid.get(u.invitedByUid).push(u); });
-  active.forEach(s => {
-    if (!outgoingByUid.has(s.ownerUid)) outgoingByUid.set(s.ownerUid, new Set());
-    if (!incomingByUid.has(s.viewerUid)) incomingByUid.set(s.viewerUid, new Set());
-    outgoingByUid.get(s.ownerUid).add(s.viewerUid);
-    incomingByUid.get(s.viewerUid).add(s.ownerUid);
-  });
-  const alphabeticRows = [...users].sort((a,b)=>(a.displayName||'').localeCompare(b.displayName||'','ru')).map(u=>{
-    const invited = invitedByUid.get(u.uid) || [];
-    const outgoing = outgoingByUid.get(u.uid) || new Set();
-    const incoming = incomingByUid.get(u.uid) || new Set();
-    const others = new Set([...outgoing, ...incoming]);
-    const grouped = { mutual: [], outgoing: [], incoming: [] };
-    [...others].forEach(other => {
-      const out=outgoing.has(other), inc=incoming.has(other), otherUser=byUid.get(other)||{uid:other};
-      if (out && inc) grouped.mutual.push(otherUser);
-      else if (out) grouped.outgoing.push(otherUser);
-      else grouped.incoming.push(otherUser);
-    });
-    const types = node('div');
-    const addType = (title, people, className) => { if (!people.length) return; const line = node('div', null, className); line.append(document.createTextNode(title+': '),userLinks(people)); types.append(line); };
-    addType('Взаимные',grouped.mutual,'relation-mutual'); addType('Делится',grouped.outgoing,'relation-outgoing'); addType('Пользуется',grouped.incoming,'relation-incoming');
-    const userName=node('div'); userName.append(userLink(u));
-    return [userName,byUid.has(u.invitedByUid) ? userLink(byUid.get(u.invitedByUid)) : (u.invitedByUid || '—'),userLinks(invited),types.childNodes.length ? types : '—'];
-  });
-  content.append(paginatedTable(['Участник','Пригласитель','Приглашённые','Связи доступа'],alphabeticRows,25,['','inviter-column','invited-column','']));
-  content.append(node('h3','Отдельные связи доступа'));
-  const ownerName = uid => byUid.get(uid)?.displayName || byUid.get(uid)?.email || uid || '';
-  const sortedShares = [...(data.shares || [])].sort((a,b) => ownerName(a.ownerUid).localeCompare(ownerName(b.ownerUid),'ru') || ownerName(a.viewerUid).localeCompare(ownerName(b.viewerUid),'ru') || String(a.id || '').localeCompare(String(b.id || '')));
-  const ownerColors = new Map();
-  const shareRows = sortedShares.map(s=>{
-    if (!ownerColors.has(s.ownerUid)) ownerColors.set(s.ownerUid, ownerColors.size % 2 === 0 ? 'share-owner-green' : 'share-owner-yellow');
-    return [
-      userLink(byUid.get(s.ownerUid),s.ownerUid),
-      userLink(byUid.get(s.viewerUid),s.viewerUid),
-      node('span',s.active?'Активен':'Закрыт',s.active?'':'share-closed')
-    ];
-  });
-  const shareRowClasses = sortedShares.map(s => ownerColors.get(s.ownerUid));
-  content.append(paginatedTable(['Владелец библиотеки','Пользователь','Доступ'],shareRows,25,[],shareRowClasses));
 }
 function renderInvites() {
   const invitations = data.invitations || [];
@@ -313,7 +338,7 @@ function renderInvites() {
 }
 function renderShares() {
   const users=new Map((data.users||[]).map(u=>[u.uid,u]));
-  const superAdminUid = (data.admins || []).find(a => a.role === 'superadmin')?.uid;
+  const superAdminUid = data.superAdminUid || (data.admins || []).find(a => a.role === 'superadmin')?.uid;
   const ownerName = uid => users.get(uid)?.displayName || users.get(uid)?.email || uid || '';
   const shares = [...(data.shares || [])].sort((a,b) => ownerName(a.ownerUid).localeCompare(ownerName(b.ownerUid),'ru') || ownerName(a.viewerUid).localeCompare(ownerName(b.viewerUid),'ru') || String(a.id || '').localeCompare(String(b.id || '')));
   const ownerColors = new Map();
@@ -398,6 +423,7 @@ function render() {
   else if(activeTab==='banned') renderBanned();
   else if(activeTab==='admins') renderAdminEditor();
   else if(activeTab==='texts') renderTexts();
+  renderRemoteControls();
 }
 async function login() {
   $('#login').disabled=true;

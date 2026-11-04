@@ -61,7 +61,10 @@ function harness({ authUser, pendingFields, pendingStatus = 200, profileStatus =
       DigestAlgorithm: { SHA_256: 'SHA_256' },
       Charset: { UTF_8: 'UTF_8' },
       computeDigest(_algorithm, value) { return [...createHash('sha256').update(value).digest()]; },
-      getUuid() { return `reservation-${++uuidCounter}`; }
+      getUuid() { return `reservation-${++uuidCounter}`; },
+      base64EncodeWebSafe(value) { return Buffer.from(value).toString('base64url'); },
+      base64DecodeWebSafe(value) { return [...Buffer.from(value, 'base64url')]; },
+      newBlob(bytes) { return { getDataAsString() { return Buffer.from(bytes).toString('utf8'); } }; }
     }
   };
   vm.createContext(context);
@@ -133,6 +136,187 @@ test('invitation dashboard reads nested shares with one collection-group query',
   assert.equal(invites[0].ownerUid, 'owner-uid');
 });
 
+test('admin dashboard summary returns aggregate counts and a superadmin marker without listing user records', () => {
+  const app = harness();
+  const requests = [];
+  app.context.fsFetch = (url, method, body) => {
+    requests.push({ url, method, body });
+    if (url.includes('runAggregationQuery')) return { code: 200, text: JSON.stringify([{ result: { aggregateFields: { total: { integerValue: '7' } } } }]) };
+    return { code: 200, text: JSON.stringify([{ document: {
+      name: 'projects/project-071ee00e-4a4a-4a3d-95d/databases/(default)/documents/adminUsers/root',
+      fields: { role: { stringValue: 'superadmin' } }
+    } }]) };
+  };
+  const summary = app.context.getAdminDashboardSummaryApi({ uid: 'root', admin: { role: 'superadmin' } });
+  assert.equal(summary.counts.users, 7);
+  assert.equal(summary.counts.invitations, 7);
+  assert.equal(summary.superAdminUid, 'root');
+  assert.equal(requests.filter(request => request.url.includes('runAggregationQuery')).length, 6);
+  assert.equal(requests.filter(request => request.url.endsWith('documents:runQuery')).length, 1);
+});
+test('admin dashboard counters use Firestore aggregation without downloading collection documents', () => {
+  const app = harness();
+  let request;
+  app.context.fsFetch = (url, method, body) => {
+    request = { url, method, body };
+    return { code: 200, text: JSON.stringify([{ result: { aggregateFields: { total: { integerValue: '42' } } } }]) };
+  };
+  assert.equal(app.context.fsCount('users'), 42);
+  assert.equal(request.method, 'post');
+  assert.match(request.url, /documents:runAggregationQuery$/);
+  assert.deepEqual(JSON.parse(JSON.stringify(request.body.structuredAggregationQuery.aggregations)), [{ count: {}, alias: 'total' }]);
+  assert.equal(request.body.structuredAggregationQuery.structuredQuery.from[0].collectionId, 'users');
+});
+
+test('aggregate counters can filter active shares and count only accepted invitations', () => {
+  const app = harness();
+  const requests = [];
+  app.context.fsFetch = (_url, _method, body) => {
+    requests.push(body.structuredAggregationQuery.structuredQuery);
+    return { code: 200, text: JSON.stringify([{ result: { aggregateFields: { total: { integerValue: '3' } } } }]) };
+  };
+  app.context.fsCount('libraryShares', { fieldPath: 'active', op: 'EQUAL', value: { booleanValue: true } });
+  app.context.fsCount('shares', [{ fieldPath: 'inviteeEmail', op: 'NOT_EQUAL', value: { nullValue: null } }, { fieldPath: 'claimedUid', op: 'NOT_EQUAL', value: { nullValue: null } }], true);
+  assert.equal(requests[0].where.fieldFilter.field.fieldPath, 'active');
+  assert.equal(requests[1].from[0].allDescendants, true);
+  assert.equal(requests[1].where.compositeFilter.filters.length, 2);
+});
+test('admin collection pages use Firestore cursor pagination instead of full collection reads', () => {
+  const app = harness();
+  const requests = [];
+  app.context.fsFetch = (url, method, body) => {
+    requests.push({ url, method, body });
+    const cursor = body.structuredQuery.startAt?.values?.[0]?.referenceValue;
+    const ids = cursor ? ['user-26', 'user-27'] : ['user-01', 'user-02'];
+    return { code: 200, text: JSON.stringify(ids.map(id => ({ document: {
+      name: `projects/project-071ee00e-4a4a-4a3d-95d/databases/(default)/documents/users/${id}`,
+      fields: { displayName: { stringValue: id } }
+    } }))) };
+  };
+  const first = app.context.fsQueryPage('users', 1, '');
+  assert.equal(first.items.length, 1);
+  assert.equal(first.items[0].id, 'user-01');
+  assert.equal(first.hasMore, true);
+  assert(first.nextCursor);
+  const second = app.context.fsQueryPage('users', 1, first.nextCursor);
+  assert.equal(second.items[0].id, 'user-26');
+  assert.equal(requests.length, 2);
+  assert.equal(requests[0].method, 'post');
+  assert.equal(requests[0].body.structuredQuery.limit, 2);
+  assert.equal(requests[1].body.structuredQuery.startAt.before, false);
+  assert.match(requests[1].body.structuredQuery.startAt.values[0].referenceValue, /users\/user-01$/);
+});
+
+test('participant name search is executed in Firestore and keeps a stable name-plus-document cursor', () => {
+  const app = harness();
+  const requests = [];
+  app.context.fsFetch = (_url, _method, body) => {
+    requests.push(body.structuredQuery);
+    const id = requests.length === 1 ? 'user-a' : 'user-b';
+    return { code: 200, text: JSON.stringify([
+      { document: { name: `projects/project-071ee00e-4a4a-4a3d-95d/databases/(default)/documents/users/${id}`, fields: { displayName: { stringValue: 'Ада' } } } },
+      { document: { name: `projects/project-071ee00e-4a4a-4a3d-95d/databases/(default)/documents/users/${id}-next`, fields: { displayName: { stringValue: 'Ада' } } } }
+    ]) };
+  };
+  const first = app.context.fsQueryUsersSearchPage(1, '', 'Ада');
+  assert.equal(first.items[0].displayName, 'Ада');
+  assert.equal(requests[0].where.compositeFilter.filters.length, 2);
+  assert.equal(requests[0].orderBy[0].field.fieldPath, 'displayName');
+  assert.equal(requests[0].orderBy[1].field.fieldPath, '__name__');
+  const second = app.context.fsQueryUsersSearchPage(1, first.nextCursor, 'Ада');
+  assert.equal(requests[1].startAt.values[0].stringValue, 'Ада');
+  assert.match(requests[1].startAt.values[1].referenceValue, /users\/user-a$/);
+  assert.equal(second.items.length, 1);
+});
+test('invitation pages cursor through nested pendingInvites shares and ignore unrelated share subcollections', () => {
+  const app = harness();
+  const requests = [];
+  app.context.fsFetch = (url, method, body) => {
+    requests.push({ url, method, body });
+    const first = !body.structuredQuery.startAt;
+    const docs = first ? [
+      { name: 'projects/project-071ee00e-4a4a-4a3d-95d/databases/(default)/documents/otherCollection/doc/shares/noise', fields: {} },
+      { name: 'projects/project-071ee00e-4a4a-4a3d-95d/databases/(default)/documents/pendingInvites/ada%40example.com/shares/owner-1', fields: { ownerUid: { stringValue: 'owner-1' } } },
+      { name: 'projects/project-071ee00e-4a4a-4a3d-95d/databases/(default)/documents/pendingInvites/bob%40example.com/shares/owner-2', fields: { ownerUid: { stringValue: 'owner-2' } } }
+    ] : [
+      { name: 'projects/project-071ee00e-4a4a-4a3d-95d/databases/(default)/documents/pendingInvites/bob%40example.com/shares/owner-2', fields: { ownerUid: { stringValue: 'owner-2' } } }
+    ];
+    return { code: 200, text: JSON.stringify(docs.map(document => ({ document }))) };
+  };
+  const first = app.context.fsQueryInvitationPage(1, '');
+  assert.equal(first.items.length, 1);
+  assert.equal(first.items[0].email, 'ada@example.com');
+  assert.equal(first.items[0].ownerUid, 'owner-1');
+  assert.equal(first.hasMore, true);
+  const second = app.context.fsQueryInvitationPage(1, first.nextCursor);
+  assert.equal(second.items[0].ownerUid, 'owner-2');
+  assert.equal(requests[0].body.structuredQuery.from[0].allDescendants, true);
+  assert.equal(requests[0].body.structuredQuery.where.fieldFilter.field.fieldPath, 'inviteeEmail');
+  assert.equal(requests[0].body.structuredQuery.where.fieldFilter.op, 'NOT_EQUAL');
+  assert.equal(requests[1].body.structuredQuery.startAt.before, false);
+});
+test('admin relationship branches filter by inviter UID on Firestore before paging', () => {
+  const app = harness();
+  let query;
+  app.context.fsFetch = (_url, method, body) => {
+    assert.equal(method, 'post');
+    query = body.structuredQuery;
+    return { code: 200, text: JSON.stringify([]) };
+  };
+  const page = app.context.fsQueryFilteredPage('users', 'invitedByUid', 'parent-uid', 25, '');
+  assert.deepEqual(JSON.parse(JSON.stringify(query.where)), {
+    fieldFilter: { field: { fieldPath: 'invitedByUid' }, op: 'EQUAL', value: { stringValue: 'parent-uid' } }
+  });
+  assert.equal(page.items.length, 0);
+});
+
+test('server-side invitation and share filters are encoded as Firestore field filters', () => {
+  const app = harness();
+  const queries = [];
+  app.context.fsFetch = (_url, _method, body) => {
+    queries.push(body.structuredQuery);
+    return { code: 200, text: JSON.stringify([]) };
+  };
+  app.context.fsQueryInvitationPage(25, '', 'pending');
+  app.context.fsQueryFilteredPage('libraryShares', 'active', false, 25, '');
+  assert.equal(queries[0].where.fieldFilter.field.fieldPath, 'claimedUid');
+  assert.equal(queries[0].where.fieldFilter.op, 'EQUAL');
+  assert.deepEqual(JSON.parse(JSON.stringify(queries[0].where.fieldFilter.value)), { nullValue: null });
+  assert.equal(queries[1].where.fieldFilter.field.fieldPath, 'active');
+  assert.deepEqual(JSON.parse(JSON.stringify(queries[1].where.fieldFilter.value)), { booleanValue: false });
+});
+test('participant page status flags are fetched in two bounded IN queries, not N+1 reads', () => {
+  const app = harness();
+  const requests = [];
+  app.context.fsFetch = (_url, method, body) => {
+    requests.push({ method, body });
+    const path = body.structuredQuery.from[0].collectionId;
+    return { code: 200, text: JSON.stringify(path === 'bannedUsers' ? [{ document: { name: 'projects/project-071ee00e-4a4a-4a3d-95d/databases/(default)/documents/bannedUsers/u1' } }] : []) };
+  };
+  const flags = app.context.fsGetAdminUserFlags(['u1', 'u2', 'u3']);
+  assert.equal(requests.length, 2);
+  assert(requests.every(request => request.method === 'post'));
+  assert(requests.every(request => request.body.structuredQuery.where.fieldFilter.op === 'IN'));
+  assert(flags.banned.has('u1'));
+  assert.equal(flags.admins.size, 0);
+});
+test('relationship root pages request only users without an inviter', () => {
+  const app = harness();
+  let query;
+  app.context.fsFetch = (_url, _method, body) => {
+    query = body.structuredQuery;
+    return { code: 200, text: JSON.stringify([]) };
+  };
+  app.context.fsQueryFilteredPage('users', 'invitedByUid', null, 25, '');
+  assert.equal(query.where.fieldFilter.field.fieldPath, 'invitedByUid');
+  assert.equal(query.where.fieldFilter.op, 'EQUAL');
+  assert.deepEqual(JSON.parse(JSON.stringify(query.where.fieldFilter.value)), { nullValue: null });
+});
+test('admin cursor rejects a cursor belonging to another collection', () => {
+  const app = harness();
+  const cursor = Buffer.from(JSON.stringify({ path: 'adminUsers', id: 'x', name: 'projects/project-071ee00e-4a4a-4a3d-95d/databases/(default)/documents/adminUsers/x' })).toString('base64url');
+  assert.throws(() => app.context.fsQueryPage('users', 25, cursor), /Некорректный курсор страницы/);
+});
 test('sends only after Firebase identity and owner-scoped Firestore reads are valid', () => {
   const app = harness();
   const result = app.invoke();
