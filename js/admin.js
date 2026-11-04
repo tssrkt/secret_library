@@ -4,9 +4,9 @@ import { INVITATION_MAILER_URL } from './config.js';
 
 const $ = (selector) => document.querySelector(selector);
 const authPanel = $('#auth'), dashboard = $('#dashboard'), status = $('#status'), stats = $('#stats'), tabs = $('#tabs'), content = $('#content');
-let session, call, data, activeTab = 'overview';
+let session, call, data, activeTab = 'users';
 const sections = [
-  ['overview','Обзор'],['users','Участники'],['relationships','Связи'],['invites','Приглашения'],
+  ['users','Участники'],['relationships','Связи'],['invites','Приглашения'],
   ['shares','Доступ к библиотекам'],['events','Журнал событий'],['banned','Забаненные'],['admins','Администраторы'],['texts','Тексты']
 ];
 const label = (value) => value == null || value === '' ? '—' : String(value);
@@ -366,12 +366,9 @@ function renderTexts() {
 
 function render() {
   const allowed = sections.filter(([key]) => data.permissions?.[key]).map(([key]) => key);
-  if (!allowed.includes(activeTab)) activeTab = allowed[0] || 'overview';
+  if (!allowed.includes(activeTab)) activeTab = allowed[0] || 'users';
   renderStats(); renderTabs(); content.replaceChildren();
-  if(activeTab==='overview') {
-    content.append(node('h2','Обзор'),node('p','Сводные показатели отображаются выше. «Обновить данные» повторно загружает их и списки из административного сервиса; автоматического обновления в фоне нет.'));
-    content.append(button('Обновить данные',()=>refresh()));
-  } else if(activeTab==='users') renderUsers();
+  if(activeTab==='users') renderUsers();
   else if(activeTab==='relationships') renderRelations();
   else if(activeTab==='invites') renderInvites();
   else if(activeTab==='shares') renderShares();
@@ -395,4 +392,5 @@ async function login() {
   } catch(e) { say(e?.message||'Не удалось войти. Проверьте права администратора.',true); if(!dashboard.classList.contains('hidden')){} else {const p=node('p',e?.message||'Нет доступа','error');authPanel.append(p);} }
   finally { $('#login').disabled=false; }
 }
+$('#refresh-data').addEventListener('click', () => refresh());
 $('#login').addEventListener('click',login);
