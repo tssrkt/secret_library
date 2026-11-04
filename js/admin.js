@@ -7,13 +7,29 @@ const authPanel = $('#auth'), dashboard = $('#dashboard'), status = $('#status')
 let session, call, data, activeTab = 'overview';
 const sections = [
   ['overview','Обзор'],['users','Участники'],['relationships','Связи'],['invites','Приглашения'],
-  ['shares','Доступ к библиотекам'],['events','Журнал событий'],['banned','Забаненные'],['admins','Администраторы и права'],['texts','Тексты']
+  ['shares','Доступ к библиотекам'],['events','Журнал событий'],['banned','Забаненные'],['admins','Администраторы'],['texts','Тексты']
 ];
 const label = (value) => value == null || value === '' ? '—' : String(value);
 function dateLabel(value) {
   if (!value) return '—';
   const date = value?.toDate ? value.toDate() : new Date(value);
   return Number.isNaN(date.getTime()) ? '—' : date.toLocaleString('ru-RU');
+}
+function invitationEmailStatus(invite) {
+  const statuses = {
+    sent: 'Отправлено',
+    sending: 'Отправляется',
+    failed: 'Ошибка отправки',
+    'not-needed': 'Письмо не требовалось'
+  };
+  if (statuses[invite.emailStatus]) return statuses[invite.emailStatus];
+  if (invite.emailSentAt) return 'Отправлено';
+  return 'Нет данных (старая запись)';
+}
+function invitationActionState(invite) {
+  if (invite.claimedUid) return 'Принято';
+  if (invite.active === false) return 'Отозвано';
+  return null;
 }
 function gasRequest(action, payload) {
   if (!INVITATION_MAILER_URL) return Promise.reject(new Error('Не настроен адрес административного сервиса.'));
@@ -58,6 +74,27 @@ function table(headers, rows) {
   headers.forEach(h => hr.append(node('th', h))); if (headers.length) thead.append(hr); t.append(thead, body);
   rows.forEach(row => { const tr = node('tr'); row.forEach(value => { const td = node('td'); if (value instanceof Node) td.append(value); else td.textContent = label(value); tr.append(td); }); body.append(tr); });
   return t;
+}
+function paginatedTable(headers, rows, pageSize = 25) {
+  const wrap = node('div', null, 'paginated-list');
+  let page = 0;
+  const renderPage = () => {
+    const pageCount = Math.max(1, Math.ceil(rows.length / pageSize));
+    page = Math.min(page, pageCount - 1);
+    wrap.replaceChildren(table(headers, rows.slice(page * pageSize, (page + 1) * pageSize)));
+    const controls = node('div', null, 'pagination');
+    const start = rows.length ? page * pageSize + 1 : 0;
+    const end = Math.min((page + 1) * pageSize, rows.length);
+    controls.append(node('span', `${start}–${end} из ${rows.length}`));
+    const previous = button('← Назад', () => { page--; renderPage(); }, 'secondary');
+    previous.disabled = page === 0;
+    const next = button('Далее →', () => { page++; renderPage(); }, 'secondary');
+    next.disabled = page >= pageCount - 1;
+    controls.append(previous, next);
+    wrap.append(controls);
+  };
+  renderPage();
+  return wrap;
 }
 function details(name, email, uid) {
   const d = node('div');
@@ -145,9 +182,13 @@ function renderUsers() {
   users.forEach(u => { if (u.invitedByUid && byUid.has(u.invitedByUid)) { const arr=children.get(u.invitedByUid)||[]; arr.push(u); children.set(u.invitedByUid,arr); } });
   const rows = users.map(u => {
     const who = userLink(u);
-    const rel = node('div');
-    const inviterLine = node('div'); inviterLine.append(document.createTextNode('Пригласитель: '), byUid.has(u.invitedByUid) ? userLink(byUid.get(u.invitedByUid)) : node('span', u.invitedByUid || '—')); rel.append(inviterLine);
-    const invitedLine = node('div'); invitedLine.append(document.createTextNode('Приглашённые: '), userLinks(children.get(u.uid) || [])); rel.append(invitedLine);
+    const rel = node('div', null, 'user-invitations');
+    const inviterLine = node('div', null, 'inviter-line'); inviterLine.append(document.createTextNode('Пригласитель: '), byUid.has(u.invitedByUid) ? userLink(byUid.get(u.invitedByUid)) : node('span', u.invitedByUid || '—')); rel.append(inviterLine);
+    const invited = children.get(u.uid) || [];
+    const invitedLine = node('div', null, invited.length ? 'invited-line' : 'invited-empty');
+    if (invited.length) invitedLine.append(document.createTextNode('Приглашённые: '), userLinks(invited));
+    else invitedLine.textContent = 'Приглашенных нет.';
+    rel.append(invitedLine);
     const statusText = u.banned ? 'Забанен' : u.admin ? 'Администратор' : 'Активен';
     const actions = node('div',null,'actions');
     if (u.uid !== superAdminUid) {
@@ -215,34 +256,48 @@ function renderRelations() {
   content.append(tree);
   content.append(node('h3','Алфавитный список и типы отношений'));
   const active = (data.shares||[]).filter(s=>s.active);
-  content.append(table(['Участник','Пригласитель','Приглашённые','Связи доступа'],[...(data.users||[])].sort((a,b)=>(a.displayName||'').localeCompare(b.displayName||'','ru')).map(u=>{
-    const invited=(data.users||[]).filter(x=>x.invitedByUid===u.uid);
-    const outgoing=active.filter(s=>s.ownerUid===u.uid).map(s=>s.viewerUid);
-    const incoming=active.filter(s=>s.viewerUid===u.uid).map(s=>s.ownerUid);
-    const others=new Set([...outgoing,...incoming]);
+  const users = data.users || [];
+  const invitedByUid = new Map();
+  const outgoingByUid = new Map();
+  const incomingByUid = new Map();
+  users.forEach(u => invitedByUid.set(u.uid, []));
+  users.forEach(u => { if (u.invitedByUid && invitedByUid.has(u.invitedByUid)) invitedByUid.get(u.invitedByUid).push(u); });
+  active.forEach(s => {
+    if (!outgoingByUid.has(s.ownerUid)) outgoingByUid.set(s.ownerUid, new Set());
+    if (!incomingByUid.has(s.viewerUid)) incomingByUid.set(s.viewerUid, new Set());
+    outgoingByUid.get(s.ownerUid).add(s.viewerUid);
+    incomingByUid.get(s.viewerUid).add(s.ownerUid);
+  });
+  const alphabeticRows = [...users].sort((a,b)=>(a.displayName||'').localeCompare(b.displayName||'','ru')).map(u=>{
+    const invited = invitedByUid.get(u.uid) || [];
+    const outgoing = outgoingByUid.get(u.uid) || new Set();
+    const incoming = incomingByUid.get(u.uid) || new Set();
+    const others = new Set([...outgoing, ...incoming]);
     const grouped = { mutual: [], outgoing: [], incoming: [] };
     [...others].forEach(other => {
-      const out=outgoing.includes(other), inc=incoming.includes(other), otherUser=(data.users||[]).find(x=>x.uid===other)||{uid:other};
+      const out=outgoing.has(other), inc=incoming.has(other), otherUser=byUid.get(other)||{uid:other};
       if (out && inc) grouped.mutual.push(otherUser);
       else if (out) grouped.outgoing.push(otherUser);
       else grouped.incoming.push(otherUser);
     });
     const types = node('div');
-    const addType = (title, users) => { if (!users.length) return; const line = node('div'); line.append(document.createTextNode(title+': '),userLinks(users)); types.append(line); };
+    const addType = (title, people) => { if (!people.length) return; const line = node('div'); line.append(document.createTextNode(title+': '),userLinks(people)); types.append(line); };
     addType('Взаимные',grouped.mutual); addType('Делится',grouped.outgoing); addType('Пользуется',grouped.incoming);
     const userName=node('div'); userName.append(userLink(u));
     return [userName,byUid.has(u.invitedByUid) ? userLink(byUid.get(u.invitedByUid)) : (u.invitedByUid || '—'),userLinks(invited),types.childNodes.length ? types : '—'];
-  })));
+  });
+  content.append(paginatedTable(['Участник','Пригласитель','Приглашённые','Связи доступа'],alphabeticRows));
   content.append(node('h3','Отдельные связи доступа'));
-  content.append(table(['Владелец библиотеки','Пользователь','Доступ'],(data.shares||[]).map(s=>[
+  const shareRows = (data.shares||[]).map(s=>[
     userLink(byUid.get(s.ownerUid),s.ownerUid),
     userLink(byUid.get(s.viewerUid),s.viewerUid),s.active?'Активен':'Закрыт'
-  ])));
+  ]);
+  content.append(paginatedTable(['Владелец библиотеки','Пользователь','Доступ'],shareRows));
 }
 function renderInvites() {
   content.append(table(['Адрес приглашения','Пригласитель UID','Приглашённый UID','Статус письма','Создано','Действие'],(data.invitations||[]).map(i=>[
-    i.email,userLink((data.users||[]).find(u=>u.uid===i.ownerUid)||{uid:i.ownerUid},i.ownerUid),i.claimedUid ? userLink((data.users||[]).find(u=>u.uid===i.claimedUid)||{uid:i.claimedUid},i.claimedUid) : 'Не принято',i.emailStatus||'—',dateLabel(i.createdAt),
-    !i.claimedUid && i.active!==false ? button('Отменить приглашение',async()=>{if(!confirm('Отменить это приглашение?'))return;try{await call('adminRevokeInvitation')({email:i.email,ownerUid:i.ownerUid||i.id});await refresh();}catch(e){say(e?.message||'Не удалось отменить приглашение.',true);}},'danger') : '—'
+    i.email,userLink((data.users||[]).find(u=>u.uid===i.ownerUid)||{uid:i.ownerUid},i.ownerUid),i.claimedUid ? userLink((data.users||[]).find(u=>u.uid===i.claimedUid)||{uid:i.claimedUid},i.claimedUid) : 'Не принято',invitationEmailStatus(i),dateLabel(i.createdAt),
+    invitationActionState(i) || button('Отменить приглашение',async()=>{if(!confirm('Отменить это приглашение?'))return;try{await call('adminRevokeInvitation')({email:i.email,ownerUid:i.ownerUid||i.id});await refresh();}catch(e){say(e?.message||'Не удалось отменить приглашение.',true);}},'danger')
   ])));
 }
 function renderShares() {
@@ -267,7 +322,7 @@ function renderBanned() {
   ])));
 }
 function renderAdminEditor(user=null) {
-  content.replaceChildren(node('h2',user?'Права модератора':'Администраторы и права'));
+  content.replaceChildren(node('h2',user?'Права модератора':'Администраторы'));
   if(user) {
     const existing=(data.admins||[]).find(a=>a.uid===user.uid);
     if(existing?.role==='superadmin'){content.append(node('p','Права главного администратора нельзя изменить здесь.'));return;}
@@ -314,7 +369,7 @@ function render() {
   if (!allowed.includes(activeTab)) activeTab = allowed[0] || 'overview';
   renderStats(); renderTabs(); content.replaceChildren();
   if(activeTab==='overview') {
-    content.append(node('h2','Обзор'),node('p','Приглашения и зарегистрированные участники считаются отдельно. Заблокированный участник сохраняет профиль и связи.'));
+    content.append(node('h2','Обзор'),node('p','Сводные показатели отображаются выше. «Обновить данные» повторно загружает их и списки из административного сервиса; автоматического обновления в фоне нет.'));
     content.append(button('Обновить данные',()=>refresh()));
   } else if(activeTab==='users') renderUsers();
   else if(activeTab==='relationships') renderRelations();
