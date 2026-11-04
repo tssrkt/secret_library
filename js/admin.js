@@ -59,7 +59,13 @@ function table(headers, rows) {
   rows.forEach(row => { const tr = node('tr'); row.forEach(value => { const td = node('td'); if (value instanceof Node) td.append(value); else td.textContent = label(value); tr.append(td); }); body.append(tr); });
   return t;
 }
-function details(name, email, uid) { const d = node('div'); d.append(node('strong', name || 'Без имени'), node('small', email || uid)); return d; }
+function details(name, email, uid) {
+  const d = node('div');
+  d.append(node('p', name || 'Без имени'));
+  if (email) d.append(node('p', email));
+  d.append(node('p', 'UID: ' + uid));
+  return d;
+}
 function userLink(user, fallbackUid = '') {
   const uid = user?.uid || fallbackUid;
   if (!uid) return node('span', user?.displayName || user?.email || '—');
