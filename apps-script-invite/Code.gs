@@ -330,8 +330,10 @@ function getAdminDashboardApi(actor) {
     ...item, email: inv.id
   }))) : [];
   const shares = p.shares || p.relationships ? fsList('libraryShares') : [];
+  const directory = p.users || p.relationships ? fsList('userDirectory') : [];
+  const emailByUid = new Map(directory.filter(item => item.uid && item.id).map(item => [item.uid, item.id]));
   const events = p.events ? fsList('adminEvents').sort((a,b) => String(b.createdAt || '').localeCompare(String(a.createdAt || ''))).slice(0, 100) : [];
-  const userRows = users.map(u => ({ ...u, uid: u.id, banned: banned.some(b => b.id === u.id), admin: admins.some(a => a.id === u.id) }));
+  const userRows = users.map(u => ({ ...u, uid: u.id, email: emailByUid.get(u.id) || '', banned: banned.some(b => b.id === u.id), admin: admins.some(a => a.id === u.id) }));
   return {
     permissions: p,
     counts: {
