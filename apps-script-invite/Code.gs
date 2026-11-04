@@ -68,10 +68,7 @@ function doPost(e) {
     MailApp.sendEmail({
       to: email,
       subject: 'Приглашение в «Тайную Библиотеку»',
-      body: 'Доброго времени суток!\n\n' + inviterName +
-        ' приглашает вас в Тайное Общество Вольных Библиотекарей!\n\nЧтобы принять приглашение, откройте сайт и войдите через Google с адресом ' + email + ':\n' +
-        'https://tssrkt.github.io/secret_library/\n\nО том, как устроена библиотека, можно прочитать здесь:\n' +
-        'https://tssrkt.github.io/secret_library/info.html\n\nЕсли письмо потерялось, пригласитель сможет отправить его повторно.\n\nДобро пожаловать в Тайную Библиотеку!',
+      body: renderInvitationEmailTemplate(inviterName),
       name: 'Тайная Библиотека'
     });
 
@@ -307,7 +304,7 @@ function responsePage(requestId, ok, message, data) {
 }
 
 const ADMIN_EMAIL_ADDRESS = 'tssrkt777@gmail.com';
-const ADMIN_SECTIONS_API = ['overview', 'users', 'relationships', 'invites', 'shares', 'events', 'banned', 'admins'];
+const ADMIN_SECTIONS_API = ['overview', 'users', 'relationships', 'invites', 'shares', 'events', 'banned', 'admins', 'texts'];
 const FIRESTORE_REST_ROOT = 'https://firestore.googleapis.com/v1/projects/' +
   FIREBASE_PROJECT_ID + '/databases/(default)/documents/';
 
@@ -339,6 +336,7 @@ function handleAdminRequest(input) {
   const actor = requireAdminApi(user.localId);
   switch (action) {
     case 'getAdminDashboard': return getAdminDashboardApi(actor);
+    case 'setInvitationEmailTemplate': return setInvitationEmailTemplateApi(actor, data);
     case 'setAdminPermissions': return setAdminPermissionsApi(actor, data);
     case 'banLibraryUser': return banLibraryUserApi(actor, data);
     case 'restoreLibraryUser': return restoreLibraryUserApi(actor, data);
@@ -388,8 +386,37 @@ function getAdminDashboardApi(actor) {
     shares: p.shares || p.relationships ? shares : [],
     admins: p.admins ? admins : [],
     banned: p.banned ? banned : [],
-    events: p.events ? events : []
+    events: p.events ? events : [],
+    invitationEmailTemplate: p.texts ? getInvitationEmailTemplate() : null
   };
+}
+
+function getInvitationEmailTemplate() {
+  const saved = fsGet('systemSettings/invitationEmail');
+  return typeof saved?.body === 'string' ? saved.body : [
+    'Доброго времени суток!',
+    '',
+    '{{inviterName}} приглашает вас в Тайное Общество Вольных Библиотекарей! О том, как вступить в наш закрытый клуб и какие плюшки вы от этого получите, можно прочитать здесь:',
+    '',
+    'https://tssrkt.github.io/secret_library/info.html',
+    '',
+    'Добро пожаловать в Тайную Библиотеку!'
+  ].join('\n');
+}
+
+function renderInvitationEmailTemplate(inviterName) {
+  return getInvitationEmailTemplate().replace(/\{\{\s*inviterName\s*\}\}/g, inviterName);
+}
+
+function setInvitationEmailTemplateApi(actor, data) {
+  requireAdminApi(actor.uid, 'texts');
+  const body = typeof data.body === 'string' ? data.body.trim() : '';
+  if (!body || body.length > 10000 || !body.includes('{{inviterName}}')) {
+    throw new Error('Текст должен содержать {{inviterName}} — место для имени пригласителя; максимум 10 000 символов.');
+  }
+  fsSet('systemSettings/invitationEmail', { body, updatedAt: new Date(), updatedBy: actor.uid });
+  fsAddEvent(actor.uid, 'update-invitation-email-template', null, { length: body.length });
+  return { ok: true, body };
 }
 
 function setAdminPermissionsApi(actor, data) {

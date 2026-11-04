@@ -7,7 +7,7 @@ const authPanel = $('#auth'), dashboard = $('#dashboard'), status = $('#status')
 let session, call, data, activeTab = 'overview';
 const sections = [
   ['overview','Обзор'],['users','Участники'],['relationships','Связи'],['invites','Приглашения'],
-  ['shares','Доступ к библиотекам'],['events','Журнал событий'],['banned','Забаненные'],['admins','Администраторы и права']
+  ['shares','Доступ к библиотекам'],['events','Журнал событий'],['banned','Забаненные'],['admins','Администраторы и права'],['texts','Тексты']
 ];
 const label = (value) => value == null || value === '' ? '—' : String(value);
 function dateLabel(value) {
@@ -284,6 +284,31 @@ function renderAdminEditor(user=null) {
   ])));
   content.append(node('p','Назначение модератора доступно из раздела «Участники».'));
 }
+function renderTexts() {
+  content.replaceChildren();
+  content.append(node('h2', 'Тексты'));
+  content.append(node('p', 'Редактирование текста пригласительного письма. Имя пригласителя подставляется автоматически.'));
+  const fieldLabel = node('label', 'Текст письма');
+  fieldLabel.style.display = 'block';
+  const editor = node('textarea');
+  editor.value = data.invitationEmailTemplate || '';
+  editor.rows = 12;
+  editor.maxLength = 10000;
+  editor.style.width = '100%';
+  editor.style.boxSizing = 'border-box';
+  editor.setAttribute('aria-label', 'Текст пригласительного письма');
+  const hint = node('p', 'В месте, где должно появиться имя пригласителя, оставь {{inviterName}}. Максимум 10 000 символов.');
+  fieldLabel.append(editor);
+  content.append(fieldLabel, hint);
+  content.append(button('Сохранить текст', async () => {
+    const body = editor.value;
+    const result = await call('setInvitationEmailTemplate')({ body });
+    data.invitationEmailTemplate = result.body || body;
+    say('Текст пригласительного письма сохранён.');
+    renderTexts();
+  }, 'primary'));
+}
+
 function render() {
   const allowed = sections.filter(([key]) => data.permissions?.[key]).map(([key]) => key);
   if (!allowed.includes(activeTab)) activeTab = allowed[0] || 'overview';
@@ -298,6 +323,7 @@ function render() {
   else if(activeTab==='events') renderEvents();
   else if(activeTab==='banned') renderBanned();
   else if(activeTab==='admins') renderAdminEditor();
+  else if(activeTab==='texts') renderTexts();
 }
 async function login() {
   $('#login').disabled=true;
