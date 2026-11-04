@@ -102,7 +102,9 @@ function renderUserCard(uid) {
     ['Делится', outgoing.length ? outgoing.map(s => `${personLabel(s.viewerUid)}${s.active ? '' : ' (доступ отозван)'}`).join(', ') : '—']
   ];
   content.replaceChildren(node('h2', 'Карточка пользователя'), button('← Назад к списку', () => render(), 'secondary'));
-  content.append(table([], rows.map(([field, value]) => [node('strong', field), value])));
+  const cardTable = table([], rows.map(([field, value]) => [node('strong', field), value]));
+  cardTable.style.width = 'auto';
+  content.append(cardTable);
   const actions = node('div', null, 'actions');
   actions.append(button('Скопировать UID', async () => { await navigator.clipboard.writeText(uid); say('UID скопирован.'); }));
   if (data.permissions?.admins && !user.banned && !admin) actions.append(button('Назначить администратором', () => { activeTab = 'admins'; renderAdminEditor(user); }));
