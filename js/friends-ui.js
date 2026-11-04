@@ -1,6 +1,27 @@
 import { createPaginator, paginateItems } from './pagination.js';
 import { socialError } from './social-runtime.js';
 
+const HOUR_MS = 60 * 60 * 1000;
+
+function timestampMillis(value) {
+  if (typeof value?.toMillis === 'function') return value.toMillis();
+  if (typeof value === 'number') return value;
+  if (typeof value === 'string') return Date.parse(value) || 0;
+  return 0;
+}
+
+function formatDuration(milliseconds) {
+  const seconds = Math.max(0, Math.ceil(milliseconds / 1000));
+  const minutes = Math.floor(seconds / 60);
+  const remainder = seconds % 60;
+  return minutes ? `${minutes} мин ${remainder} сек` : `${remainder} сек`;
+}
+
+function formatDate(value) {
+  const time = timestampMillis(value);
+  return time ? new Date(time).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—';
+}
+
 export function mountFriends(page, social, retry, openLibrary = (uid) => { window.location.href = `?library=${encodeURIComponent(uid)}`; }) {
   const shareSection = document.createElement('section');
   shareSection.className = 'social-section';
@@ -8,19 +29,125 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
   const friendsSection = document.createElement('section');
   friendsSection.className = 'social-section friends-section';
   friendsSection.innerHTML = '<h3>Друзья</h3><p class="friends-count" role="status"></p><div class="friends-table-container"></div>';
-  page.append(shareSection, friendsSection);
+  const invitationsSection = document.createElement('section');
+  invitationsSection.className = 'social-section sent-invitations-section';
+  invitationsSection.innerHTML = '<h3>Отправленные приглашения</h3><p>Если друг не видит приглашения, пусть проверит папку «Спам».</p><p class="sent-invitations-message" role="status"></p><div class="sent-invitations-table-container"></div>';
+  page.append(shareSection, friendsSection, invitationsSection);
   const form = shareSection.querySelector('form');
   const submit = form.querySelector('button');
   const message = shareSection.querySelector('[role=status]');
   const retryButton = shareSection.querySelector('[data-social-retry]');
+  const invitationsMessage = invitationsSection.querySelector('.sent-invitations-message');
   retryButton.addEventListener('click', retry);
-  let snapshot = { friends: [], status: 'idle' };
+  let snapshot = { friends: [], invitations: [], status: 'idle' };
   let pageNumber = 1;
   let sending = false;
   let closed = false;
   let lastSyncSignature = null;
+  let invitationStatusSignature = null;
+  let statusRefreshRevision = 0;
+  let invitationStatuses = {};
   let serviceMessage = '';
   const busy = new Set();
+  let cooldownButtons = [];
+  const updateCooldowns = () => {
+    const now = Date.now();
+    for (const item of cooldownButtons) {
+      const remaining = Math.max(0, item.sentAt + HOUR_MS - now);
+      const cooling = remaining > 0;
+      item.button.disabled = cooling || busy.has(item.email) || snapshot.status !== 'ready';
+      item.wrapper.title = cooling ? `Повторная отправка будет возможна через ${formatDuration(remaining)}` : '';
+      item.wrapper.setAttribute('aria-label', item.wrapper.title || 'Пригласить ещё раз');
+    }
+  };
+  const renderInvitations = () => {
+    const container = invitationsSection.querySelector('.sent-invitations-table-container');
+    const table = document.createElement('table');
+    table.className = 'sent-invitations-table';
+    table.innerHTML = '<thead><tr><th scope="col">Пользователь</th><th scope="col">Дата отправки</th><th scope="col">Действие</th></tr></thead><tbody></tbody>';
+    cooldownButtons = [];
+    const lastSentTime = (invite) => {
+      const email = String(invite.inviteeEmail || '').trim().toLowerCase();
+      return invitationStatuses[email] ? Number(invitationStatuses[email].lastSentAt) || 0 : timestampMillis(invite.emailSentAt || invite.createdAt);
+    };
+    const invitations = [...(snapshot.invitations || [])].sort((a, b) => lastSentTime(b) - lastSentTime(a));
+    for (const invite of invitations) {
+      const email = String(invite.inviteeEmail || '').trim().toLowerCase();
+      if (!email) continue;
+      const row = document.createElement('tr');
+      const user = document.createElement('td');
+      user.textContent = email;
+      user.className = 'sent-invitation-user';
+      const status = invitationStatuses[email];
+      const sentAt = status ? Number(status.lastSentAt) || 0 : timestampMillis(invite.emailSentAt || invite.createdAt);
+      const sentDate = document.createElement('td');
+      sentDate.textContent = sentAt ? formatDate(sentAt) : 'Ещё не отправлено';
+      const action = document.createElement('td');
+      const wrapper = document.createElement('span');
+      wrapper.className = 'invitation-resend-tooltip';
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'settings-save-button';
+      button.textContent = 'ПРИГЛАСИТЬ ЕЩЁ РАЗ';
+      button.addEventListener('click', async () => {
+        if (busy.has(email) || snapshot.status !== 'ready') return;
+        const currentStatus = invitationStatuses[email];
+        const sentAt = currentStatus ? Number(currentStatus.lastSentAt) || 0 : timestampMillis(invite.emailSentAt || invite.createdAt);
+        if (sentAt && Date.now() < sentAt + HOUR_MS) return;
+        if (typeof social.resendInvitation !== 'function') {
+          invitationsMessage.textContent = 'Повторная отправка пока недоступна. Обновите страницу и попробуйте снова.';
+          return;
+        }
+        busy.add(email);
+        updateCooldowns();
+        invitationsMessage.textContent = '';
+        try {
+          invitationsMessage.textContent = await social.resendInvitation(email);
+          if (invitationsMessage.textContent === 'Приглашение отправлено.') await refreshInvitationStatuses();
+        } catch (error) {
+          invitationsMessage.textContent = socialError(error);
+        } finally {
+          busy.delete(email);
+          updateCooldowns();
+        }
+      });
+      wrapper.append(button);
+      action.append(wrapper);
+      row.append(user, sentDate, action);
+      table.querySelector('tbody').append(row);
+      cooldownButtons.push({ email, sentAt, button, wrapper });
+    }
+    if (!table.querySelector('tbody').children.length) {
+      const row = document.createElement('tr');
+      const cell = document.createElement('td');
+      cell.colSpan = 3;
+      cell.textContent = 'Отправленных приглашений, ожидающих регистрации, нет.';
+      row.append(cell);
+      table.querySelector('tbody').append(row);
+    }
+    container.replaceChildren(table);
+    updateCooldowns();
+  };
+  async function refreshInvitationStatuses(extraEmails = []) {
+    if (typeof social.getInvitationStatuses !== 'function') return;
+    const revision = ++statusRefreshRevision;
+    const emails = [...new Set([...(snapshot.invitations || []).map((invite) => String(invite.inviteeEmail || '').trim().toLowerCase()), ...extraEmails.map((email) => String(email || '').trim().toLowerCase())].filter(Boolean))];
+    if (!emails.length) { invitationStatuses = {}; renderInvitations(); return; }
+    try {
+      const next = {};
+      for (let offset = 0; offset < emails.length; offset += 100) {
+        Object.assign(next, await social.getInvitationStatuses(emails.slice(offset, offset + 100)));
+      }
+      if (closed || revision !== statusRefreshRevision) return;
+      invitationStatuses = next;
+      renderInvitations();
+    } catch (error) {
+      if (!closed && revision === statusRefreshRevision) {
+        invitationsMessage.textContent = socialError(error);
+        renderInvitations();
+      }
+    }
+  }
   const render = () => {
     const paged = paginateItems(snapshot.friends, pageNumber, 50);
     pageNumber = paged.currentPage;
@@ -71,17 +198,21 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
     const paginator = createPaginator({ ...paged, onPageChange: (next) => { pageNumber = next; render(); } });
     paginator?.setAttribute('aria-label', 'Страницы друзей');
     container.replaceChildren(table, ...(paginator ? [paginator] : []));
+    renderInvitations();
   };
   const unsubscribe = social.subscribe((next) => {
     snapshot = next;
+    const inviteSignature = (next.invitations || []).map((invite) => String(invite.inviteeEmail || '').toLowerCase()).sort().join('|');
+    if (inviteSignature !== invitationStatusSignature) {
+      invitationStatusSignature = inviteSignature;
+      void refreshInvitationStatuses();
+    }
     submit.disabled = sending || next.status !== 'ready';
     retryButton.hidden = next.status !== 'error';
     if (next.message || message.textContent === serviceMessage) message.textContent = next.message || '';
     serviceMessage = next.message || '';
     render();
     if (next.status === 'ready') {
-      // A pending invite becomes an active friend only after the invitee registers.
-      // Re-sync when the relationship list changes, not just on the owner's first load.
       const signature = next.friends.map((friend) => `${friend.uid}:${friend.inbound ? 1 : 0}:${friend.outbound ? 1 : 0}`).sort().join('|');
       if (signature !== lastSyncSignature) {
         lastSyncSignature = signature;
@@ -94,14 +225,19 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
     if (sending || snapshot.status !== 'ready') return;
     sending = true; submit.disabled = true; message.textContent = '';
     try {
-      const result = await social.shareWithEmail(form.elements.email.value);
+      const email = form.elements.email.value;
+      const result = await social.shareWithEmail(email);
       if (!closed) {
         message.textContent = result;
-        if (result === 'Приглашение отправлено.') form.reset();
+        if (result === 'Приглашение отправлено.') {
+          form.reset();
+          void refreshInvitationStatuses([email]);
+        }
       }
     }
     catch (error) { if (!closed) message.textContent = socialError(error); }
     finally { sending = false; if (!closed) submit.disabled = snapshot.status !== 'ready'; }
   });
-  return () => { closed = true; unsubscribe(); };
+  const timer = setInterval(updateCooldowns, 1000);
+  return () => { closed = true; clearInterval(timer); unsubscribe(); };
 }

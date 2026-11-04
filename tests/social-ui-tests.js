@@ -11,6 +11,8 @@ export async function runSocialUiTests(test, assert, equal) {
     return { calls, subscribe(fn) { listeners.add(fn); fn(state); return () => listeners.delete(fn); },
       update(change) { state = { ...state, ...change }; listeners.forEach((fn) => fn(state)); },
       async syncKnownContacts() { calls.push('syncKnownContacts'); }, async shareWithEmail(email) { calls.push(email); return 'Доступ предоставлен.'; },
+      async resendInvitation(email) { calls.push(['resendInvitation', email]); return 'Приглашение отправлено.'; },
+      async getInvitationStatuses(emails) { return Object.fromEntries(emails.map((email) => [email, { lastSentAt: 0, cooldownUntil: 0 }])); },
       async setSharing(uid, active) { calls.push([uid, active]); },
       async markSeen(items) { calls.push(items); this.update({ notifications: state.notifications.map((item) => items.includes(item) ? { ...item, unread: false } : item) }); },
     };
@@ -40,6 +42,36 @@ export async function runSocialUiTests(test, assert, equal) {
       assert(social.calls.filter((call) => call === 'syncKnownContacts').length === 2, 'new friend triggers another contact sync');
     } finally { cleanup(); page.remove(); }
   });
+  await test('sent invitations show a one-hour resend cooldown and the calculated tooltip', async () => {
+    const recentPage = document.createElement('div'); document.body.append(recentPage);
+    const recentSentAt = Date.now() - 30 * 60 * 1000;
+    const recentSocial = stub({ invitations: [{ inviteeEmail: 'friend@gmail.com', active: true, createdAt: recentSentAt }] });
+    recentSocial.getInvitationStatuses = async (emails) => Object.fromEntries(emails.map((email) => [email, { lastSentAt: recentSentAt, cooldownUntil: recentSentAt + 60 * 60 * 1000 }]));
+    const cleanupRecent = mountFriends(recentPage, recentSocial, () => {});
+    try {
+      await tick(); await tick();
+      const section = recentPage.querySelector('.sent-invitations-section');
+      assert(section.textContent.includes('Если друг не видит приглашения, пусть проверит папку «Спам».'), 'spam hint visible');
+      const row = section.querySelector('tbody tr');
+      assert(row.textContent.includes('friend@gmail.com'), 'pending email appears in its own table');
+      assert(row.textContent.includes('ПРИГЛАСИТЬ ЕЩЁ РАЗ'), 'resend action label');
+      assert(row.querySelector('button').disabled, 'resend disabled during cooldown');
+      assert(row.querySelector('.invitation-resend-tooltip').title.startsWith('Повторная отправка будет возможна через '), 'calculated cooldown tooltip');
+    } finally { cleanupRecent(); recentPage.remove(); }
+
+    const oldPage = document.createElement('div'); document.body.append(oldPage);
+    const oldSentAt = Date.now() - 60 * 60 * 1000 - 1000;
+    const oldSocial = stub({ invitations: [{ inviteeEmail: 'friend@gmail.com', active: true, createdAt: oldSentAt }] });
+    oldSocial.getInvitationStatuses = async (emails) => Object.fromEntries(emails.map((email) => [email, { lastSentAt: oldSentAt, cooldownUntil: 0 }]));
+    const cleanupOld = mountFriends(oldPage, oldSocial, () => {});
+    try {
+      await tick(); await tick();
+      const button = oldPage.querySelector('.sent-invitations-section tbody button');
+      assert(!button.disabled, 'resend becomes active after one hour');
+      button.click(); await tick();
+      assert(oldSocial.calls.some((call) => Array.isArray(call) && call[0] === 'resendInvitation' && call[1] === 'friend@gmail.com'), 'click resends the same invitation');
+    } finally { cleanupOld(); oldPage.remove(); }
+  });
   await test('friends table labels administrators without displaying their email', () => {
     const page = document.createElement('div'); document.body.append(page);
     const cleanup = mountFriends(page, stub({ friends: [{ uid: 'admin', displayName: 'Library owner', isAdmin: true, email: '', inbound: true, outbound: false }] }), () => {});
@@ -56,19 +88,20 @@ export async function runSocialUiTests(test, assert, equal) {
     const openedLibraries = [];
     const cleanup = mountFriends(page, social, () => {}, (uid) => openedLibraries.push(uid));
     try {
-      equal(page.querySelectorAll('tbody tr').length, 50, 'only first 50 rows exist');
+      equal(page.querySelectorAll('.friends-table tbody tr').length, 50, 'only first 50 friend rows exist');
       assert(page.querySelector('.friends-count').textContent === 'У вас 51 друг', 'grammatical count');
-      const rows = [...page.querySelectorAll('tbody tr')];
+      const rows = [...page.querySelectorAll('.friends-table tbody tr')];
       const profileButton = rows[0].querySelector('.friend-library-button');
       assert(profileButton && profileButton.textContent.includes('User 0') && profileButton.textContent.includes('reader@gmail.com'), 'friend name and email are one library button');
       profileButton.click(); equal(openedLibraries, ['0'], 'friend library button opens the selected user');
       equal([...rows[0].children].slice(1).map((cell, i) => i < 2 ? cell.querySelector('.friend-status-mark')?.getAttribute('aria-label') : cell.textContent), ['Да', 'Нет', 'ПОДЕЛИТЬСЯ'], 'inbound only');
       equal([...rows[1].children].slice(1).map((cell, i) => i < 2 ? cell.querySelector('.friend-status-mark')?.getAttribute('aria-label') : cell.textContent), ['Нет', 'Да', 'ЗАКРЫТЬ ДОСТУП'], 'outbound only');
       equal([...rows[2].children].slice(1).map((cell, i) => i < 2 ? cell.querySelector('.friend-status-mark')?.getAttribute('aria-label') : cell.textContent), ['Да', 'Да', 'ЗАКРЫТЬ ДОСТУП'], 'mutual');
-      rows[0].querySelector('.settings-save-button').click(); await tick(); equal(social.calls[0], ['0', true], 'share action');
-      page.querySelector('[aria-label="Страница 2"]').click(); equal(page.querySelectorAll('tbody tr').length, 1, 'second page is a slice');
+      rows[0].querySelector('.settings-save-button').click(); await tick();
+      assert(social.calls.some((call) => Array.isArray(call) && call[0] === '0' && call[1] === true), 'share action');
+      page.querySelector('[aria-label="Страница 2"]').click(); equal(page.querySelectorAll('.friends-table tbody tr').length, 1, 'second page is a slice');
       social.update({ friends: friends.slice(0, 50) });
-      assert(!page.querySelector('.book-pagination') && page.querySelectorAll('tbody tr').length === 50, '50 friends no paginator, page clamps');
+      assert(!page.querySelector('.book-pagination') && page.querySelectorAll('.friends-table tbody tr').length === 50, '50 friends no paginator, page clamps');
       const form = page.querySelector('form'); form.elements.email.value = 'known@gmail.com'; form.requestSubmit(); await tick();
       assert(page.querySelector('[role=status]').textContent === 'Доступ предоставлен.', 'success not email sent');
       social.shareWithEmail = async () => { throw new Error('Connection failed'); };
@@ -83,7 +116,7 @@ export async function runSocialUiTests(test, assert, equal) {
         social.update({ friends: friends.slice(0, count) });
         equal(page.querySelector('.friends-count').textContent, expected, `Russian friend count for ${count}`);
       }
-      equal(page.querySelectorAll('tbody tr').length, 0, 'no active relationship removes row');
+      equal(page.querySelectorAll('.friends-table tbody tr').length, 0, 'no active relationship removes row');
     } finally { cleanup(); page.remove(); }
   });
   await test('settings controls use download accent, equal form heights and accessible Gmail placeholder', () => {

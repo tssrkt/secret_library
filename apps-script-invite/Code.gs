@@ -3,6 +3,7 @@ const FIREBASE_API_KEY = 'AIzaSyDXTowpjzrl6_GfzQED9ITjb7mn9Qzs5J4';
 const SITE_ORIGIN = 'https://tssrkt.github.io';
 const MAX_INVITES_PER_USER_PER_DAY = 10;
 const SENDING_LEASE_MS = 10 * 60 * 1000;
+const RESEND_COOLDOWN_MS = 60 * 60 * 1000;
 
 function doGet() {
   return HtmlService.createHtmlOutput('Тайная Библиотека: сервис приглашений готов.');
@@ -24,6 +25,10 @@ function doPost(e) {
     const input = JSON.parse(raw);
     requestId = String(input.requestId || '');
     if (!/^[a-zA-Z0-9_-]{12,80}$/.test(requestId)) throw new Error('Некорректный идентификатор запроса.');
+    if (input.action === 'getInvitationStatuses') {
+      stage = 'invitation-status-request';
+      return responsePage(requestId, true, '', handleInvitationStatuses(input));
+    }
     if (input.action) {
       adminRequest = true;
       stage = 'admin-request';
@@ -49,14 +54,10 @@ function doPost(e) {
     if (invitation.claimedUid || readUserDirectory(idToken, email)) {
       return responsePage(requestId, true, 'Пользователь уже зарегистрировался. Приглашение не требуется.');
     }
-    if (invitation.emailStatus === 'sent') {
-      return responsePage(requestId, true, 'Приглашение уже было отправлено.');
-    }
-
     stage = 'reserve-send';
-    reservation = reserveSend(user.localId, email);
-    if (reservation.status === 'sent') {
-      return responsePage(requestId, true, 'Приглашение уже было отправлено.');
+    reservation = reserveSend(user.localId, email, invitation.emailSentAt || (invitation.emailStatus === 'sent' ? invitation.createdAt : null));
+    if (reservation.status === 'cooldown') {
+      return responsePage(requestId, false, 'Повторная отправка будет возможна через ' + formatCooldown(reservation.remainingMs) + '.');
     }
     if (reservation.status === 'sending') {
       return responsePage(requestId, true, 'Приглашение уже отправляется. Подождите немного.');
@@ -68,8 +69,9 @@ function doPost(e) {
       to: email,
       subject: 'Приглашение в «Тайную Библиотеку»',
       body: 'Доброго времени суток!\n\n' + inviterName +
-        ' приглашает вас в Тайное Общество Вольных Библиотекарей! О том, как вступить в наш закрытый клуб и какие плюшки вы от этого получите, можно прочитать здесь:\n\n' +
-        'https://tssrkt.github.io/secret_library/info.html\n\nДобро пожаловать в Тайную Библиотеку!',
+        ' приглашает вас в Тайное Общество Вольных Библиотекарей!\n\nЧтобы принять приглашение, откройте сайт и войдите через Google с адресом ' + email + ':\n' +
+        'https://tssrkt.github.io/secret_library/\n\nО том, как устроена библиотека, можно прочитать здесь:\n' +
+        'https://tssrkt.github.io/secret_library/info.html\n\nЕсли письмо потерялось, пригласитель сможет отправить его повторно.\n\nДобро пожаловать в Тайную Библиотеку!',
       name: 'Тайная Библиотека'
     });
 
@@ -161,8 +163,38 @@ function readPendingInvitation(idToken, email, uid) {
       value('active', 'booleanValue') !== true) return null;
   return {
     claimedUid: value('claimedUid', 'stringValue'),
-    emailStatus: value('emailStatus', 'stringValue')
+    emailStatus: value('emailStatus', 'stringValue'),
+    emailSentAt: value('emailSentAt', 'timestampValue'),
+    createdAt: value('createdAt', 'timestampValue')
   };
+}
+
+function formatCooldown(milliseconds) {
+  const seconds = Math.max(0, Math.ceil(milliseconds / 1000));
+  const minutes = Math.floor(seconds / 60);
+  return minutes ? minutes + ' мин ' + (seconds % 60) + ' сек' : seconds + ' сек';
+}
+
+function handleInvitationStatuses(input) {
+  const idToken = String(input.idToken || '');
+  const emails = Array.isArray(input.emails) ? input.emails.slice(0, 100).map(normalizeEmail) : [];
+  if (idToken.length < 100 || idToken.length > 5000 || !emails.length || emails.some(function (email) { return !isValidEmail(email); })) {
+    throw new Error('Не удалось обновить состояние приглашений. Обновите страницу.');
+  }
+  const user = verifyFirebaseUser(idToken);
+  const properties = PropertiesService.getScriptProperties();
+  const statuses = {};
+  emails.forEach(function (email) {
+    if (email === normalizeEmail(user.email)) return;
+    const invitation = readPendingInvitation(idToken, email, user.localId);
+    if (!invitation || invitation.claimedUid) return;
+    const current = JSON.parse(properties.getProperty(reservationKey(user.localId, email)) || 'null');
+    let lastSentAt = 0;
+    if (current) lastSentAt = current.status === 'sent' ? Number(current.at) || 0 : Number(current.lastSentAt) || 0;
+    else if (invitation.emailStatus === 'sent') lastSentAt = Date.parse(invitation.emailSentAt) || Date.parse(invitation.createdAt) || 0;
+    statuses[email] = { lastSentAt: lastSentAt, cooldownUntil: lastSentAt ? lastSentAt + RESEND_COOLDOWN_MS : 0 };
+  });
+  return statuses;
 }
 
 function readUserDirectory(idToken, email) {
@@ -190,7 +222,7 @@ function reservationKey(uid, email) {
   }).join('');
 }
 
-function reserveSend(uid, email) {
+function reserveSend(uid, email, firestoreSentAt) {
   const lock = LockService.getScriptLock();
   lock.waitLock(10000);
   try {
@@ -198,7 +230,10 @@ function reserveSend(uid, email) {
     const key = reservationKey(uid, email);
     const now = Date.now();
     const current = JSON.parse(properties.getProperty(key) || 'null');
-    if (current && current.status === 'sent') return { status: 'sent' };
+    const storedSentAt = current ? (current.status === 'sent' ? Number(current.at) || 0 : Number(current.lastSentAt) || 0) : 0;
+    const firestoreTime = typeof firestoreSentAt === 'string' ? Date.parse(firestoreSentAt) || 0 : 0;
+    const lastSentAt = Math.max(storedSentAt, firestoreTime);
+    if (lastSentAt && now - lastSentAt < RESEND_COOLDOWN_MS) return { status: 'cooldown', remainingMs: RESEND_COOLDOWN_MS - (now - lastSentAt) };
     if (current && current.status === 'sending' && now - current.at < SENDING_LEASE_MS) {
       return { status: 'sending' };
     }
@@ -211,7 +246,7 @@ function reserveSend(uid, email) {
     if (recent.length >= MAX_INVITES_PER_USER_PER_DAY) {
       throw new Error('Достигнут дневной лимит приглашений. Попробуйте завтра.');
     }
-    properties.setProperty(key, JSON.stringify({ status: 'sending', at: now }));
+    properties.setProperty(key, JSON.stringify({ status: 'sending', at: now, lastSentAt: lastSentAt }));
     return { status: 'reserved', uid: uid, email: email, key: key, dailyKey: dailyKey, recent: recent };
   } finally {
     lock.releaseLock();
@@ -224,15 +259,17 @@ function finishSend(uid, email, success) {
   try {
     const properties = PropertiesService.getScriptProperties();
     const key = reservationKey(uid, email);
+    const current = JSON.parse(properties.getProperty(key) || 'null');
     if (success) {
-      properties.setProperty(key, JSON.stringify({ status: 'sent', at: Date.now() }));
+      const sentAt = Date.now();
+      properties.setProperty(key, JSON.stringify({ status: 'sent', at: sentAt, lastSentAt: sentAt }));
       const dailyKey = 'daily:' + uid;
       const recent = JSON.parse(properties.getProperty(dailyKey) || '[]')
         .filter(function (timestamp) { return Number.isFinite(timestamp) && Date.now() - timestamp < 24 * 60 * 60 * 1000; });
       recent.push(Date.now());
       properties.setProperty(dailyKey, JSON.stringify(recent));
     } else {
-      properties.setProperty(key, JSON.stringify({ status: 'failed', at: Date.now() }));
+      properties.setProperty(key, JSON.stringify({ status: 'failed', at: Date.now(), lastSentAt: Number(current?.lastSentAt) || 0 }));
     }
   } finally {
     lock.releaseLock();
@@ -247,17 +284,19 @@ function publicError(error) {
       message.indexOf('Для отправки приглашений') === 0 ||
       message.indexOf('Нельзя отправить') === 0 ||
       message.indexOf('Проверьте адрес') === 0 ||
+      message.indexOf('Не удалось обновить состояние приглашений') === 0 ||
       message.indexOf('Приглашение') === 0 ||
       message.indexOf('Не удалось проверить') === 0) return message;
   return 'Не удалось отправить приглашение. Повторите попытку позже.';
 }
 
-function responsePage(requestId, ok, message) {
+function responsePage(requestId, ok, message, data) {
   const result = JSON.stringify({
     type: 'secret-library-invite-result',
     requestId: requestId,
     ok: ok,
-    message: message
+    message: message,
+    data: data === undefined ? null : data
   }).replace(/</g, '\\u003c');
   const html = '<!doctype html><html><head><meta charset="utf-8"></head><body>' +
     '<p>Операция завершена. Вернитесь в Тайную Библиотеку.</p>' +

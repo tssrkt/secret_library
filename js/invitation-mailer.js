@@ -3,19 +3,12 @@ import { INVITATION_MAILER_URL } from './config.js';
 const RESULT_TYPE = 'secret-library-invite-result';
 const RESPONSE_TIMEOUT_MS = 60000;
 
-export function sendInvitationEmail({ email, idToken }) {
-  if (!INVITATION_MAILER_URL || !/^https:\/\/script\.google\.com\/macros\/s\/[\w-]+\/exec$/.test(INVITATION_MAILER_URL)) {
-    return Promise.reject(new Error('Сервис отправки писем ещё не настроен.'));
-  }
-  if (typeof idToken !== 'string' || !idToken) {
-    return Promise.reject(new Error('Не удалось подтвердить Google-сеанс. Повторите вход.'));
-  }
-
+function submitMailerPayload(payload, returnData = false) {
   const requestId = crypto.randomUUID();
   const frameName = `secret-library-mailer-${requestId}`;
   const frame = document.createElement('iframe');
   frame.name = frameName;
-  frame.title = 'Отправка приглашения';
+  frame.title = 'Сервис приглашений';
   frame.hidden = true;
 
   const form = document.createElement('form');
@@ -24,11 +17,11 @@ export function sendInvitationEmail({ email, idToken }) {
   form.target = frameName;
   form.hidden = true;
 
-  const payload = document.createElement('input');
-  payload.type = 'hidden';
-  payload.name = 'payload';
-  payload.value = JSON.stringify({ requestId, email, idToken });
-  form.append(payload);
+  const input = document.createElement('input');
+  input.type = 'hidden';
+  input.name = 'payload';
+  input.value = JSON.stringify({ ...payload, requestId });
+  form.append(input);
 
   return new Promise((resolve, reject) => {
     let settled = false;
@@ -38,27 +31,49 @@ export function sendInvitationEmail({ email, idToken }) {
       form.remove();
       frame.remove();
     };
-    const finish = (error, message) => {
+    const finish = (error, result) => {
       if (settled) return;
       settled = true;
       cleanup();
       if (error) reject(error);
-      else resolve(message);
+      else resolve(result);
     };
     const onMessage = (event) => {
       if (event.origin !== 'https://script.google.com' &&
           !event.origin.endsWith('.googleusercontent.com')) return;
       const data = event.data;
       if (!data || data.type !== RESULT_TYPE || data.requestId !== requestId) return;
-      if (data.ok === true) finish(null, String(data.message || 'Приглашение отправлено.'));
-      else finish(new Error(String(data.message || 'Не удалось отправить приглашение.')));
+      if (data.ok === true) finish(null, returnData ? (data.data || {}) : String(data.message || 'Приглашение отправлено.'));
+      else finish(new Error(String(data.message || 'Не удалось выполнить операцию с приглашением.')));
     };
     const timer = setTimeout(() => {
-      finish(new Error('Сервис не подтвердил отправку письма. Проверьте почту перед повторной попыткой.'));
+      finish(new Error('Сервис не подтвердил операцию. Проверьте подключение и повторите попытку.'));
     }, RESPONSE_TIMEOUT_MS);
 
     window.addEventListener('message', onMessage);
     document.body.append(frame, form);
     form.submit();
   });
+}
+
+function validateMailerRequest(idToken) {
+  if (!INVITATION_MAILER_URL || !/^https:\/\/script\.google\.com\/macros\/s\/[\w-]+\/exec$/.test(INVITATION_MAILER_URL)) {
+    throw new Error('Сервис отправки писем ещё не настроен.');
+  }
+  if (typeof idToken !== 'string' || !idToken) {
+    throw new Error('Не удалось подтвердить Google-сеанс. Повторите вход.');
+  }
+}
+
+export function sendInvitationEmail({ email, idToken }) {
+  try { validateMailerRequest(idToken); }
+  catch (error) { return Promise.reject(error); }
+  return submitMailerPayload({ email, idToken });
+}
+
+export function getInvitationStatuses({ emails, idToken }) {
+  try { validateMailerRequest(idToken); }
+  catch (error) { return Promise.reject(error); }
+  if (!Array.isArray(emails) || !emails.length) return Promise.resolve({});
+  return submitMailerPayload({ action: 'getInvitationStatuses', emails, idToken }, true);
 }

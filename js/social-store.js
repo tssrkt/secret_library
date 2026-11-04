@@ -142,7 +142,7 @@ export function createSocialStore({ db, sdk, user }) {
   }
 
   function subscribe(listener, onError) {
-    const collections = { outgoing: [], incoming: [], contacts: {}, reads: {} };
+    const collections = { outgoing: [], incoming: [], invitations: [], contacts: {}, reads: {} };
     const profiles = {};
     let revision = 0;
     let stopped = false;
@@ -156,7 +156,9 @@ export function createSocialStore({ db, sdk, user }) {
           profiles[id] = id === superAdminUid ? { ...(profile || {}), isAdmin: true } : profile;
         }));
         if (stopped || disposed || current !== revision) return;
-        listener({ friends: friendsModel(uid, shares, profiles, collections.contacts), notifications: notificationsModel(uid, shares, collections.reads, profiles) });
+        listener({ friends: friendsModel(uid, shares, profiles, collections.contacts),
+          invitations: collections.invitations.filter((item) => item.active === true && !item.claimedUid && item.inviteeEmail),
+          notifications: notificationsModel(uid, shares, collections.reads, profiles) });
       } catch (error) { if (!stopped && !disposed) onError(error); }
     };
     const watch = (target, key, map = false) => onSnapshot(target, { includeMetadataChanges: true }, (snapshot) => {
@@ -168,6 +170,7 @@ export function createSocialStore({ db, sdk, user }) {
     const stops = [
       watch(query(collection(db, 'libraryShares'), where('ownerUid', '==', uid)), 'outgoing'),
       watch(query(collection(db, 'libraryShares'), where('viewerUid', '==', uid)), 'incoming'),
+      watch(query(collectionGroup(db, 'shares'), where('ownerUid', '==', uid)), 'invitations'),
       watch(collection(db, 'users', uid, 'knownContacts'), 'contacts', true),
       watch(collection(db, 'users', uid, 'incomingShareReads'), 'reads', true),
     ];

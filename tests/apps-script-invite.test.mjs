@@ -97,11 +97,32 @@ test('sends only after Firebase identity and owner-scoped Firestore reads are va
   assert.equal(app.calls.length, 4, 'Firebase account, owner profile, invitation and recipient directory are checked');
 });
 
-test('repeated delivery does not send a duplicate message', () => {
+test('repeated delivery is blocked for one hour instead of sending a duplicate', () => {
   const app = harness();
   app.invoke();
-  app.invoke();
+  const second = app.invoke();
   assert.equal(app.sent.length, 1);
+  assert.match(second.content, /Повторная отправка будет возможна через/);
+});
+
+test('resends the same pending invitation after one hour', () => {
+  const app = harness();
+  app.invoke();
+  const key = [...app.properties.keys()].find((name) => name.startsWith('invite:'));
+  const oldTime = Date.now() - 60 * 60 * 1000 - 1000;
+  app.properties.set(key, JSON.stringify({ status: 'sent', at: oldTime, lastSentAt: oldTime }));
+  const result = app.invoke();
+  assert.equal(app.sent.length, 2);
+  assert.match(result.content, /Приглашение отправлено/);
+});
+
+test('invitation status endpoint returns the persisted cooldown timestamp for the owner only', () => {
+  const app = harness();
+  app.invoke();
+  const result = app.invoke({ action: 'getInvitationStatuses', emails: ['friend@gmail.com', 'someone-else@gmail.com'] });
+  assert.match(result.content, /"lastSentAt":\d+/);
+  assert.match(result.content, /"cooldownUntil":\d+/);
+  assert.doesNotMatch(result.content, /someone-else@gmail\.com/, 'status endpoint does not reveal invitations not owned by this user');
 });
 
 test('does not send when the Firebase email is unverified', () => {

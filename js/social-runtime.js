@@ -1,7 +1,7 @@
 import { startFirebaseSession, endFirebaseSession } from './firebase-session.js';
 import { createSocialStore } from './social-store.js';
 import { createSharedLibraryStore } from './shared-library.js';
-import { sendInvitationEmail } from './invitation-mailer.js';
+import { sendInvitationEmail, getInvitationStatuses as fetchInvitationStatuses } from './invitation-mailer.js';
 
 export function socialError(error) {
   if (error?.code?.includes('permission-denied')) return 'Нет доступа к социальным данным. Проверьте настройки Firebase и повторите попытку.';
@@ -87,6 +87,16 @@ export const social = {
     if (!isPendingInvitationResult(result)) return result;
     const idToken = await invitationUser.getIdToken();
     return sendInvitationEmail({ email, idToken });
+  },
+  async resendInvitation(email) {
+    if (!store || !invitationUser || state.status !== 'ready') throw new Error(state.message);
+    const idToken = await invitationUser.getIdToken();
+    return sendInvitationEmail({ email, idToken });
+  },
+  async getInvitationStatuses(emails) {
+    if (!store || !invitationUser || state.status !== 'ready') throw new Error(state.message);
+    const idToken = await invitationUser.getIdToken();
+    return fetchInvitationStatuses({ emails, idToken });
   },
   setSharing(uid, active) { if (!store || state.status !== 'ready') return Promise.reject(new Error(state.message)); return store.setSharing(uid, active); },
   markSeen(items) { if (!store || state.status !== 'ready') return Promise.resolve(); return store.markSeen(items); },
