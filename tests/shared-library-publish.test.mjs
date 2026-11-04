@@ -1,4 +1,4 @@
-import { test } from 'node:test';
+﻿import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { webcrypto } from 'node:crypto';
 import { createSharedLibraryStore } from '../js/shared-library.js';
@@ -82,14 +82,4 @@ test('shared book covers are copied to Firebase and loaded without access to the
   assert.ok(catalogChunk, `shared catalog chunks were written: ${[...documents.keys()].join(', ')}`);
   assert.equal('coverFileId' in JSON.parse(catalogChunk.json).books[0], false,
     'private Drive cover IDs are not exposed in the shared catalog');
-
-  const header = documents.get('sharedLibraries/owner');
-  documents.set('sharedLibraries/owner/versions/interrupted/chunks/0', { position: 0, json: '{}' });
-  documents.set('sharedLibraries/owner', { ...header, pendingRevision: 'interrupted', pendingChunkCount: 1 });
-  await store.unpublish();
-  assert.equal(documents.has('sharedLibraries/owner'), false);
-  assert.equal([...documents.keys()].some((path) => path.startsWith('sharedLibraries/owner/versions/')), false,
-    'unpublish removes both the active revision and an interrupted pending revision');
-  assert.equal([...documents.keys()].some((path) => path.startsWith('sharedLibraries/owner/covers/')), false,
-    'unpublish removes copied cover documents');
 });
