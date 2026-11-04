@@ -303,20 +303,31 @@ function renderRelations() {
   content.append(paginatedTable(['Владелец библиотеки','Пользователь','Доступ'],shareRows,25,[],shareRowClasses));
 }
 function renderInvites() {
-  content.append(table(['Адрес приглашения','Пригласитель UID','Приглашённый UID','Статус письма','Создано','Действие'],(data.invitations||[]).map(i=>[
+  const invitations = data.invitations || [];
+  const rows = invitations.map(i=>[
     i.email,userLink((data.users||[]).find(u=>u.uid===i.ownerUid)||{uid:i.ownerUid},i.ownerUid),i.claimedUid ? userLink((data.users||[]).find(u=>u.uid===i.claimedUid)||{uid:i.claimedUid},i.claimedUid) : 'Не принято',invitationEmailStatus(i),dateLabel(i.createdAt),
     invitationActionState(i) || button('Отменить приглашение',async()=>{if(!confirm('Отменить это приглашение?'))return;try{await call('adminRevokeInvitation')({email:i.email,ownerUid:i.ownerUid||i.id});await refresh();}catch(e){say(e?.message||'Не удалось отменить приглашение.',true);}},'danger')
-  ])));
+  ]);
+  const rowClasses = invitations.map(i => i.claimedUid ? '' : 'invitation-unaccepted');
+  content.append(table(['Адрес приглашения','Пригласитель UID','Приглашённый UID','Статус письма','Создано','Действие'],rows,[],rowClasses));
 }
 function renderShares() {
   const users=new Map((data.users||[]).map(u=>[u.uid,u]));
   const superAdminUid = (data.admins || []).find(a => a.role === 'superadmin')?.uid;
-  content.append(table(['Владелец','Получатель','Статус','Действие'],(data.shares||[]).map(s=>[
-    userLink(users.get(s.ownerUid),s.ownerUid),
-    userLink(users.get(s.viewerUid),s.viewerUid),
-    s.active?'Активен':'Закрыт',
-    s.ownerUid === superAdminUid || s.viewerUid === superAdminUid ? '—' : button(s.active?'Закрыть доступ':'Доступ закрыт',async()=>{if(!s.active)return;const sure=confirm('Закрыть доступ к этой библиотеке?');if(!sure)return;await call('adminSetLibraryShare')({id:s.id,active:false});await refresh();},s.active?'danger':'')
-  ])));
+  const ownerName = uid => users.get(uid)?.displayName || users.get(uid)?.email || uid || '';
+  const shares = [...(data.shares || [])].sort((a,b) => ownerName(a.ownerUid).localeCompare(ownerName(b.ownerUid),'ru') || ownerName(a.viewerUid).localeCompare(ownerName(b.viewerUid),'ru') || String(a.id || '').localeCompare(String(b.id || '')));
+  const ownerColors = new Map();
+  const rows = shares.map(s=>{
+    if (!ownerColors.has(s.ownerUid)) ownerColors.set(s.ownerUid, ownerColors.size % 2 === 0 ? 'share-owner-green' : 'share-owner-yellow');
+    return [
+      userLink(users.get(s.ownerUid),s.ownerUid),
+      userLink(users.get(s.viewerUid),s.viewerUid),
+      node('span',s.active?'Активен':'Закрыт',s.active?'':'share-closed'),
+      s.ownerUid === superAdminUid || s.viewerUid === superAdminUid ? '—' : button(s.active?'Закрыть доступ':'Доступ закрыт',async()=>{if(!s.active)return;const sure=confirm('Закрыть доступ к этой библиотеке?');if(!sure)return;await call('adminSetLibraryShare')({id:s.id,active:false});await refresh();},s.active?'danger':'')
+    ];
+  });
+  const rowClasses = shares.map(s => ownerColors.get(s.ownerUid));
+  content.append(table(['Владелец','Получатель','Статус','Действие'],rows,[],rowClasses));
 }
 function renderEvents() {
   content.append(table(['Время','Администратор UID','Событие','Участник UID','Подробности'],(data.events||[]).map(e=>[
