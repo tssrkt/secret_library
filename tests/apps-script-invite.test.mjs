@@ -85,6 +85,54 @@ function response(status, body) {
   };
 }
 
+test('admin event history uses a bounded server-side Firestore page', () => {
+  const app = harness();
+  let requestedUrl = '';
+  app.context.fsFetch = (url, method) => {
+    requestedUrl = url;
+    assert.equal(method, 'get');
+    return { code: 200, text: JSON.stringify({ documents: [{
+      name: 'projects/project/databases/(default)/documents/adminEvents/event-1',
+      fields: { action: { stringValue: 'test' } }
+    }] }) };
+  };
+  const events = app.context.fsListPage('adminEvents', 100, 'createdAt desc');
+  assert.match(requestedUrl, /pageSize=100/);
+  assert.match(requestedUrl, /orderBy=createdAt%20desc/);
+  assert.equal(events.length, 1);
+  assert.equal(events[0].id, 'event-1');
+});
+
+test('invitation dashboard reads nested shares with one collection-group query', () => {
+  const app = harness();
+  let request;
+  app.context.fsFetch = (url, method, body) => {
+    request = { url, method, body };
+    return {
+      code: 200,
+      text: JSON.stringify([
+        { document: {
+          name: 'projects/project/databases/(default)/documents/pendingInvites/friend@gmail.com/shares/owner-uid',
+          fields: { ownerUid: { stringValue: 'owner-uid' }, claimedUid: { nullValue: null } }
+        } },
+        { document: {
+          name: 'projects/project/databases/(default)/documents/otherCollection/parent/shares/other-uid',
+          fields: { ownerUid: { stringValue: 'other-uid' } }
+        } },
+        { readTime: '2026-11-04T00:00:00Z' }
+      ])
+    };
+  };
+  const invites = app.context.fsListInviteShares();
+  assert.equal(request.method, 'post');
+  assert.match(request.url, /documents:runQuery$/);
+  assert.equal(JSON.stringify(request.body.structuredQuery.from), JSON.stringify([{ collectionId: 'shares', allDescendants: true }]));
+  assert.equal(invites.length, 1);
+  assert.equal(invites[0].email, 'friend@gmail.com');
+  assert.equal(invites[0].id, 'owner-uid');
+  assert.equal(invites[0].ownerUid, 'owner-uid');
+});
+
 test('sends only after Firebase identity and owner-scoped Firestore reads are valid', () => {
   const app = harness();
   const result = app.invoke();

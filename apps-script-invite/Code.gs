@@ -363,13 +363,11 @@ function getAdminDashboardApi(actor) {
   const users = p.users || p.relationships ? fsList('users') : [];
   const banned = p.banned || p.users || p.relationships ? fsList('bannedUsers') : [];
   const admins = p.admins || p.users ? fsList('adminUsers') : [];
-  const invites = p.invites ? fsList('pendingInvites').flatMap(inv => fsList('pendingInvites/' + inv.id + '/shares').map(item => ({
-    ...item, email: inv.id
-  }))) : [];
+  const invites = p.invites ? fsListInviteShares() : [];
   const shares = p.shares || p.relationships ? fsList('libraryShares') : [];
   const directory = p.users || p.relationships ? fsList('userDirectory') : [];
   const emailByUid = new Map(directory.filter(item => item.uid && item.id).map(item => [item.uid, item.id]));
-  const events = p.events ? fsList('adminEvents').sort((a,b) => String(b.createdAt || '').localeCompare(String(a.createdAt || ''))).slice(0, 100) : [];
+  const events = p.events ? fsListPage('adminEvents', 100, 'createdAt desc') : [];
   const userRows = users.map(u => ({ ...u, uid: u.id, email: emailByUid.get(u.id) || '', banned: banned.some(b => b.id === u.id), admin: admins.some(a => a.id === u.id) }));
   return {
     permissions: p,
@@ -521,6 +519,35 @@ function fsList(path) {
     (body.documents || []).forEach(doc => out.push({ id: doc.name.split('/').pop(), ...fsDecodeFields(doc.fields || {}) }));
     token = body.nextPageToken || '';
   } while (token);
+  return out;
+}
+function fsListPage(path, pageSize, orderBy) {
+  const size = Math.max(1, Math.min(1000, Number(pageSize) || 100));
+  const query = ['pageSize=' + size];
+  if (orderBy) query.push('orderBy=' + encodeURIComponent(orderBy));
+  const response = fsFetch(FIRESTORE_REST_ROOT + path + '?' + query.join('&'), 'get');
+  if (response.code !== 200) throw new Error('Не удалось прочитать данные Firebase.');
+  const body = JSON.parse(response.text);
+  return (body.documents || []).map(doc => ({ id: doc.name.split('/').pop(), ...fsDecodeFields(doc.fields || {}) }));
+}
+function fsListInviteShares() {
+  const url = FIRESTORE_REST_ROOT.slice(0, -1) + ':runQuery';
+  const response = fsFetch(url, 'post', {
+    structuredQuery: { from: [{ collectionId: 'shares', allDescendants: true }] }
+  });
+  if (response.code !== 200) throw new Error('Не удалось прочитать данные Firebase.');
+  const rows = JSON.parse(response.text);
+  const out = [];
+  rows.forEach(row => {
+    const doc = row && row.document;
+    if (!doc || typeof doc.name !== 'string') return;
+    const marker = '/documents/pendingInvites/';
+    const markerIndex = doc.name.indexOf(marker);
+    if (markerIndex < 0) return;
+    const segments = doc.name.slice(markerIndex + marker.length).split('/');
+    if (segments.length !== 3 || segments[1] !== 'shares') return;
+    out.push({ id: segments[2], ...fsDecodeFields(doc.fields || {}), email: segments[0] });
+  });
   return out;
 }
 function fsSet(path, values) {
