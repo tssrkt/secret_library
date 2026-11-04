@@ -55,7 +55,7 @@ function button(text, action, cls = '') {
 }
 function table(headers, rows) {
   const t = node('table'), thead = node('thead'), hr = node('tr'), body = node('tbody');
-  headers.forEach(h => hr.append(node('th', h))); thead.append(hr); t.append(thead, body);
+  headers.forEach(h => hr.append(node('th', h))); if (headers.length) thead.append(hr); t.append(thead, body);
   rows.forEach(row => { const tr = node('tr'); row.forEach(value => { const td = node('td'); if (value instanceof Node) td.append(value); else td.textContent = label(value); tr.append(td); }); body.append(tr); });
   return t;
 }
@@ -81,17 +81,28 @@ function renderUserCard(uid) {
   const invitedBy = byUid.get(user.invitedByUid);
   const invitedUsers = (data.users || []).filter(u => u.invitedByUid === uid);
   const shares = (data.shares || []).filter(s => s.ownerUid === uid || s.viewerUid === uid);
+  const bannedUids = new Set((data.banned || []).map(u => u.uid));
+  const personLabel = (personUid) => {
+    const person = byUid.get(personUid) || (data.banned || []).find(u => u.uid === personUid) || (data.admins || []).find(a => a.uid === personUid);
+    const name = person?.displayName || person?.email || personUid;
+    return bannedUids.has(personUid) || person?.banned ? `${name} (заблокирован)` : name;
+  };
+  const incoming = shares.filter(s => s.viewerUid === uid);
+  const outgoing = shares.filter(s => s.ownerUid === uid);
   const rows = [
-    ['Имя', user.displayName || 'Без имени'], ['UID', uid], ['Электронная почта', user.email || admin?.email || ban?.email || 'Не указана в профиле'],
+    ['Имя', user.displayName || 'Без имени'],
+    ['UID', uid],
+    ['Электронная почта', user.email || admin?.email || ban?.email || 'Не указана в профиле'],
     ['Пригласил', invitedBy ? (invitedBy.displayName || invitedBy.uid) : (user.invitedByUid || '—')],
-    ['Приглашённые участники', invitedUsers.map(u => u.displayName || u.uid).join(', ') || '—'],
+    ['Приглашённые участники', invitedUsers.map(u => personLabel(u.uid)).join(', ') || '—'],
     ['Статус', ban || user.banned ? 'Заблокирован' : 'Активен'],
     ['Права администратора', admin ? `${admin.role || 'moderator'} · ${admin.active === true ? 'активен' : 'отключён'}` : 'Нет'],
-    ['Причина блокировки', ban?.reason || '—'],
-    ['Связи доступа к библиотекам', shares.length ? shares.map(s => `${s.ownerUid === uid ? 'Делится с' : 'Получает доступ от'} ${(byUid.get(s.ownerUid === uid ? s.viewerUid : s.ownerUid)?.displayName) || (s.ownerUid === uid ? s.viewerUid : s.ownerUid)} (${s.active ? 'активна' : 'отозвана'})`).join('; ') : '—']
+    ...(ban || user.banned ? [['Причина блокировки', ban?.reason || 'Не указана']] : []),
+    ['Пользуется', incoming.length ? incoming.map(s => `${personLabel(s.ownerUid)}${s.active ? '' : ' (доступ отозван)'}`).join(', ') : '—'],
+    ['Делится', outgoing.length ? outgoing.map(s => `${personLabel(s.viewerUid)}${s.active ? '' : ' (доступ отозван)'}`).join(', ') : '—']
   ];
   content.replaceChildren(node('h2', 'Карточка пользователя'), button('← Назад к списку', () => render(), 'secondary'));
-  content.append(table(['Поле', 'Значение'], rows));
+  content.append(table([], rows.map(([field, value]) => [node('strong', field), value])));
   const actions = node('div', null, 'actions');
   actions.append(button('Скопировать UID', async () => { await navigator.clipboard.writeText(uid); say('UID скопирован.'); }));
   if (data.permissions?.admins && !user.banned && !admin) actions.append(button('Назначить администратором', () => { activeTab = 'admins'; renderAdminEditor(user); }));
