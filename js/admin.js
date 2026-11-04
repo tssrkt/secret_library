@@ -69,19 +69,19 @@ function button(text, action, cls = '') {
   });
   return b;
 }
-function table(headers, rows) {
+function table(headers, rows, columnClasses = []) {
   const t = node('table'), thead = node('thead'), hr = node('tr'), body = node('tbody');
-  headers.forEach(h => hr.append(node('th', h))); if (headers.length) thead.append(hr); t.append(thead, body);
-  rows.forEach(row => { const tr = node('tr'); row.forEach(value => { const td = node('td'); if (value instanceof Node) td.append(value); else td.textContent = label(value); tr.append(td); }); body.append(tr); });
+  headers.forEach((h, index) => hr.append(node('th', h, columnClasses[index] || ''))); if (headers.length) thead.append(hr); t.append(thead, body);
+  rows.forEach(row => { const tr = node('tr'); row.forEach((value, index) => { const td = node('td', null, columnClasses[index] || ''); if (value instanceof Node) td.append(value); else td.textContent = label(value); tr.append(td); }); body.append(tr); });
   return t;
 }
-function paginatedTable(headers, rows, pageSize = 25) {
+function paginatedTable(headers, rows, pageSize = 25, columnClasses = []) {
   const wrap = node('div', null, 'paginated-list');
   let page = 0;
   const renderPage = () => {
     const pageCount = Math.max(1, Math.ceil(rows.length / pageSize));
     page = Math.min(page, pageCount - 1);
-    wrap.replaceChildren(table(headers, rows.slice(page * pageSize, (page + 1) * pageSize)));
+    wrap.replaceChildren(table(headers, rows.slice(page * pageSize, (page + 1) * pageSize), columnClasses));
     const controls = node('div', null, 'pagination');
     const start = rows.length ? page * pageSize + 1 : 0;
     const end = Math.min((page + 1) * pageSize, rows.length);
@@ -281,12 +281,12 @@ function renderRelations() {
       else grouped.incoming.push(otherUser);
     });
     const types = node('div');
-    const addType = (title, people) => { if (!people.length) return; const line = node('div'); line.append(document.createTextNode(title+': '),userLinks(people)); types.append(line); };
-    addType('Взаимные',grouped.mutual); addType('Делится',grouped.outgoing); addType('Пользуется',grouped.incoming);
+    const addType = (title, people, className) => { if (!people.length) return; const line = node('div', null, className); line.append(document.createTextNode(title+': '),userLinks(people)); types.append(line); };
+    addType('Взаимные',grouped.mutual,'relation-mutual'); addType('Делится',grouped.outgoing,'relation-outgoing'); addType('Пользуется',grouped.incoming,'relation-incoming');
     const userName=node('div'); userName.append(userLink(u));
     return [userName,byUid.has(u.invitedByUid) ? userLink(byUid.get(u.invitedByUid)) : (u.invitedByUid || '—'),userLinks(invited),types.childNodes.length ? types : '—'];
   });
-  content.append(paginatedTable(['Участник','Пригласитель','Приглашённые','Связи доступа'],alphabeticRows));
+  content.append(paginatedTable(['Участник','Пригласитель','Приглашённые','Связи доступа'],alphabeticRows,25,['','inviter-column','invited-column','']));
   content.append(node('h3','Отдельные связи доступа'));
   const shareRows = (data.shares||[]).map(s=>[
     userLink(byUid.get(s.ownerUid),s.ownerUid),
