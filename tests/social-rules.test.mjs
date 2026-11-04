@@ -8,6 +8,8 @@ import { friendsModel, notificationsModel, validateShareEmail } from '../js/soci
 import { createSharedLibraryStore } from '../js/shared-library.js';
 
 let env;
+const FOUNDER_UID = 'aA89pCYsKNbWWePmAveUVrG34F82';
+const FOUNDER_EMAIL = 'tssrkt777@gmail.com';
 const identity = (uid, email = `${uid}@gmail.com`) => ({ uid, email, emailVerified: true, displayName: uid, photoURL: '' });
 const client = (uid, email) => {
   const user = identity(uid, email);
@@ -15,13 +17,26 @@ const client = (uid, email) => {
   return { db, user, store: createSocialStore({ db, sdk, user }) };
 };
 const get = async (db, path) => { const snap = await sdk.getDoc(sdk.doc(db, path)); return snap.exists() ? snap.data() : null; };
+async function register(person) {
+  if (person.user.uid === FOUNDER_UID) return person.store.register();
+  const invitation = await get(person.db, `pendingInvites/${person.user.email.toLowerCase()}`);
+  let automaticInviter = null;
+  if (!invitation) {
+    automaticInviter = client(FOUNDER_UID, FOUNDER_EMAIL);
+    await automaticInviter.store.register();
+    await automaticInviter.store.shareWithEmail(person.user.email);
+  }
+  const result = await person.store.register();
+  if (automaticInviter) await automaticInviter.store.setSharing(person.user.uid, false);
+  return result;
+}
 before(async () => { env = await initializeTestEnvironment({ projectId: 'demo-secret-library', firestore: { rules: await readFile(new URL('../firestore.rules', import.meta.url), 'utf8') } }); });
 beforeEach(async () => { await env.clearFirestore(); });
 after(async () => { await env.cleanup(); });
 
 test('shared catalogs enforce incoming access, exclude private folders and revoke old revisions', async () => {
   const a = client('owner'); const b = client('viewer'); const c = client('other');
-  for (const person of [a, b, c]) await person.store.register();
+  for (const person of [a, b, c]) await register(person);
   const sharedA = createSharedLibraryStore({ db: a.db, sdk, user: a.user,
     downloadCover: async () => new Blob(['test-cover'], { type: 'image/webp' }) });
   const sharedB = createSharedLibraryStore({ db: b.db, sdk, user: b.user });
@@ -65,7 +80,7 @@ test('shared catalogs enforce incoming access, exclude private folders and revok
 
 test('ban marker revokes all client Firestore access without deleting the user profile', async () => {
   const person = client('banned-person');
-  await person.store.register();
+  await register(person);
   await env.withSecurityRulesDisabled(async (context) => {
     await sdk.setDoc(sdk.doc(context.firestore(), 'bannedUsers/banned-person'), { uid: 'banned-person', reason: 'test' });
   });
@@ -77,11 +92,13 @@ test('ban marker revokes all client Firestore access without deleting the user p
   });
 });
 
-test('verified Google registration creates safe profile, exact email directory and immutable attribution', async () => {
+test('verified Google registration with an invitation creates a safe profile and immutable attribution', async () => {
   const anna = client('anna'); const boris = client('boris');
-  await anna.store.register(); await boris.store.register();
+  await register(anna); await register(boris);
   assert.deepEqual((await get(anna.db, 'userDirectory/boris@gmail.com')), { uid: 'boris' });
   assert.deepEqual(Object.keys(await get(anna.db, 'users/boris')).sort(), ['createdAt', 'displayName', 'invitedByUid', 'photoURL']);
+  assert.equal((await get(anna.db, 'users/anna')).invitedByUid, FOUNDER_UID);
+  assert.equal((await get(anna.db, 'users/boris')).invitedByUid, FOUNDER_UID);
   await assertFails(sdk.getDocs(sdk.collection(anna.db, 'userDirectory')));
   await assertFails(sdk.getDocs(sdk.collection(anna.db, 'users')));
   await assertFails(sdk.setDoc(sdk.doc(anna.db, 'userDirectory/victim@gmail.com'), { uid: 'anna' }));
@@ -94,9 +111,26 @@ test('verified Google registration creates safe profile, exact email directory a
   await assertFails(sdk.getDoc(sdk.doc(env.unauthenticatedContext().firestore(), 'users/anna')));
 });
 
+test('only the fixed founder may create a profile without an invitation', async () => {
+  const founder = client(FOUNDER_UID, FOUNDER_EMAIL);
+  await founder.store.register();
+  assert.equal((await get(founder.db, `users/${FOUNDER_UID}`)).invitedByUid, null);
+
+  const stranger = client('uninvited-person');
+  await assert.rejects(stranger.store.register(), /только по приглашению/);
+  await assertFails(sdk.setDoc(sdk.doc(stranger.db, 'users/uninvited-person'), {
+    displayName: 'Uninvited', photoURL: '', createdAt: sdk.serverTimestamp(), invitedByUid: null,
+  }));
+  assert.equal(await get(stranger.db, 'users/uninvited-person'), null);
+
+  await founder.store.shareWithEmail(stranger.user.email);
+  await stranger.store.register();
+  assert.equal((await get(stranger.db, 'users/uninvited-person')).invitedByUid, FOUNDER_UID);
+});
+
 test('shares are directional, duplicate clicks are idempotent and revoke never changes reverse access', async () => {
   const a = client('a'); const b = client('b'); const c = client('c');
-  await a.store.register(); await b.store.register(); await c.store.register();
+  await register(a); await register(b); await register(c);
   const results = await Promise.all([a.store.shareWithEmail(' B@GMAIL.COM '), a.store.shareWithEmail('b@gmail.com')]);
   assert(results.some((result) => result.includes('Доступ предоставлен')));
   const initial = await get(a.db, 'libraryShares/a__b');
@@ -123,7 +157,7 @@ test('shares are directional, duplicate clicks are idempotent and revoke never c
 
 test('private known email cannot be read by recipient or third party and never leaks through profiles', async () => {
   const a = client('a'); const b = client('b'); const c = client('c');
-  for (const person of [a, b, c]) await person.store.register();
+  for (const person of [a, b, c]) await register(person);
   await a.store.shareWithEmail('b@gmail.com');
   assert.equal((await get(a.db, 'users/a/knownContacts/b')).email, 'b@gmail.com');
   await assertFails(sdk.getDoc(sdk.doc(b.db, 'users/a/knownContacts/b')));
@@ -141,7 +175,7 @@ test('private known email cannot be read by recipient or third party and never l
 
 test('legacy active shares gain owner email without changing access', async () => {
   const a = client('legacy-owner'); const b = client('legacy-viewer');
-  await a.store.register(); await b.store.register();
+  await register(a); await register(b);
   await env.withSecurityRulesDisabled(async (context) => {
     await sdk.setDoc(sdk.doc(context.firestore(), 'libraryShares/legacy-owner__legacy-viewer'), {
       ownerUid: 'legacy-owner', viewerUid: 'legacy-viewer', active: true, sharedAt: sdk.Timestamp.fromMillis(1000), revokedAt: null,
@@ -155,26 +189,26 @@ test('legacy active shares gain owner email without changing access', async () =
 
 test('pending invites claim atomically for own email; earliest inviter is permanent', async () => {
   const a = client('a'); const c = client('c');
-  await a.store.register(); await c.store.register();
+  await register(a); await register(c);
   assert.equal(await a.store.shareWithEmail(' New@Gmail.Com '), 'Приглашение сохранено.');
   assert((await a.store.shareWithEmail('new@gmail.com')).includes('уже сохранено'));
   await c.store.shareWithEmail('new@gmail.com');
   await assertFails(sdk.getDocs(sdk.collection(c.db, 'pendingInvites', 'new@gmail.com', 'shares')));
   await assertFails(sdk.getDoc(sdk.doc(c.db, 'pendingInvites/new@gmail.com/shares/a')));
-  const n = client('new'); await n.store.register();
+  const n = client('new'); await register(n);
   assert.equal((await get(n.db, 'users/new')).invitedByUid, 'a');
   const share = await get(n.db, 'libraryShares/a__new');
   assert.equal(share.active, true);
   assert.equal(share.ownerEmail, 'a@gmail.com');
   const pending = await get(a.db, 'pendingInvites/new@gmail.com/shares/a');
   assert.equal(pending.claimedUid, 'new'); assert(pending.claimedAt);
-  await n.store.register();
+  await register(n);
   assert.deepEqual((await get(n.db, 'libraryShares/a__new')).sharedAt, share.sharedAt);
   await a.store.syncKnownContacts();
   assert.equal((await get(a.db, 'users/a/knownContacts/new')).email, 'new@gmail.com');
   assert(notificationsModel('new', [share])[0].unread);
   await a.store.setSharing('new', false);
-  await n.store.register();
+  await register(n);
   assert.equal((await get(n.db, 'libraryShares/a__new')).active, false, 'consumed pending cannot restore revoked access');
   await assertFails(sdk.setDoc(sdk.doc(n.db, 'libraryShares/a__new'), { ...share, sharedAt: sdk.serverTimestamp() }));
   await assertFails(sdk.updateDoc(sdk.doc(n.db, 'pendingInvites/new@gmail.com/shares/a'), { claimedUid: null, claimedAt: null }));
@@ -182,7 +216,7 @@ test('pending invites claim atomically for own email; earliest inviter is perman
 });
 
 test('clients cannot forge server-only invitation email delivery status', async () => {
-  const a = client('a'); await a.store.register();
+  const a = client('a'); await register(a);
   await a.store.shareWithEmail('future@gmail.com');
   await assertFails(sdk.updateDoc(sdk.doc(a.db, 'pendingInvites/future@gmail.com/shares/a'), {
     emailStatus: 'sent', emailSentAt: sdk.serverTimestamp(),
@@ -194,7 +228,7 @@ test('clients cannot forge server-only invitation email delivery status', async 
 });
 
 test('read markers are private, reference actual events and regrant becomes unread again', async () => {
-  const a = client('a'); const b = client('b'); await a.store.register(); await b.store.register();
+  const a = client('a'); const b = client('b'); await register(a); await register(b);
   await a.store.setSharing('b');
   let share = await get(b.db, 'libraryShares/a__b');
   let notifications = notificationsModel('b', [share]);
@@ -212,7 +246,7 @@ test('read markers are private, reference actual events and regrant becomes unre
 });
 
 test('50 displayed notifications can be marked without exceeding security rule batch limits', async () => {
-  const b = client('b'); await b.store.register();
+  const b = client('b'); await register(b);
   const shares = Array.from({ length: 51 }, (_, i) => ({ ownerUid: `owner${i}`, viewerUid: 'b', active: true, sharedAt: sdk.Timestamp.fromMillis(1000 + i), revokedAt: null }));
   await env.withSecurityRulesDisabled(async (context) => {
     const db = context.firestore(); const batch = sdk.writeBatch(db);
@@ -227,7 +261,7 @@ test('50 displayed notifications can be marked without exceeding security rule b
 });
 
 test('claim cannot be forged by another email or without a matching atomic share activation', async () => {
-  const a = client('a'); const c = client('c'); await a.store.register(); await c.store.register();
+  const a = client('a'); const c = client('c'); await register(a); await register(c);
   await a.store.shareWithEmail('future@gmail.com');
   await assertFails(sdk.updateDoc(sdk.doc(c.db, 'pendingInvites/future@gmail.com/shares/a'), { claimedUid: 'c', claimedAt: sdk.serverTimestamp() }));
   await assertFails(sdk.setDoc(sdk.doc(c.db, 'libraryShares/a__c'), { ownerUid: 'a', viewerUid: 'c', active: true, sharedAt: sdk.serverTimestamp(), revokedAt: null }));
@@ -236,7 +270,7 @@ test('claim cannot be forged by another email or without a matching atomic share
 });
 
 test('live subscriptions update friends and notifications after reciprocal share and revocation', async () => {
-  const a = client('a'); const b = client('b'); await a.store.register(); await b.store.register();
+  const a = client('a'); const b = client('b'); await register(a); await register(b);
   let state; let failure; const observed = [];
   const stop = b.store.subscribe((next) => { state = next; observed.push(next); }, (error) => { failure = error; });
   const until = async (predicate) => {

@@ -6,6 +6,7 @@ export function createSocialStore({ db, sdk, user }) {
   const uid = user.uid;
   const email = normalizeEmail(user.email);
   const superAdminEmail = 'tssrkt777@gmail.com';
+  const founderUid = 'aA89pCYsKNbWWePmAveUVrG34F82';
   let superAdminUid = '';
   const ref = (...path) => doc(db, ...path);
   const data = (snapshot) => snapshot.exists() ? snapshot.data() : null;
@@ -26,8 +27,11 @@ export function createSocialStore({ db, sdk, user }) {
       const first = data(await tx.get(ref('pendingInvites', email)));
       ensureCurrent();
       if (existing && existing.uid !== uid) throw new Error('Этот адрес уже связан с другим пользователем.');
+      if (!own && uid !== founderUid && typeof first?.firstOwnerUid !== 'string') {
+        throw new Error('Регистрация в Тайной Библиотеке возможна только по приглашению. Попросите участника клуба прислать вам приглашение.');
+      }
       const safe = { displayName: (user.displayName || 'Пользователь').slice(0, 160), photoURL: (user.photoURL || '').slice(0, 2048) };
-      if (!own) tx.set(profileRef, { ...safe, createdAt: serverTimestamp(), invitedByUid: first?.firstOwnerUid || null });
+      if (!own) tx.set(profileRef, { ...safe, createdAt: serverTimestamp(), invitedByUid: uid === founderUid ? null : first.firstOwnerUid });
       else tx.update(profileRef, safe);
       if (!existing) tx.set(directory, { uid });
     });

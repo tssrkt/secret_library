@@ -14,6 +14,8 @@ service cloud.firestore {
     function pendingPath(address, owner) { return /databases/$(database)/documents/pendingInvites/$(address)/shares/$(owner); }
     function sharePath(owner, viewer) { return /databases/$(database)/documents/libraryShares/$(owner + '__' + viewer); }
     function registered() { return signed() && exists(userPath(me())); }
+    // The only account allowed to create its profile without an invitation.
+    function founder() { return signed() && me() == 'aA89pCYsKNbWWePmAveUVrG34F82'; }
 
     match /sharedLibraries/{owner} {
       function canRead() { return registered() && (me() == owner || get(sharePath(owner, me())).data.active == true); }
@@ -59,8 +61,10 @@ service cloud.firestore {
       allow create: if own(uid) && shape()
         && request.resource.data.keys().hasOnly(['displayName', 'photoURL', 'createdAt', 'invitedByUid'])
         && request.resource.data.createdAt == request.time
-        && ((!exists(/databases/$(database)/documents/pendingInvites/$(email())) && request.resource.data.invitedByUid == null)
-          || request.resource.data.invitedByUid == get(/databases/$(database)/documents/pendingInvites/$(email())).data.firstOwnerUid);
+        && ((founder() && request.resource.data.invitedByUid == null)
+          || (!founder() && exists(/databases/$(database)/documents/pendingInvites/$(email()))
+            && request.resource.data.invitedByUid is string
+            && request.resource.data.invitedByUid == get(/databases/$(database)/documents/pendingInvites/$(email())).data.firstOwnerUid));
       allow update: if own(uid) && shape()
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['displayName', 'photoURL']);
       match /knownContacts/{otherUid} {
