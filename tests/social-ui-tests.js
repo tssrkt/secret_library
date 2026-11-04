@@ -85,8 +85,9 @@ export async function runSocialUiTests(test, assert, equal) {
       await tick(); await tick();
       const button = oldPage.querySelector('.sent-invitations-section tbody button');
       assert(!button.disabled, 'resend becomes active after one hour');
-      button.click(); await tick();
+      button.click(); await tick(); await tick();
       assert(oldSocial.calls.some((call) => Array.isArray(call) && call[0] === 'resendInvitation' && call[1] === 'friend@gmail.com'), 'click resends the same invitation');
+      assert(oldPage.querySelector('.sent-invitations-message').textContent === '', 'successful resend does not show a success message below the invitations table');
     } finally { cleanupOld(); oldPage.remove(); }
   });
   await test('friends table labels administrators without displaying their email', () => {

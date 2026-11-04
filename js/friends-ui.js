@@ -104,8 +104,10 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
         updateCooldowns();
         invitationsMessage.textContent = '';
         try {
-          invitationsMessage.textContent = await social.resendInvitation(email);
-          if (invitationsMessage.textContent === 'Приглашение отправлено.') await refreshInvitationStatuses();
+          const result = await social.resendInvitation(email);
+          invitationsMessage.textContent = '';
+          if (result === 'Приглашение отправлено.') await refreshInvitationStatuses();
+          else message.textContent = result;
         } catch (error) {
           invitationsMessage.textContent = socialError(error);
         } finally {
