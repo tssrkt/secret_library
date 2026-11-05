@@ -864,6 +864,17 @@ function getAdminUserCardApi(actor, data) {
   if (!isValidUid(uid)) throw new Error('Некорректный UID участника.');
   const profile = fsGet('users/' + encodeURIComponent(uid));
   if (!profile) throw new Error('Участник не найден.');
+  const relatedPaths = [];
+  const inviterPathIndex = profile.invitedByUid
+    ? relatedPaths.push('users/' + encodeURIComponent(profile.invitedByUid)) - 1 : -1;
+  const adminPathIndex = canReadAdminDetails
+    ? relatedPaths.push('adminUsers/' + encodeURIComponent(uid)) - 1 : -1;
+  const bannedPathIndex = canReadBanDetails
+    ? relatedPaths.push('bannedUsers/' + encodeURIComponent(uid)) - 1 : -1;
+  const relatedRecords = fsGetMany(relatedPaths);
+  const inviter = inviterPathIndex >= 0 ? relatedRecords[inviterPathIndex] : null;
+  const adminRecord = adminPathIndex >= 0 ? relatedRecords[adminPathIndex] : null;
+  const bannedRecord = bannedPathIndex >= 0 ? relatedRecords[bannedPathIndex] : null;
   const groupSpecs = [];
   if (canReadEmails) groupSpecs.push({ collectionId: 'userDirectory', field: 'uid', value: uid, limit: 1 });
   const outgoingIndex = groupSpecs.push({ collectionId: 'libraryShares', field: 'ownerUid', value: uid, limit: 100 }) - 1;
@@ -872,10 +883,7 @@ function getAdminUserCardApi(actor, data) {
   const directory = canReadEmails ? groupRows[0][0] : null;
   const outgoing = groupRows[outgoingIndex];
   const incoming = groupRows[incomingIndex];
-  const inviter = profile.invitedByUid ? fsGet('users/' + encodeURIComponent(profile.invitedByUid)) : null;
   const invited = fsQueryFilteredPage('users', 'invitedByUid', uid, 100, '').items;
-  const adminRecord = canReadAdminDetails ? fsGet('adminUsers/' + encodeURIComponent(uid)) : null;
-  const bannedRecord = canReadBanDetails ? fsGet('bannedUsers/' + encodeURIComponent(uid)) : null;
   return {
     user: { ...visibleUserProfile(current, profile, uid), email: directory?.id ? decodeURIComponent(directory.id) : '' },
     inviter: inviter ? visibleUserProfile(current, inviter, profile.invitedByUid) : null,
@@ -1208,6 +1216,24 @@ function setLibraryShareApi(actor, data) {
 function fsGet(path) {
   const response = fsRequest('get', path);
   return response ? { ...fsDecodeFields(response.fields || {}), id: response.name.split('/').pop() } : null;
+}
+function fsGetMany(paths) {
+  if (!Array.isArray(paths) || !paths.length) return [];
+  if (paths.length === 1 || typeof UrlFetchApp.fetchAll !== 'function') return paths.map(fsGet);
+  const url = paths.map(path => FIRESTORE_REST_ROOT + path);
+  const requests = url.map(item => ({
+    url: item,
+    method: 'get',
+    headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() },
+    muteHttpExceptions: true
+  }));
+  return UrlFetchApp.fetchAll(requests).map((response, index) => {
+    const code = response.getResponseCode();
+    if (code === 404) return null;
+    if (code < 200 || code >= 300) return fsGet(paths[index]);
+    const document = JSON.parse(response.getContentText());
+    return { ...fsDecodeFields(document.fields || {}), id: document.name.split('/').pop() };
+  });
 }
 function getAdminRecordCached(uid) {
   const cache = CacheService.getScriptCache();

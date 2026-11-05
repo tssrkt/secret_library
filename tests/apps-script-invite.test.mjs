@@ -118,6 +118,27 @@ function response(status, body) {
   };
 }
 
+test('admin document reads use a concurrent Firestore batch and preserve missing records', () => {
+  const app = harness();
+  const requests = [];
+  app.context.ScriptApp = { getOAuthToken: () => 'test-token' };
+  app.context.UrlFetchApp.fetchAll = batch => {
+    requests.push(...batch);
+    return batch.map((request, index) => ({
+      getResponseCode: () => index === 1 ? 404 : 200,
+      getContentText: () => JSON.stringify(index === 0
+        ? { name: 'projects/project-071ee00e-4a4a-4a3d-95d/databases/(default)/documents/users/inviter-uid', fields: { displayName: { stringValue: 'Inviter' } } }
+        : {})
+    }));
+  };
+  const rows = app.context.fsGetMany(['users/inviter-uid', 'bannedUsers/target-uid']);
+  assert.equal(requests.length, 2);
+  assert.equal(requests.every(request => request.headers.Authorization === 'Bearer test-token'), true);
+  assert.equal(rows[0].displayName, 'Inviter');
+  assert.equal(rows[0].id, 'inviter-uid');
+  assert.equal(rows[1], null);
+});
+
 test('verifyFirebaseUser caches a successful lookup for the same token', () => {
   const app = harness();
   app.context.verifyFirebaseUser(app.payload.idToken);
