@@ -131,6 +131,29 @@ test('admin startup uses bounded summary and paginated collection APIs, not the 
   assert.doesNotMatch(adminClientSource, /call\('getAdminDashboard'\)/);
 });
 
+test('admin summary batches independent Firestore aggregation counts', () => {
+  const app = harness();
+  let requests = [];
+  app.context.ScriptApp = { getOAuthToken: () => 'test-token' };
+  app.context.UrlFetchApp.fetchAll = (batch) => {
+    requests = batch;
+    return batch.map((_, index) => ({
+      getResponseCode: () => 200,
+      getContentText: () => JSON.stringify([{ result: { aggregateFields: { total: { integerValue: String((index + 1) * 10) } } } }])
+    }));
+  };
+  const counts = app.context.fsCountMany([
+    { key: 'users', collectionId: 'users' },
+    { key: 'shares', collectionId: 'libraryShares', filter: { fieldPath: 'active', op: 'EQUAL', value: { booleanValue: true } } },
+    { key: 'admins', collectionId: 'adminUsers' }
+  ]);
+  assert.equal(requests.length, 3);
+  assert.equal(counts.users, 10);
+  assert.equal(counts.shares, 20);
+  assert.equal(counts.admins, 30);
+  assert.ok(requests.every(request => request.method === 'post' && request.headers.Authorization.startsWith('Bearer ')));
+});
+
 test('admin page requests reuse profiles already loaded by the client', () => {
   assert.match(adminClientSource, /knownProfileUids = Object\.keys\(data\.userProfiles \|\| \{\}\)\.slice\(-300\)/);
   assert.match(adminClientSource, /getAdminCollectionPage'\)\(\{ section: key, cursor, knownProfileUids \}\)/);

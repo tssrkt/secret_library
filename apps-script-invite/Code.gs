@@ -536,14 +536,16 @@ function getAdminDashboardSummaryApi(actor) {
   const p = actor.admin.role === 'superadmin'
     ? Object.fromEntries(ADMIN_SECTIONS_API.map(k => [k, true])) : sanitizeAdminPermissions(actor.admin.permissions || {});
   if (!Object.values(p).some(Boolean)) throw new Error('Не назначены права для просмотра админки.');
-  const counts = {
-    users: p.users ? fsCount('users') : null,
-    invitations: p.invites ? fsCount('shares', { fieldPath: 'inviteeEmail', op: 'NOT_EQUAL', value: { nullValue: null } }, true) : null,
-    acceptedInvitations: p.invites ? fsCount('shares', { fieldPath: 'claimedUid', op: 'NOT_EQUAL', value: { nullValue: null } }, true) : null,
-    shares: p.shares ? fsCount('libraryShares', { fieldPath: 'active', op: 'EQUAL', value: { booleanValue: true } }) : null,
-    admins: p.admins ? fsCount('adminUsers') : null,
-    banned: p.banned ? fsCount('bannedUsers') : null
-  };
+  const countSpecs = [
+    { key: 'users', enabled: p.users, collectionId: 'users' },
+    { key: 'invitations', enabled: p.invites, collectionId: 'shares', filter: { fieldPath: 'inviteeEmail', op: 'NOT_EQUAL', value: { nullValue: null } }, allDescendants: true },
+    { key: 'acceptedInvitations', enabled: p.invites, collectionId: 'shares', filter: { fieldPath: 'claimedUid', op: 'NOT_EQUAL', value: { nullValue: null } }, allDescendants: true },
+    { key: 'shares', enabled: p.shares, collectionId: 'libraryShares', filter: { fieldPath: 'active', op: 'EQUAL', value: { booleanValue: true } } },
+    { key: 'admins', enabled: p.admins, collectionId: 'adminUsers' },
+    { key: 'banned', enabled: p.banned, collectionId: 'bannedUsers' }
+  ];
+  const counts = Object.fromEntries(countSpecs.map(spec => [spec.key, null]));
+  Object.assign(counts, fsCountMany(countSpecs.filter(spec => spec.enabled)));
   const superadminUid = fsFindSuperAdminUid();
   return { permissions: p, counts, superAdminUid: superadminUid, invitationEmailTemplate: p.texts ? getInvitationEmailTemplate() : null, invitationLimit: p.invites ? getInvitationLimit() : null };
 }
@@ -577,6 +579,36 @@ function fsCount(collectionId, filter, allDescendants) {
   const rows = JSON.parse(response.text);
   const value = rows.find(row => row && row.result)?.result?.aggregateFields?.total?.integerValue;
   return Number(value || 0);
+}
+function fsCountMany(specs) {
+  if (!specs.length) return {};
+  if (typeof UrlFetchApp.fetchAll !== 'function' || specs.length === 1) {
+    return Object.fromEntries(specs.map(spec => [spec.key, fsCount(spec.collectionId, spec.filter, spec.allDescendants)]));
+  }
+  const token = ScriptApp.getOAuthToken();
+  const requests = specs.map(spec => {
+    const structuredQuery = { from: [{ collectionId: spec.collectionId, ...(spec.allDescendants ? { allDescendants: true } : {}) }] };
+    if (Array.isArray(spec.filter)) structuredQuery.where = { compositeFilter: { op: 'AND', filters: spec.filter.map(item => ({ fieldFilter: { field: { fieldPath: item.fieldPath }, op: item.op, value: item.value } })) } };
+    else if (spec.filter) structuredQuery.where = { fieldFilter: { field: { fieldPath: spec.filter.fieldPath }, op: spec.filter.op, value: spec.filter.value } };
+    return {
+      url: FIRESTORE_REST_ROOT.slice(0, -1) + ':runAggregationQuery',
+      method: 'post',
+      headers: { Authorization: 'Bearer ' + token },
+      muteHttpExceptions: true,
+      contentType: 'application/json',
+      payload: JSON.stringify({ structuredAggregationQuery: { structuredQuery, aggregations: [{ count: {}, alias: 'total' }] } })
+    };
+  });
+  const responses = UrlFetchApp.fetchAll(requests);
+  const counts = {};
+  responses.forEach((response, index) => {
+    const code = response.getResponseCode();
+    if (code !== 200) throw new Error('Не удалось получить счётчики Firebase (' + code + ').');
+    const rows = JSON.parse(response.getContentText());
+    const value = rows.find(row => row && row.result)?.result?.aggregateFields?.total?.integerValue;
+    counts[specs[index].key] = Number(value || 0);
+  });
+  return counts;
 }
 function getAdminCollectionPageApi(actor, data) {
   const config = {
