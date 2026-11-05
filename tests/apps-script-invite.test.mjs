@@ -183,18 +183,21 @@ test('admin user flags fetch banned and admin records concurrently', () => {
     return batch.map(request => {
       const query = JSON.parse(request.payload).structuredQuery;
       const collectionId = query.from[0].collectionId;
+      const document = {
+        name: `projects/project/databases/(default)/documents/${collectionId}/${collectionId === 'userDirectory' ? 'reader@example.com' : 'user-1'}`,
+        fields: collectionId === 'userDirectory' ? { uid: { stringValue: 'user-1' } } : {}
+      };
       return {
         getResponseCode: () => 200,
-        getContentText: () => JSON.stringify([{ document: {
-          name: `projects/project/databases/(default)/documents/${collectionId}/user-1`, fields: {}
-        } }])
+        getContentText: () => JSON.stringify([{ document }])
       };
     });
   };
   const flags = app.context.fsGetAdminUserFlags(['user-1', 'user-2']);
-  assert.equal(requests.length, 2);
+  assert.equal(requests.length, 3);
   assert.equal(flags.banned.has('user-1'), true);
   assert.equal(flags.admins.has('user-1'), true);
+  assert.equal(flags.emailByUid.get('user-1'), 'reader@example.com');
   assert.equal(flags.banned.has('user-2'), false);
 });
 
@@ -448,7 +451,7 @@ test('server-side invitation and share filters are encoded as Firestore field fi
   assert.equal(queries[1].where.fieldFilter.field.fieldPath, 'active');
   assert.deepEqual(JSON.parse(JSON.stringify(queries[1].where.fieldFilter.value)), { booleanValue: false });
 });
-test('participant page status flags are fetched in two bounded IN queries, not N+1 reads', () => {
+test('participant page status flags and directory emails use three bounded IN queries', () => {
   const app = harness();
   const requests = [];
   app.context.fsFetch = (_url, method, body) => {
@@ -457,7 +460,7 @@ test('participant page status flags are fetched in two bounded IN queries, not N
     return { code: 200, text: JSON.stringify(path === 'bannedUsers' ? [{ document: { name: 'projects/project-071ee00e-4a4a-4a3d-95d/databases/(default)/documents/bannedUsers/u1' } }] : []) };
   };
   const flags = app.context.fsGetAdminUserFlags(['u1', 'u2', 'u3']);
-  assert.equal(requests.length, 2);
+  assert.equal(requests.length, 3);
   assert(requests.every(request => request.method === 'post'));
   assert(requests.every(request => request.body.structuredQuery.where.fieldFilter.op === 'IN'));
   assert(flags.banned.has('u1'));
@@ -827,8 +830,7 @@ test('users permission reveals the directory email but never arbitrary legacy pr
 test('user collection pages sanitize legacy fields and resolve email from the private directory', () => {
   const app = adminHarness({ permissions: { users: true } });
   app.context.fsQueryPage = () => ({ items: [{ id: 'target-uid', displayName: 'Target', email: 'legacy@example.com', accessToken: 'secret', privateNote: 'secret' }], hasMore: false, nextCursor: null });
-  app.context.fsGetAdminUserFlags = () => ({ banned: new Set(), admins: new Set() });
-  app.context.fsQueryEmailDirectory = () => [{ id: 'target@example.com', uid: 'target-uid' }];
+  app.context.fsGetAdminUserFlags = () => ({ banned: new Set(), admins: new Set(), emailByUid: new Map([['target-uid', 'target@example.com']]) });
   app.context.fsQueryUserProfiles = () => ({});
   const page = app.context.getAdminCollectionPageApi({ uid: 'mod-uid', admin: { role: 'moderator', permissions: { users: true } } }, { section: 'users' });
   assert.equal(page.items[0].email, 'target@example.com');

@@ -630,8 +630,7 @@ function getAdminCollectionPageApi(actor, data) {
   if (section === 'users') {
     const uids = page.items.map(user => user.id);
     const flags = fsGetAdminUserFlags(uids);
-    const emailByUid = new Map(fsQueryEmailDirectory(uids).map(item => [item.uid, item.id]));
-    page.items = page.items.map(user => ({ ...sanitizeRelationshipProfile(user), uid: user.id, email: emailByUid.get(user.id) || '', banned: flags.banned.has(user.id), admin: flags.admins.has(user.id) }));
+    page.items = page.items.map(user => ({ ...sanitizeRelationshipProfile(user), uid: user.id, email: flags.emailByUid.get(user.id) || '', banned: flags.banned.has(user.id), admin: flags.admins.has(user.id) }));
   }
   page.userProfiles = fsQueryUserProfiles(adminRelatedUserUids(section, page.items), data.knownProfileUids);
   return page;
@@ -687,11 +686,32 @@ function fsQueryUserProfiles(uids, knownUids) {
 }
 
 function fsGetAdminUserFlags(uids) {
-  const result = { banned: new Set(), admins: new Set() };
-  if (!uids.length) return result;
-  const found = fsQueryDocumentIdsMany(['bannedUsers', 'adminUsers'], uids);
-  found.bannedUsers.forEach(uid => result.banned.add(uid));
-  found.adminUsers.forEach(uid => result.admins.add(uid));
+  const result = { banned: new Set(), admins: new Set(), emailByUid: new Map() };
+  const unique = [...new Set((uids || []).filter(isValidUid))].slice(0, 30);
+  if (!unique.length) return result;
+  const url = FIRESTORE_REST_ROOT.slice(0, -1) + ':runQuery';
+  const referenceValues = collectionId => unique.map(uid => ({ referenceValue: 'projects/' + FIREBASE_PROJECT_ID + '/databases/(default)/documents/' + collectionId + '/' + uid }));
+  const bodies = [
+    { structuredQuery: { from: [{ collectionId: 'bannedUsers' }], where: { fieldFilter: { field: { fieldPath: '__name__' }, op: 'IN', value: { arrayValue: { values: referenceValues('bannedUsers') } } } }, limit: unique.length } },
+    { structuredQuery: { from: [{ collectionId: 'adminUsers' }], where: { fieldFilter: { field: { fieldPath: '__name__' }, op: 'IN', value: { arrayValue: { values: referenceValues('adminUsers') } } } }, limit: unique.length } },
+    { structuredQuery: { from: [{ collectionId: 'userDirectory' }], where: { fieldFilter: { field: { fieldPath: 'uid' }, op: 'IN', value: { arrayValue: { values: unique.map(uid => ({ stringValue: uid })) } } } }, limit: unique.length } }
+  ];
+  const responses = typeof UrlFetchApp.fetchAll === 'function'
+    ? UrlFetchApp.fetchAll(bodies.map(body => ({ url, method: 'post', headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() }, muteHttpExceptions: true, contentType: 'application/json', payload: JSON.stringify(body) }))).map(response => ({ code: response.getResponseCode(), text: response.getContentText() }))
+    : bodies.map(body => fsFetch(url, 'post', body));
+  responses.forEach((response, index) => {
+    if (response.code !== 200) throw new Error(index === 2 ? 'Не удалось получить адреса участников.' : 'Не удалось получить статусы участников.');
+    JSON.parse(response.text).filter(row => row && row.document).forEach(row => {
+      const document = row.document;
+      const uid = document.name.split('/').pop();
+      if (index === 0 && unique.includes(uid)) result.banned.add(uid);
+      else if (index === 1 && unique.includes(uid)) result.admins.add(uid);
+      else if (index === 2) {
+        const item = fsDecodeFields(document.fields || {});
+        if (isValidUid(item.uid) && unique.includes(item.uid)) result.emailByUid.set(item.uid, uid);
+      }
+    });
+  });
   return result;
 }
 function fsQueryEmailDirectory(uids) {
