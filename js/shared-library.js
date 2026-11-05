@@ -121,14 +121,27 @@ export function createSharedLibraryStore({ db, sdk, user, downloadCover = downlo
         const payload = await sharedLibraryPayload(index, settings);
         const before = await sdk.getDocFromServer(manifest(user.uid));
         const previous = before.exists() ? before.data() : {};
-        const coversSignature = await syncCovers(index, projection, previous.coversSignature || '');
         if (before.exists() && previous.signature === payload.signature) {
-          if (previous.coversSignature !== coversSignature) {
-            await sdk.setDoc(manifest(user.uid), { ...previous, coversSignature });
-          }
+          await sdk.setDoc(manifest(user.uid), {
+            revision: previous.revision, signature: previous.signature, chunkCount: previous.chunkCount,
+            ...(previous.coversSignature ? { coversSignature: previous.coversSignature } : {}),
+            pendingRevision: previous.revision, pendingChunkCount: previous.chunkCount,
+          });
+          const coversSignature = await syncCovers(index, projection, previous.coversSignature || '');
+          ensureCurrent();
+          await sdk.setDoc(manifest(user.uid), {
+            revision: previous.revision, signature: previous.signature, chunkCount: previous.chunkCount,
+            coversSignature,
+          });
           return;
         }
         const revision = crypto.randomUUID();
+        await sdk.setDoc(manifest(user.uid), {
+          revision: previous.revision || '', signature: previous.signature || '', chunkCount: previous.chunkCount || 0,
+          ...(previous.coversSignature ? { coversSignature: previous.coversSignature } : {}),
+          pendingRevision: revision, pendingChunkCount: payload.chunks.length,
+        });
+        const coversSignature = await syncCovers(index, projection, previous.coversSignature || '');
         for (let start = 0; start < payload.chunks.length; start += 10) {
           const batch = sdk.writeBatch(db);
           payload.chunks.slice(start, start + 10).forEach((json, offset) => batch.set(sdk.doc(chunks(user.uid, revision), String(start + offset)), { position: start + offset, json }));
@@ -159,7 +172,7 @@ export function createSharedLibraryStore({ db, sdk, user, downloadCover = downlo
     },
     async load(owner, expected) {
       const before = await sdk.getDocFromServer(manifest(owner));
-      if (!before.exists()) throw new Error('╨С╨╕╨▒╨╗╨╕╨╛╤В╨╡╨║╨░ ╨╜╨╡╨┤╨╛╤Б╤В╤Г╨┐╨╜╨░.');
+      if (!before.exists()) throw new Error('Библиотека недоступна.');
       const header = before.data();
       if (expected && header.revision !== expected) throw new Error('╨С╨╕╨▒╨╗╨╕╨╛╤В╨╡╨║╨░ ╨╛╨▒╨╜╨╛╨▓╨╗╤П╨╡╤В╤Б╤П. ╨Т╤Л╨▒╨╡╤А╨╕╤В╨╡ ╨╡╤С ╨╡╤Й╤С ╤А╨░╨╖.');
       const snapshot = await sdk.getDocsFromServer(chunks(owner, header.revision));
