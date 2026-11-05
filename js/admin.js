@@ -216,7 +216,16 @@ function renderUsers() {
     const users = allUsers.filter(u => !query || [u.displayName,u.email].some(value => String(value || '').toLocaleLowerCase('ru').includes(query)));
     const registrationTime = u => {
       const value = u.createdAt || u.registeredAt || u.registrationDate;
-      const date = value?.toDate ? value.toDate() : value ? new Date(value) : null;
+      if (value?.toDate) {
+        const date = value.toDate();
+        return Number.isNaN(date.getTime()) ? 0 : date.getTime();
+      }
+      if (value && typeof value === 'object') {
+        const seconds = Number(value.seconds ?? value._seconds);
+        if (Number.isFinite(seconds)) return seconds * 1000 + Number(value.nanoseconds ?? value._nanoseconds ?? 0) / 1e6;
+      }
+      if (typeof value === 'number' && Number.isFinite(value)) return value < 1e12 ? value * 1000 : value;
+      const date = value ? new Date(value) : null;
       return date && !Number.isNaN(date.getTime()) ? date.getTime() : 0;
     };
     users.sort((a,b) => {
@@ -307,6 +316,12 @@ function renderRelations() {
     copy.setAttribute('aria-label','\u0421\u043a\u043e\u043f\u0438\u0440\u043e\u0432\u0430\u0442\u044c UID \u043f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u044f '+(u.displayName||u.uid));
     line.append(copy); box.append(line);
     children.forEach(c=>childList.append(branch(c,depth+1,next)));
+    if (children.length && u.displayName !== 'Ada King') {
+      childList.classList.add('collapsed');
+      toggle.textContent='\u25B8';
+      toggle.setAttribute('aria-expanded','false');
+      toggle.setAttribute('aria-label','\u0420\u0430\u0437\u0432\u0435\u0440\u043d\u0443\u0442\u044c \u0432\u0435\u0442\u043a\u0443 '+(u.displayName||u.uid));
+    }
     box.append(childList);
     return box;
   }
