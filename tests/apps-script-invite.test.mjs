@@ -537,6 +537,21 @@ test('non-user moderators do not receive email addresses from admin or ban recor
   assert.equal(card.banned.reason, 'private reason');
   assert.equal(card.banned.email, '');
 });
+test('relationship-only APIs redact legacy profile email fields', () => {
+  const permissions = { relationships: true };
+  const app = adminHarness({ permissions });
+  app.records.set('users/target-uid', { id: 'target-uid', displayName: 'Target', invitedByUid: 'inviter-uid', email: 'target-profile@example.com' });
+  app.records.set('users/inviter-uid', { id: 'inviter-uid', displayName: 'Inviter', email: 'inviter-profile@example.com' });
+  app.context.fsQueryGroupByField = () => [];
+  app.context.fsQueryFilteredPage = () => ({ items: [{ id: 'invited-uid', displayName: 'Invited', email: 'invited-profile@example.com' }], hasMore: false, nextCursor: null });
+  const actor = { uid: 'mod-uid', admin: { role: 'moderator', permissions } };
+  const card = app.context.getAdminUserCardApi(actor, { uid: 'target-uid' });
+  assert.equal(card.user.email, '');
+  assert.equal(card.inviter.email, '');
+  assert.equal(card.invited[0].email, '');
+  assert.equal(app.context.getAdminRelationshipRootsApi(actor, {}).items[0].email, '');
+  assert.equal(app.context.getAdminBranchApi(actor, { uid: 'target-uid' }).items[0].email, '');
+});
 test('admin API rejects a banned moderator before any administrative operation', () => {
   const app = adminHarness({ permissions: { users: true }, banned: true });
   assert.throws(() => app.context.requireAdminApi('mod-uid', 'users'), /Доступ к Тайной Библиотеке заблокирован/);

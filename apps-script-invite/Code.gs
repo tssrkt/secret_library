@@ -503,15 +503,23 @@ function fsQueryDocumentIds(collectionId, ids) {
   if (response.code !== 200) throw new Error('Не удалось получить статусы участников.');
   return JSON.parse(response.text).filter(row => row && row.document).map(row => row.document.name.split('/').pop());
 }
+function redactUserEmails(actor, items) {
+  const canReadEmails = actor.admin.role === 'superadmin' || actor.admin.permissions?.users === true;
+  return canReadEmails ? items : items.map(user => ({ ...user, email: '' }));
+}
 function getAdminRelationshipRootsApi(actor, data) {
   requireAdminApi(actor.uid, 'relationships');
-  return fsQueryFilteredPage('users', 'invitedByUid', null, 25, data.cursor || '');
+  const page = fsQueryFilteredPage('users', 'invitedByUid', null, 25, data.cursor || '');
+  page.items = redactUserEmails(actor, page.items);
+  return page;
 }
 function getAdminBranchApi(actor, data) {
   requireAdminApi(actor.uid, 'relationships');
   const uid = String(data.uid || '');
   if (!uid || uid.length > 128) throw new Error('Некорректный UID участника.');
-  return fsQueryFilteredPage('users', 'invitedByUid', uid, 25, data.cursor || '');
+  const page = fsQueryFilteredPage('users', 'invitedByUid', uid, 25, data.cursor || '');
+  page.items = redactUserEmails(actor, page.items);
+  return page;
 }
 
 function getAdminUserCardApi(actor, data) {
@@ -535,8 +543,8 @@ function getAdminUserCardApi(actor, data) {
   const bannedRecord = canReadBanDetails ? fsGet('bannedUsers/' + encodeURIComponent(uid)) : null;
   return {
     user: { ...profile, uid, email: directory?.id ? decodeURIComponent(directory.id) : '' },
-    inviter: inviter ? { ...inviter, uid: profile.invitedByUid } : null,
-    invited: invited.map(user => ({ ...user, uid: user.id })),
+    inviter: inviter ? { ...inviter, uid: profile.invitedByUid, email: canReadEmails ? (inviter.email || '') : '' } : null,
+    invited: invited.map(user => ({ ...user, uid: user.id, email: canReadEmails ? (user.email || '') : '' })),
     admin: adminRecord ? { ...adminRecord, email: canReadEmails ? (adminRecord.email || '') : '' } : null,
     banned: bannedRecord ? { ...bannedRecord, email: canReadEmails ? (bannedRecord.email || '') : '' } : null,
     outgoing: outgoing.filter(share => share.active === true),
