@@ -342,6 +342,7 @@ function handleAdminRequest(input) {
   const action = String(input.action || '');
   const data = input.data && typeof input.data === 'object' ? input.data : {};
   if (action === 'bootstrapAdmin') {
+
     if (normalizeEmail(user.email) !== ADMIN_EMAIL_ADDRESS) throw new Error('Первоначальная настройка доступна только владельцу проекта.');
     if (fsGet('bannedUsers/' + user.localId)) throw new Error('Доступ к Тайной Библиотеке заблокирован.');
     const admins = fsList('adminUsers');
@@ -403,7 +404,7 @@ function getAdminDashboardApi(actor) {
   const directory = p.users ? fsList('userDirectory') : [];
   const emailByUid = new Map(directory.filter(item => item.uid && item.id).map(item => [item.uid, item.id]));
   const events = p.events ? fsListPage('adminEvents', 100, 'createdAt desc') : [];
-  const userRows = users.map(u => ({ ...u, uid: u.id, email: emailByUid.get(u.id) || '', banned: banned.some(b => b.id === u.id), admin: admins.some(a => a.id === u.id) }));
+  const userRows = users.map(u => ({ ...(p.users ? u : sanitizeRelationshipProfile(u)), uid: u.id, email: p.users ? (emailByUid.get(u.id) || '') : '', banned: banned.some(b => b.id === u.id), admin: admins.some(a => a.id === u.id) }));
   const visibleShares = redactPrivateEmails(actor, shares);
   const visibleAdmins = redactPrivateEmails(actor, admins);
   const visibleBanned = redactPrivateEmails(actor, banned);
@@ -508,6 +509,17 @@ function fsQueryDocumentIds(collectionId, ids) {
   if (response.code !== 200) throw new Error('Не удалось получить статусы участников.');
   return JSON.parse(response.text).filter(row => row && row.document).map(row => row.document.name.split('/').pop());
 }
+function sanitizeRelationshipProfile(profile) {
+  const safe = {};
+  ['id', 'displayName', 'photoURL', 'createdAt', 'invitedByUid'].forEach(key => {
+    if (Object.prototype.hasOwnProperty.call(profile, key)) safe[key] = profile[key];
+  });
+  return safe;
+}
+function visibleUserProfile(actor, profile, uid) {
+  const canReadUserDetails = actor.admin.role === 'superadmin' || actor.admin.permissions?.users === true;
+  return { ...(canReadUserDetails ? profile : sanitizeRelationshipProfile(profile)), ...(uid ? { uid } : {}) };
+}
 function redactPrivateEmails(actor, items) {
   const canReadEmails = actor.admin.role === 'superadmin' || actor.admin.permissions?.users === true;
   if (canReadEmails) return items;
@@ -523,7 +535,7 @@ function redactPrivateEmails(actor, items) {
 function getAdminRelationshipRootsApi(actor, data) {
   requireAdminApi(actor.uid, 'relationships');
   const page = fsQueryFilteredPage('users', 'invitedByUid', null, 25, data.cursor || '');
-  page.items = redactPrivateEmails(actor, page.items);
+  page.items = page.items.map(user => visibleUserProfile(actor, user, user.id));
   return page;
 }
 function getAdminBranchApi(actor, data) {
@@ -531,7 +543,7 @@ function getAdminBranchApi(actor, data) {
   const uid = String(data.uid || '');
   if (!uid || uid.length > 128) throw new Error('Некорректный UID участника.');
   const page = fsQueryFilteredPage('users', 'invitedByUid', uid, 25, data.cursor || '');
-  page.items = redactPrivateEmails(actor, page.items);
+  page.items = page.items.map(user => visibleUserProfile(actor, user, user.id));
   return page;
 }
 
@@ -555,9 +567,9 @@ function getAdminUserCardApi(actor, data) {
   const adminRecord = canReadAdminDetails ? fsGet('adminUsers/' + encodeURIComponent(uid)) : null;
   const bannedRecord = canReadBanDetails ? fsGet('bannedUsers/' + encodeURIComponent(uid)) : null;
   return {
-    user: { ...profile, uid, email: directory?.id ? decodeURIComponent(directory.id) : '' },
-    inviter: inviter ? redactPrivateEmails(actor, [{ ...inviter, uid: profile.invitedByUid }])[0] : null,
-    invited: redactPrivateEmails(actor, invited.map(user => ({ ...user, uid: user.id }))),
+    user: { ...visibleUserProfile(current, profile, uid), email: directory?.id ? decodeURIComponent(directory.id) : '' },
+    inviter: inviter ? visibleUserProfile(current, inviter, profile.invitedByUid) : null,
+    invited: invited.map(user => visibleUserProfile(current, user, user.id)),
     admin: adminRecord ? redactPrivateEmails(actor, [adminRecord])[0] : null,
     banned: bannedRecord ? redactPrivateEmails(actor, [bannedRecord])[0] : null,
     outgoing: redactPrivateEmails(actor, outgoing.filter(share => share.active === true)),
