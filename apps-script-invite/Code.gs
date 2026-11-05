@@ -396,7 +396,13 @@ function handleAdminRequest(input) {
     if (fsGet('bannedUsers/' + user.localId)) throw new Error('Доступ к Тайной Библиотеке заблокирован.');
     const admins = fsList('adminUsers');
     const current = fsGet('adminUsers/' + user.localId);
-    if (admins.length && current?.role !== 'superadmin') throw new Error('Главный администратор уже настроен.');
+    // Do not mistake the presence of moderators for an existing superadmin.
+    // This lets the configured bootstrap account recover if the superadmin record
+    // was lost, while still refusing to create a second superadmin.
+    const existingSuperAdmin = admins.find(admin => admin.role === 'superadmin');
+    if (existingSuperAdmin && existingSuperAdmin.id !== user.localId && current?.role !== 'superadmin') {
+      throw new Error('Главный администратор уже настроен.');
+    }
     if (current?.role === 'superadmin') {
       fsSet('users/' + user.localId, { isAdmin: true });
       return { ok: true, alreadyAdmin: true };
