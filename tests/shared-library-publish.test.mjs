@@ -1,10 +1,35 @@
 ﻿import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { webcrypto } from 'node:crypto';
-import { createSharedLibraryStore } from '../js/shared-library.js';
+import { createSharedLibraryStore, sharedLibraryIndex } from '../js/shared-library.js';
 import { socialError } from '../js/social-runtime.js';
 
 if (!globalThis.crypto) globalThis.crypto = webcrypto;
+
+test('excluded nested folders and all their descendants stay out of the shared catalog', () => {
+  const index = {
+    version: 4, rootFolderId: 'root', folders: [
+      { id: 'root', parentId: null, name: 'Root' },
+      { id: 'public', parentId: 'root', name: 'Public' },
+      { id: 'private', parentId: 'public', name: 'Private' },
+      { id: 'private-child', parentId: 'private', name: 'Private child' },
+      { id: 'public-child', parentId: 'public', name: 'Public child' },
+    ],
+    books: [
+      { id: 'public-book', parentId: 'public', title: 'Public book' },
+      { id: 'private-book', parentId: 'private', title: 'Private book' },
+      { id: 'private-child-book', parentId: 'private-child', title: 'Private child book' },
+      { id: 'public-child-book', parentId: 'public-child', title: 'Public child book' },
+    ],
+  };
+  const projection = sharedLibraryIndex(index, {
+    sharing: { excludedFolderIds: ['private'] },
+    folderNotes: { private: 'private note', 'private-child': 'child note', public: 'public note' },
+  });
+  assert.deepEqual(projection.folders.map(({ id }) => id), ['root', 'public', 'public-child']);
+  assert.deepEqual(projection.books.map(({ id }) => id), ['public-book', 'public-child-book']);
+  assert.deepEqual(projection.folderNotes, { public: 'public note' });
+});
 
 test('server manifest read failure aborts publication without cache fallback or writes and can be retried', async () => {
   let offline = true;

@@ -7,7 +7,7 @@ export function sharedLibraryIndex(index, settings) {
   let changed = true;
   while (changed) {
     changed = false;
-    for (const folder of index.folders) if (!allowed.has(folder.id) && allowed.has(folder.parentId)) { allowed.add(folder.id); changed = true; }
+    for (const folder of index.folders) if (!excluded.has(folder.id) && !allowed.has(folder.id) && allowed.has(folder.parentId)) { allowed.add(folder.id); changed = true; }
   }
   const fields = ['id', 'parentId', 'fileName', 'extension', 'sourceType', 'size', 'modifiedTime', 'metadataStatus',
     'metadataVersion', 'title', 'authors', 'genres', 'series', 'seriesNumber', 'annotation', 'preview', 'language', 'resourceKey'];
@@ -81,7 +81,7 @@ export function createSharedLibraryStore({ db, sdk, user, downloadCover = downlo
         if (existing.get(item.book.id)?.sourceKey === item.sourceKey) continue;
         const blob = await downloadCover(item.book.coverFileId);
         const data = await blobToBase64(blob);
-        if (data.length > 800000) throw new Error(`╨Ю╨▒╨╗╨╛╨╢╨║╨░ ╨║╨╜╨╕╨│╨╕ ┬л${item.book.title || item.book.fileName || item.book.id}┬╗ ╤Б╨╗╨╕╤И╨║╨╛╨╝ ╨▓╨╡╨╗╨╕╨║╨░ ╨┤╨╗╤П ╨▒╨╡╤Б╨┐╨╗╨░╤В╨╜╨╛╨│╨╛ ╤Е╤А╨░╨╜╨╕╨╗╨╕╤Й╨░ Firebase.`);
+        if (data.length > 800000) throw new Error(`Обложка книги «${item.book.title || item.book.fileName || item.book.id}» слишком велика для бесплатного хранилища Firebase.`);
         ensureCurrent();
         await sdk.setDoc(coverRef(user.uid, item.book.id), { sourceKey: item.sourceKey, mimeType: 'image/webp', data });
       }
