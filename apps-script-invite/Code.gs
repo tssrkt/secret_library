@@ -1174,7 +1174,15 @@ function fsRequest(method, path, body) {
       }
     }
     const operation = String(method || 'get').toUpperCase() + ' ' + parts.join('/');
-    throw new Error('Операция Firebase не выполнена (' + response.code + '; ' + operation + ').');
+    let diagnostic = '';
+    try {
+      const errorBody = JSON.parse(response.text || '{}').error || {};
+      const status = String(errorBody.status || '').replace(/[^A-Z_]/g, '').slice(0, 40);
+      const message = String(errorBody.message || '').replace(/[\r\n]+/g, ' ').slice(0, 220);
+      if (status || message) diagnostic = '; ' + [status, message].filter(Boolean).join(': ');
+      console.error('Firestore request failed', { code: response.code, operation: operation, status: status, message: message });
+    } catch (_) {}
+    throw new Error('Операция Firebase не выполнена (' + response.code + '; ' + operation + diagnostic + ').');
   }
   return response.text ? JSON.parse(response.text) : {};
 }
