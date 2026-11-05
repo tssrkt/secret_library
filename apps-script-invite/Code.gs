@@ -566,8 +566,9 @@ function getAdminDashboardSummaryApi(actor) {
     { key: 'banned', enabled: p.banned, collectionId: 'bannedUsers' }
   ];
   const counts = Object.fromEntries(countSpecs.map(spec => [spec.key, null]));
-  Object.assign(counts, fsCountMany(countSpecs.filter(spec => spec.enabled)));
-  const superadminUid = fsFindSuperAdminUid();
+  const summary = fsCountMany(countSpecs.filter(spec => spec.enabled), true);
+  Object.assign(counts, summary.counts);
+  const superadminUid = summary.superAdminUid;
   return { permissions: p, counts, superAdminUid: superadminUid, invitationEmailTemplate: p.texts ? getInvitationEmailTemplate() : null, invitationLimit: p.invites ? getInvitationLimit() : null };
 }
 
@@ -601,10 +602,16 @@ function fsCount(collectionId, filter, allDescendants) {
   const value = rows.find(row => row && row.result)?.result?.aggregateFields?.total?.integerValue;
   return Number(value || 0);
 }
-function fsCountMany(specs) {
-  if (!specs.length) return {};
-  if (typeof UrlFetchApp.fetchAll !== 'function' || specs.length === 1) {
-    return Object.fromEntries(specs.map(spec => [spec.key, fsCount(spec.collectionId, spec.filter, spec.allDescendants)]));
+function fsCountMany(specs, includeSuperAdmin) {
+  const cache = includeSuperAdmin ? CacheService.getScriptCache() : null;
+  const cachedSuperAdmin = cache ? cache.get('superadmin_uid') : null;
+  if (includeSuperAdmin && cachedSuperAdmin) {
+    return { counts: fsCountMany(specs, false), superAdminUid: cachedSuperAdmin === 'none' ? null : cachedSuperAdmin };
+  }
+  if (!specs.length && !includeSuperAdmin) return {};
+  if (typeof UrlFetchApp.fetchAll !== 'function' || (!includeSuperAdmin && specs.length === 1)) {
+    const counts = Object.fromEntries(specs.map(spec => [spec.key, fsCount(spec.collectionId, spec.filter, spec.allDescendants)]));
+    return includeSuperAdmin ? { counts, superAdminUid: fsFindSuperAdminUid() } : counts;
   }
   const token = ScriptApp.getOAuthToken();
   const requests = specs.map(spec => {
@@ -620,16 +627,31 @@ function fsCountMany(specs) {
       payload: JSON.stringify({ structuredAggregationQuery: { structuredQuery, aggregations: [{ count: {}, alias: 'total' }] } })
     };
   });
+  if (includeSuperAdmin) requests.push({
+    url: FIRESTORE_REST_ROOT.slice(0, -1) + ':runQuery', method: 'post',
+    headers: { Authorization: 'Bearer ' + token }, muteHttpExceptions: true, contentType: 'application/json',
+    payload: JSON.stringify({ structuredQuery: {
+      from: [{ collectionId: 'adminUsers' }],
+      where: { fieldFilter: { field: { fieldPath: 'role' }, op: 'EQUAL', value: { stringValue: 'superadmin' } } },
+      limit: 1
+    } })
+  });
   const responses = UrlFetchApp.fetchAll(requests);
   const counts = {};
-  responses.forEach((response, index) => {
+  responses.slice(0, specs.length).forEach((response, index) => {
     const code = response.getResponseCode();
-    if (code !== 200) throw new Error('Не удалось получить счётчики Firebase (' + code + ').');
+    if (code !== 200) throw new Error('Не удалось получить счётчик Firebase (' + code + ').');
     const rows = JSON.parse(response.getContentText());
     const value = rows.find(row => row && row.result)?.result?.aggregateFields?.total?.integerValue;
     counts[specs[index].key] = Number(value || 0);
   });
-  return counts;
+  if (!includeSuperAdmin) return counts;
+  const response = responses[specs.length];
+  if (response.getResponseCode() !== 200) throw new Error('Не удалось определить главного администратора.');
+  const document = JSON.parse(response.getContentText()).find(row => row && row.document)?.document;
+  const superAdminUid = document ? document.name.split('/').pop() : null;
+  cache.put('superadmin_uid', superAdminUid || 'none', 30);
+  return { counts, superAdminUid };
 }
 function getAdminCollectionPageApi(actor, data) {
   const config = {

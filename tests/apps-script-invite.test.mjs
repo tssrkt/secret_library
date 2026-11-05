@@ -1257,3 +1257,28 @@ test('admin user list does not fetch profiles already present on the current pag
     { uid: 'user-2', invitedByUid: 'user-3' }
   ])), JSON.stringify(['user-3']));
 });
+
+
+test('admin summary batches cold-cache superadmin lookup with aggregation counts', () => {
+  const app = harness();
+  const batches = [];
+  app.context.ScriptApp = { getOAuthToken: () => 'test-token' };
+  app.context.UrlFetchApp.fetchAll = requests => {
+    batches.push(requests);
+    return requests.map(request => ({
+      getResponseCode: () => 200,
+      getContentText: () => request.url.includes('runAggregationQuery')
+        ? JSON.stringify([{ result: { aggregateFields: { total: { integerValue: '4' } } } }])
+        : JSON.stringify([{ document: {
+          name: 'projects/project-071ee00e-4a4a-4a3d-95d/databases/(default)/documents/adminUsers/root',
+          fields: { role: { stringValue: 'superadmin' } }
+        } }])
+    }));
+  };
+  const summary = app.context.getAdminDashboardSummaryApi({ uid: 'root', admin: { role: 'superadmin' } });
+  assert.equal(batches.length, 1);
+  assert.equal(batches[0].filter(request => request.url.includes('runAggregationQuery')).length, 6);
+  assert.equal(batches[0].filter(request => request.url.endsWith('documents:runQuery')).length, 1);
+  assert.equal(summary.counts.users, 4);
+  assert.equal(summary.superAdminUid, 'root');
+});
