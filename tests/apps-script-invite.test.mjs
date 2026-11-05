@@ -818,9 +818,16 @@ test('prevents changing a library share involving the superadmin on the server',
     if (path === 'adminUsers/superadmin-uid') return { uid: 'superadmin-uid', role: 'superadmin' };
     return null;
   };
+  const adminReadPaths = [];
+  const originalFsGetMany = app.context.fsGetMany;
+  app.context.fsGetMany = paths => {
+    adminReadPaths.push(...paths);
+    return originalFsGetMany(paths);
+  };
   app.context.fsSet = () => assert.fail('must not mutate a protected share');
   app.context.fsAddEvent = () => assert.fail('must not log a blocked mutation as completed');
   assert.throws(() => app.context.setLibraryShareApi({}, { id: 'owner-uid__superadmin-uid', active: false }), /Нельзя изменять доступ/);
+  assert.deepEqual(adminReadPaths, ['adminUsers/owner-uid', 'adminUsers/superadmin-uid']);
 });
 
 

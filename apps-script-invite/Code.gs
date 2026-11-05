@@ -1307,8 +1307,9 @@ function setLibraryShareApi(actor, data) {
   if (data.active !== false) throw new Error('Администратор может только закрыть доступ; повторное открытие выполняет владелец.');
   const current = fsGet('libraryShares/' + encodeURIComponent(id));
   if (!current) throw new Error('Связь доступа не найдена.');
-  const protectedUids = [current.ownerUid, current.viewerUid].filter(Boolean);
-  if (protectedUids.some(uid => fsGet('adminUsers/' + uid)?.role === 'superadmin')) {
+  const protectedUids = [...new Set([current.ownerUid, current.viewerUid].filter(isValidUid))];
+  const protectedAdmins = fsGetMany(protectedUids.map(uid => 'adminUsers/' + encodeURIComponent(uid)));
+  if (protectedAdmins.some(admin => admin?.role === 'superadmin')) {
     throw new Error('Нельзя изменять доступ, связанный с главным администратором.');
   }
   fsSet('libraryShares/' + encodeURIComponent(id), { active: data.active, revokedAt: data.active ? null : new Date() });
