@@ -157,8 +157,17 @@ export function createSocialStore({ db, sdk, user }) {
         const shares = [...collections.outgoing, ...collections.incoming];
         const ids = new Set(shares.filter((item) => item.active).flatMap((item) => [item.ownerUid, item.viewerUid]));
         await Promise.all([...ids].map(async (id) => {
-          const profile = data(await getDoc(ref('users', id)));
-          profiles[id] = id === superAdminUid ? { ...(profile || {}), isAdmin: true } : profile;
+          let profile = null;
+          try {
+            profile = data(await getDoc(ref('users', id)));
+          } catch (error) {
+            // Legacy profiles may still contain private fields and are deliberately unreadable
+            // until their owner signs in and migrates the document. One hidden profile must not
+            // suppress every friend and shared library.
+            if (!String(error?.code || '').includes('permission-denied')) throw error;
+          }
+          const safeProfile = profile || { uid: id, displayName: 'Пользователь' };
+          profiles[id] = id === superAdminUid ? { ...safeProfile, isAdmin: true } : safeProfile;
         }));
         if (stopped || disposed || current !== revision) return;
         listener({ friends: friendsModel(uid, shares, profiles, collections.contacts),
