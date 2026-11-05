@@ -479,8 +479,10 @@ function handleAdminRequest(input) {
 }
 
 function requireAdminApi(uid, permission) {
-  if (fsGet('bannedUsers/' + uid)) throw new Error('Доступ к Тайной Библиотеке заблокирован.');
-  const admin = fsGet('adminUsers/' + uid);
+  // Fetch the ban and admin records in one Firestore HTTP request.
+  const records = fsGetAdminAccessRecords(uid);
+  if (records.banned) throw new Error('Доступ к Тайной Библиотеке заблокирован.');
+  const admin = records.admin;
   if (!admin || admin.active !== true) throw new Error('Нет прав администратора.');
   if (admin.role !== 'superadmin' && permission && admin.permissions?.[permission] !== true) {
     throw new Error('Недостаточно прав для этого действия.');
@@ -1082,6 +1084,27 @@ function fsGet(path) {
   const response = fsRequest('get', path);
   return response ? { ...fsDecodeFields(response.fields || {}), id: response.name.split('/').pop() } : null;
 }
+function fsGetAdminAccessRecords(uid) {
+  const base = FIRESTORE_REST_ROOT.slice(0, -1);
+  const response = fsFetch(base + ':batchGet', 'post', {
+    documents: [
+      base + '/bannedUsers/' + encodeURIComponent(uid),
+      base + '/adminUsers/' + encodeURIComponent(uid)
+    ]
+  });
+  if (response.code < 200 || response.code >= 300) {
+    throw new Error('Не удалось проверить права администратора в Firebase (HTTP ' + response.code + ').');
+  }
+  const records = { banned: null, admin: null };
+  JSON.parse(response.text).forEach(row => {
+    const doc = row && row.found;
+    if (!doc || !doc.name) return;
+    const decoded = { ...fsDecodeFields(doc.fields || {}), id: doc.name.split('/').pop() };
+    if (doc.name.indexOf('/documents/bannedUsers/') >= 0) records.banned = decoded;
+    else if (doc.name.indexOf('/documents/adminUsers/') >= 0) records.admin = decoded;
+  });
+  return records;
+}
 function fsList(path) {
   const out = [];
   let token = '';
@@ -1158,17 +1181,7 @@ function fsRequest(method, path, body) {
 function fsFetch(url, method, body) {
   const options = { method: method, headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() }, muteHttpExceptions: true };
   if (body !== undefined) { options.contentType = 'application/json'; options.payload = JSON.stringify(body); }
-  const retryableRead = String(method || 'get').toLowerCase() === 'get';
-  const maxAttempts = retryableRead ? 4 : 1;
-  let response;
-  for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    response = UrlFetchApp.fetch(url, options);
-    const code = response.getResponseCode();
-    if (!retryableRead || (code !== 429 && code !== 503) || attempt === maxAttempts - 1) break;
-    // Firestore can briefly throttle bursts of document reads. Retry reads only,
-    // with exponential backoff; never automatically replay writes.
-    Utilities.sleep(250 * Math.pow(2, attempt));
-  }
+  const response = UrlFetchApp.fetch(url, options);
   return { code: response.getResponseCode(), text: response.getContentText() };
 }
 function fsDecodeFields(fields) {
