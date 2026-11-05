@@ -51,7 +51,8 @@ function gasRequest(action, payload) {
     form.append(field);
     const cleanup = () => { window.removeEventListener('message', onMessage); clearTimeout(timer); form.remove(); iframe.remove(); };
     const onMessage = event => {
-      if (event.source !== iframe.contentWindow) return;
+      // Apps Script may post from its nested sandbox frame rather than the outer form iframe.
+      // The allowlisted origin and unpredictable requestId authenticate the response.
       if (event.origin !== 'https://script.google.com' && event.origin !== 'https://script.googleusercontent.com') return;
       if (event.data?.requestId !== requestId) return;
       if (event.data?.type === 'secret-library-invite-result') {
