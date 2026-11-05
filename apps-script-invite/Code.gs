@@ -892,27 +892,8 @@ function fsRequest(method, path, body) {
 function fsFetch(url, method, body) {
   const options = { method: method, headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() }, muteHttpExceptions: true };
   if (body !== undefined) { options.contentType = 'application/json'; options.payload = JSON.stringify(body); }
-  let response;
-  let code = 0;
-  let responseText = '';
-  for (let attempt = 0; attempt < 4; attempt++) {
-    response = UrlFetchApp.fetch(url, options);
-    code = response.getResponseCode();
-    responseText = response.getContentText();
-    if (code !== 429 && code < 500) break;
-    if (attempt < 3) Utilities.sleep(500 * Math.pow(2, attempt));
-  }
-  if (code === 429 || code >= 500) {
-    let detail = '';
-    try {
-      const parsed = JSON.parse(responseText || '{}');
-      detail = parsed.error && parsed.error.message ? String(parsed.error.message) : '';
-    } catch (_) {}
-    detail = detail.replace(/[\r\n]+/g, ' ').slice(0, 180);
-    const endpoint = String(url).replace(/^https:\/\/firestore\.googleapis\.com\/v1\/projects\/[^/]+\/databases\/\([^/]+\)\/documents\/?/i, '').split('?')[0].slice(0, 120);
-    throw new Error('Firebase ' + method.toUpperCase() + ' ' + (endpoint || 'documents') + ' returned HTTP ' + code + (detail ? ': ' + detail : ''));
-  }
-  return { code: code, text: responseText };
+  const response = UrlFetchApp.fetch(url, options);
+  return { code: response.getResponseCode(), text: response.getContentText() };
 }
 function fsDecodeFields(fields) {
   const out = {};
