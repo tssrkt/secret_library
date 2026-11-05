@@ -298,16 +298,44 @@ test('admin related profiles fetch multiple Firestore batches concurrently', () 
   assert.equal(profiles['profile-60'].displayName, 'profile-60');
 });
 
+test('relationship root page batches users and shared-library reads in one Firestore round trip', () => {
+  const app = harness();
+  const requests = [];
+  app.context.ScriptApp = { getOAuthToken: () => 'test-token' };
+  app.context.UrlFetchApp.fetchAll = batch => {
+    requests.push(...batch);
+    return batch.map((request, index) => {
+      const query = JSON.parse(request.payload).structuredQuery;
+      const collection = query.from[0].collectionId;
+      const id = collection === 'users' ? 'user-1' : 'share-1';
+      return {
+        getResponseCode: () => 200,
+        getContentText: () => JSON.stringify([{ document: {
+          name: `projects/project/databases/(default)/documents/${collection}/${id}`,
+          fields: collection === 'libraryShares' ? { ownerUid: { stringValue: 'owner-uid' } } : { displayName: { stringValue: 'Reader' } }
+        } }])
+      };
+    });
+  };
+  const pages = app.context.fsQueryPageMany([
+    { path: 'users', pageSize: 25, cursor: '' },
+    { path: 'libraryShares', pageSize: 100, cursor: '' }
+  ]);
+  assert.equal(requests.length, 2);
+  assert.ok(requests.every(request => request.method === 'post' && request.headers.Authorization === 'Bearer test-token'));
+  assert.deepEqual(pages.map(page => page.items[0].id), ['user-1', 'share-1']);
+  assert.equal(pages[0].items[0].displayName, 'Reader');
+});
+
 test('relationship pages fetch shared-library records only on the initial request', () => {
   const app = harness();
   let shareReads = 0;
   app.context.requireAdminApi = () => ({ uid: 'root', admin: { role: 'superadmin' } });
-  app.context.fsQueryPage = (collectionId) => {
-    if (collectionId === 'libraryShares') {
-      shareReads++;
-      return { items: [{ id: 'share-1', ownerUid: 'owner-uid', viewerUid: 'viewer-uid', active: true }] };
-    }
-    return { items: [{ id: 'user-1', displayName: 'Reader' }], nextCursor: '', hasMore: false };
+  app.context.fsQueryPageMany = specs => {
+    if (specs.some(spec => spec.path === 'libraryShares')) shareReads++;
+    return specs.map(spec => spec.path === 'libraryShares'
+      ? { items: [{ id: 'share-1', ownerUid: 'owner-uid', viewerUid: 'viewer-uid', active: true }] }
+      : { items: [{ id: 'user-1', displayName: 'Reader' }], nextCursor: '', hasMore: false });
   };
   app.context.fsQueryUserProfiles = () => ({});
   const actor = { uid: 'root', admin: { role: 'superadmin' } };
@@ -824,12 +852,12 @@ test('non-user moderators do not receive email addresses from admin or ban recor
 });
 test('relationship admin page lists all users and resolves names for access-share participants', () => {
   const app = adminHarness({ permissions: { relationships: true } });
-  app.context.fsQueryFilteredPage = (path) => ({
-    items: path === 'users'
+  app.context.fsQueryPageMany = specs => specs.map(spec => ({
+    items: spec.path === 'users'
       ? [{ id: 'invitee-uid', displayName: 'Invitee', invitedByUid: 'owner-uid', email: 'private@example.com' }]
       : [{ id: 'share-1', ownerUid: 'owner-uid', viewerUid: 'invitee-uid', active: true, ownerEmail: 'private@example.com' }],
     hasMore: false, nextCursor: null
-  });
+  }));
   app.context.fsQueryUserProfiles = uids => {
     assert(uids.includes('owner-uid'));
     return { 'owner-uid': { uid: 'owner-uid', displayName: 'Owner' } };
@@ -858,6 +886,7 @@ test('relationship-only APIs redact legacy profile email fields', () => {
   assert.equal(card.inviter.privateNote, undefined);
   assert.equal(card.invited[0].email, undefined);
   assert.equal(card.invited[0].privateNote, undefined);
+  app.context.fsQueryPageMany = () => [{ items: [{ id: 'target-uid', displayName: 'Target', email: 'target-profile@example.com', privateNote: 'must not leak' }], hasMore: false, nextCursor: null }];
   const roots = app.context.getAdminRelationshipRootsApi(actor, {}).items[0];
   assert.equal(roots.email, undefined);
   assert.equal(roots.privateNote, undefined);

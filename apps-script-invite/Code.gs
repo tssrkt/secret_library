@@ -876,15 +876,65 @@ function redactPrivateEmails(actor, items, section) {
 }
 function getAdminRelationshipRootsApi(actor, data) {
   requireAdminApi(actor.uid, 'relationships');
-  const page = fsQueryPage('users', 25, data.cursor || '');
+  const includeShares = data.includeShares === true;
+  const pages = fsQueryPageMany([
+    { path: 'users', pageSize: 25, cursor: data.cursor || '' },
+    ...(includeShares ? [{ path: 'libraryShares', pageSize: 100, cursor: '' }] : [])
+  ]);
+  const page = pages[0];
   page.items = page.items.map(user => visibleUserProfile(actor, user, user.id));
-  if (data.includeShares === true) {
-    page.shares = redactPrivateEmails(actor, fsQueryPage('libraryShares', 100, '').items, 'shares');
-  }
+  if (includeShares) page.shares = redactPrivateEmails(actor, pages[1].items, 'shares');
   const uids = new Set(adminRelatedUserUids('users', page.items));
   (page.shares || []).forEach(share => { if (isValidUid(share.ownerUid)) uids.add(share.ownerUid); if (isValidUid(share.viewerUid)) uids.add(share.viewerUid); });
   page.userProfiles = fsQueryUserProfiles([...uids], data.knownProfileUids);
   return page;
+}
+
+function fsQueryPageMany(specs) {
+  if (!Array.isArray(specs) || !specs.length) return [];
+  if (specs.length === 1 || typeof UrlFetchApp.fetchAll !== 'function') {
+    return specs.map(spec => fsQueryPage(spec.path, spec.pageSize, spec.cursor));
+  }
+  const url = FIRESTORE_REST_ROOT.slice(0, -1) + ':runQuery';
+  const queries = specs.map(spec => {
+    const path = String(spec.path || '');
+    const size = Math.max(1, Math.min(100, Number(spec.pageSize) || 25));
+    const structuredQuery = {
+      from: [{ collectionId: path }],
+      orderBy: [{ field: { fieldPath: '__name__' }, direction: 'ASCENDING' }],
+      limit: size + 1
+    };
+    if (spec.cursor) {
+      let decoded;
+      try { decoded = JSON.parse(Utilities.newBlob(Utilities.base64DecodeWebSafe(spec.cursor)).getDataAsString()); }
+      catch (_) { throw new Error('Invalid pagination cursor.'); }
+      const expectedPrefix = 'projects/' + FIREBASE_PROJECT_ID + '/databases/(default)/documents/' + path + '/';
+      if (decoded.path !== path || typeof decoded.name !== 'string' || !decoded.name.startsWith(expectedPrefix) || decoded.name !== expectedPrefix + decoded.id || String(decoded.id).includes('/')) throw new Error('Invalid pagination cursor.');
+      structuredQuery.startAt = { before: false, values: [{ referenceValue: decoded.name }] };
+    }
+    return { path, size, body: { structuredQuery } };
+  });
+  const requests = queries.map(query => ({
+    url, method: 'post', headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() },
+    muteHttpExceptions: true, contentType: 'application/json', payload: JSON.stringify(query.body)
+  }));
+  return UrlFetchApp.fetchAll(requests).map((response, index) => {
+    const query = queries[index];
+    const code = response.getResponseCode();
+    if (code !== 200) throw new Error('Firestore page query failed (HTTP ' + code + ').');
+    const rows = JSON.parse(response.getContentText()).filter(row => row && row.document).map(row => ({
+      ...fsDecodeFields(row.document.fields || {}), id: row.document.name.split('/').pop(), _documentName: row.document.name
+    }));
+    const hasMore = rows.length > query.size;
+    const items = rows.slice(0, query.size);
+    const last = items[items.length - 1];
+    const lastDocumentName = last?._documentName || '';
+    items.forEach(item => delete item._documentName);
+    return {
+      items, hasMore,
+      nextCursor: hasMore && last ? Utilities.base64EncodeWebSafe(JSON.stringify({ path: query.path, id: last.id, name: lastDocumentName })) : null
+    };
+  });
 }
 function getAdminBranchApi(actor, data) {
   requireAdminApi(actor.uid, 'relationships');
