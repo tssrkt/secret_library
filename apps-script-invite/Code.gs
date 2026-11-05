@@ -864,11 +864,16 @@ function getAdminUserCardApi(actor, data) {
   if (!isValidUid(uid)) throw new Error('Некорректный UID участника.');
   const profile = fsGet('users/' + encodeURIComponent(uid));
   if (!profile) throw new Error('Участник не найден.');
-  const directory = canReadEmails ? fsQueryGroupByField('userDirectory', 'uid', uid, 1)[0] : null;
+  const groupSpecs = [];
+  if (canReadEmails) groupSpecs.push({ collectionId: 'userDirectory', field: 'uid', value: uid, limit: 1 });
+  const outgoingIndex = groupSpecs.push({ collectionId: 'libraryShares', field: 'ownerUid', value: uid, limit: 100 }) - 1;
+  const incomingIndex = groupSpecs.push({ collectionId: 'libraryShares', field: 'viewerUid', value: uid, limit: 100 }) - 1;
+  const groupRows = fsQueryGroupByFieldMany(groupSpecs);
+  const directory = canReadEmails ? groupRows[0][0] : null;
+  const outgoing = groupRows[outgoingIndex];
+  const incoming = groupRows[incomingIndex];
   const inviter = profile.invitedByUid ? fsGet('users/' + encodeURIComponent(profile.invitedByUid)) : null;
   const invited = fsQueryFilteredPage('users', 'invitedByUid', uid, 100, '').items;
-  const outgoing = fsQueryGroupByField('libraryShares', 'ownerUid', uid, 100);
-  const incoming = fsQueryGroupByField('libraryShares', 'viewerUid', uid, 100);
   const adminRecord = canReadAdminDetails ? fsGet('adminUsers/' + encodeURIComponent(uid)) : null;
   const bannedRecord = canReadBanDetails ? fsGet('bannedUsers/' + encodeURIComponent(uid)) : null;
   return {
