@@ -541,17 +541,31 @@ test('non-user moderators do not receive email addresses from admin or ban recor
 test('relationship-only APIs redact legacy profile email fields', () => {
   const permissions = { relationships: true };
   const app = adminHarness({ permissions });
-  app.records.set('users/target-uid', { id: 'target-uid', displayName: 'Target', invitedByUid: 'inviter-uid', email: 'target-profile@example.com' });
-  app.records.set('users/inviter-uid', { id: 'inviter-uid', displayName: 'Inviter', email: 'inviter-profile@example.com' });
+  app.records.set('users/target-uid', { id: 'target-uid', displayName: 'Target', invitedByUid: 'inviter-uid', email: 'target-profile@example.com', privateNote: 'must not leak' });
+  app.records.set('users/inviter-uid', { id: 'inviter-uid', displayName: 'Inviter', email: 'inviter-profile@example.com', privateNote: 'must not leak' });
   app.context.fsQueryGroupByField = () => [];
-  app.context.fsQueryFilteredPage = () => ({ items: [{ id: 'invited-uid', displayName: 'Invited', email: 'invited-profile@example.com' }], hasMore: false, nextCursor: null });
+  app.context.fsQueryFilteredPage = () => ({ items: [{ id: 'invited-uid', displayName: 'Invited', email: 'invited-profile@example.com', privateNote: 'must not leak' }], hasMore: false, nextCursor: null });
   const actor = { uid: 'mod-uid', admin: { role: 'moderator', permissions } };
   const card = app.context.getAdminUserCardApi(actor, { uid: 'target-uid' });
   assert.equal(card.user.email, '');
-  assert.equal(card.inviter.email, '');
-  assert.equal(card.invited[0].email, '');
-  assert.equal(app.context.getAdminRelationshipRootsApi(actor, {}).items[0].email, '');
-  assert.equal(app.context.getAdminBranchApi(actor, { uid: 'target-uid' }).items[0].email, '');
+  assert.equal(card.user.privateNote, undefined);
+  assert.equal(card.inviter.email, undefined);
+  assert.equal(card.inviter.privateNote, undefined);
+  assert.equal(card.invited[0].email, undefined);
+  assert.equal(card.invited[0].privateNote, undefined);
+  const roots = app.context.getAdminRelationshipRootsApi(actor, {}).items[0];
+  assert.equal(roots.email, undefined);
+  assert.equal(roots.privateNote, undefined);
+  const branch = app.context.getAdminBranchApi(actor, { uid: 'target-uid' }).items[0];
+  assert.equal(branch.email, undefined);
+  assert.equal(branch.privateNote, undefined);
+
+  app.context.fsList = collection => collection === 'users'
+    ? [{ id: 'target-uid', displayName: 'Target', email: 'target-profile@example.com', privateNote: 'must not leak' }]
+    : [];
+  const dashboard = app.context.getAdminDashboardApi(actor);
+  assert.equal(dashboard.users[0].email, '');
+  assert.equal(dashboard.users[0].privateNote, undefined);
 });
 test('dashboard and collection pages redact emails outside the users permission', () => {
   const permissions = { relationships: true, shares: true, admins: true, banned: true, events: true };
