@@ -244,6 +244,11 @@ function renderUsers() {
           if (data.permissions?.banned) actions.append(button('Восстановить', async()=>{await call('restoreLibraryUser')({uid:u.uid}); await refresh();}));
         } else actions.append(button('Заблокировать',async()=>{const reason=window.prompt('Причина блокировки (необязательно):','');if(reason===null)return;await call('banLibraryUser')({uid:u.uid,reason});await refresh();},'danger'));
       }
+      if (data.permissions?.admins && u.admin && u.uid !== superAdminUid) {
+        actions.style.flexDirection = 'column';
+        actions.style.alignItems = 'flex-start';
+        actions.append(button('Изменить права',()=>renderAdminEditor(u)));
+      }
       if (data.permissions?.admins && !u.banned && !u.admin) actions.append(button('Назначить модератором',()=>{activeTab='admins';renderAdminEditor(u);}));
       return [who, u.email || '—', dateLabel(u.createdAt || u.registeredAt || u.registrationDate), rel, statusText, actions];
     });
@@ -359,15 +364,22 @@ function renderInvites() {
   const settings = node('section', null, 'panel');
   settings.append(node('h2', 'Лимит приглашений'));
   settings.append(node('p', 'Максимальное число разных людей, которых может пригласить один участник. Повторные приглашения одному человеку не учитываются. На администраторов лимит не распространяется. Значение 0 запрещает приглашать новых людей.'));
+  const limitControls = node('div');
+  limitControls.style.display = 'flex';
+  limitControls.style.alignItems = 'flex-end';
+  limitControls.style.gap = '12px';
+  limitControls.style.flexWrap = 'wrap';
   const fieldLabel = node('label', 'Количество получателей');
-  fieldLabel.style.display = 'block';
+  fieldLabel.style.display = 'flex';
+  fieldLabel.style.flexDirection = 'column';
+  fieldLabel.style.gap = '6px';
   const field = node('input');
   field.type = 'number'; field.min = '0'; field.max = '100000'; field.step = '1'; field.required = true;
   field.value = String(Number.isInteger(data.invitationLimit) ? data.invitationLimit : 20);
-  field.style.maxWidth = '180px'; field.style.display = 'block'; field.style.marginTop = '6px';
+  field.style.maxWidth = '180px';
   fieldLabel.append(field);
-  settings.append(fieldLabel);
-  settings.append(button('Сохранить лимит', async () => {
+  limitControls.append(fieldLabel);
+  limitControls.append(button('Сохранить лимит', async () => {
     const limit = Number(field.value);
     if (!field.value.trim() || !Number.isInteger(limit) || limit < 0 || limit > 100000) { say('Укажите целое число от 0 до 100000.', true); return; }
     try {
@@ -377,6 +389,7 @@ function renderInvites() {
       say('Лимит приглашений сохранён.');
     } catch (error) { say(error?.message || 'Не удалось сохранить лимит.', true); }
   }, 'primary'));
+  settings.append(limitControls);
   content.append(settings);
   const invitations = data.invitations || [];
   const rows = invitations.map(i=>[
