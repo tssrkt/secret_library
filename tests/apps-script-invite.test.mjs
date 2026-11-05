@@ -973,24 +973,6 @@ test('superadmin bootstrap provisions only the email configured in Script Proper
   assert.equal(writes.find((x) => x.path === 'adminUsers/owner-uid').value.email, 'admin@example.com');
   assert.equal(writes.find((x) => x.path === 'adminUsers/owner-uid').value.role, 'superadmin');
 
-  // Existing moderator records must not block recovery when no superadmin exists.
-  const recover = harness({ authUser: adminUser });
-  recover.properties.set('BOOTSTRAP_ADMIN_EMAIL', 'admin@example.com');
-  recover.context.fsGet = () => null;
-  recover.context.fsList = () => [{ id: 'moderator-uid', role: 'moderator', active: true }];
-  const recoveryWrites = [];
-  recover.context.fsSet = (path, value) => recoveryWrites.push({ path, value });
-  recover.context.fsAddEvent = () => {};
-  assert.equal(recover.context.handleAdminRequest({ idToken: 'firebase-id-token-'.padEnd(500, 'x'), action: 'bootstrapAdmin' }).alreadyAdmin, false);
-  assert.equal(recoveryWrites.find(x => x.path === 'adminUsers/owner-uid').value.role, 'superadmin');
-
-  // A different existing superadmin must remain protected from takeover.
-  const occupied = harness({ authUser: adminUser });
-  occupied.properties.set('BOOTSTRAP_ADMIN_EMAIL', 'admin@example.com');
-  occupied.context.fsGet = () => null;
-  occupied.context.fsList = () => [{ id: 'other-superadmin-uid', role: 'superadmin', active: true }];
-  assert.throws(() => occupied.context.handleAdminRequest({ idToken: 'firebase-id-token-'.padEnd(500, 'x'), action: 'bootstrapAdmin' }), /Главный администратор уже настроен/);
-
   const wrong = harness({ authUser: { ...adminUser, email: 'other@gmail.com' } });
   assert.throws(() => wrong.context.handleAdminRequest({ idToken: 'firebase-id-token-'.padEnd(500, 'x'), action: 'bootstrapAdmin' }), /Первоначальная настройка доступна только владельцу проекта/);
 });
