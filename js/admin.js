@@ -261,6 +261,7 @@ function renderUsers() {
       if (data.permissions?.admins && !u.banned && !u.admin) actions.append(button('Назначить модератором',()=>{activeTab='admins';renderAdminEditor(u);}));
       return [who, u.email || '—', dateLabel(u.createdAt || u.registeredAt || u.registrationDate), rel, statusText, actions];
     });
+    if (sort.value === 'registered') rows.reverse();
     resultCount.textContent = 'Участников: ' + users.length + (query ? ' · найдено по запросу «' + search.value.trim() + '»' : '');
     list.replaceChildren(paginatedTable(['Участник','Email','Дата регистрации','Приглашения','Статус','Действия'],rows));
   };
