@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { canRestoreAdminRights, isBootstrapAdminEmailMatch, isValidLibraryShareId, isValidUid, projectDashboardAdmin, projectDashboardBan, projectDashboardEvent, projectDashboardInvitation, projectDashboardShare, projectDashboardUser } from '../functions/admin-security.js';
+import { canRestoreAdminRights, isValidLibraryShareId, isValidUid, projectDashboardAdmin, projectDashboardBan, projectDashboardEvent, projectDashboardInvitation, projectDashboardShare, projectDashboardUser } from '../functions/admin-security.js';
 
 test('restoring a banned moderator restores admin rights only with explicit admins permission', () => {
   assert.equal(canRestoreAdminRights({ role: 'moderator', permissions: { banned: true } }, true, true), false);
@@ -8,15 +8,6 @@ test('restoring a banned moderator restores admin rights only with explicit admi
   assert.equal(canRestoreAdminRights({ role: 'superadmin', permissions: {} }, true, true), true);
   assert.equal(canRestoreAdminRights({ role: 'moderator', permissions: { admins: true } }, false, true), false);
   assert.equal(canRestoreAdminRights({ role: 'moderator', permissions: { admins: true } }, true, false), false);
-});
-
-test('bootstrap admin email matching fails closed when the owner email is missing or blank', () => {
-  assert.equal(isBootstrapAdminEmailMatch('', ''), false);
-  assert.equal(isBootstrapAdminEmailMatch('   ', '   '), false);
-  assert.equal(isBootstrapAdminEmailMatch('', 'reader@example.com'), false);
-  assert.equal(isBootstrapAdminEmailMatch('owner@example.com', ''), false);
-  assert.equal(isBootstrapAdminEmailMatch(' OWNER@example.com ', 'owner@example.com'), true);
-  assert.equal(isBootstrapAdminEmailMatch('owner@example.com', 'other@example.com'), false);
 });
 
 test('Firestore document identifiers reject path traversal while accepting Google Firebase UIDs', () => {

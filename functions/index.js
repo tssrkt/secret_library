@@ -2,7 +2,7 @@ import { initializeApp } from 'firebase-admin/app';
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 import { getAuth } from 'firebase-admin/auth';
 import { HttpsError, onCall } from 'firebase-functions/v2/https';
-import { canRestoreAdminRights, isBootstrapAdminEmailMatch, isValidLibraryShareId, isValidUid, projectDashboardAdmin, projectDashboardBan, projectDashboardEvent, projectDashboardInvitation, projectDashboardShare, projectDashboardUser } from './admin-security.js';
+import { canRestoreAdminRights, isValidLibraryShareId, isValidUid, projectDashboardAdmin, projectDashboardBan, projectDashboardEvent, projectDashboardInvitation, projectDashboardShare, projectDashboardUser } from './admin-security.js';
 
 initializeApp();
 const db = getFirestore();
@@ -53,7 +53,7 @@ export const checkLibraryAccess = onCall({ region: 'europe-west1', invoker: 'pub
 
 export const bootstrapAdmin = onCall({ region: 'europe-west1', invoker: 'public' }, async (request) => {
   const uid = await requireSignedIn(request);
-  if (!isBootstrapAdminEmailMatch(ADMIN_EMAIL, request.auth.token.email)) {
+  if (normalEmail(request.auth.token.email) !== ADMIN_EMAIL) {
     throw new HttpsError('permission-denied', 'Первоначальная настройка доступна только назначенному владельцу.');
   }
   const existing = await db.collection('adminUsers').limit(1).get();

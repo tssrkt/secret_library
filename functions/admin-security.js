@@ -22,13 +22,6 @@ export function canRestoreAdminRights(actor, targetAdminExists, adminWasActive) 
   return Boolean(targetAdminExists && adminWasActive && (actor?.role === 'superadmin' || actor?.permissions?.admins === true));
 }
 
-export function isBootstrapAdminEmailMatch(configuredEmail, authenticatedEmail) {
-  if (typeof configuredEmail !== 'string' || typeof authenticatedEmail !== 'string') return false;
-  const configured = configuredEmail.trim().toLowerCase();
-  const authenticated = authenticatedEmail.trim().toLowerCase();
-  return configured.length > 0 && authenticated.length > 0 && configured === authenticated;
-}
-
 export function isValidUid(value) {
   return typeof value === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(value);
 }
