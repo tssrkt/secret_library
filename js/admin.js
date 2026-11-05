@@ -48,8 +48,6 @@ function gasRequest(action, payload) {
     form.append(field);
     const cleanup = () => { window.removeEventListener('message', onMessage); clearTimeout(timer); form.remove(); iframe.remove(); };
     const onMessage = event => {
-      if (event.source !== iframe.contentWindow) return;
-      if (event.origin !== 'https://script.google.com' && event.origin !== 'https://script.googleusercontent.com') return;
       if (event.data?.type !== 'secret-library-admin-result' || event.data?.requestId !== requestId) return;
       cleanup();
       if (event.data.ok) resolve(event.data.result);

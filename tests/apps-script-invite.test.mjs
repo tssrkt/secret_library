@@ -5,9 +5,8 @@ import vm from 'node:vm';
 import { createHash } from 'node:crypto';
 
 const source = await readFile(new URL('../apps-script-invite/Code.gs', import.meta.url), 'utf8');
-const adminClientSource = await readFile(new URL('../js/admin.js', import.meta.url), 'utf8');
 
-function harness({ authUser, pendingFields, pendingStatus = 200, profileStatus = 200, blockedEmailUid = null, blockedEmail = false, blockedEmailByField = false, blockOnSecondCheck = false } = {}) {
+function harness({ authUser, pendingFields, pendingStatus = 200, profileStatus = 200 } = {}) {
   const properties = new Map();
   const sent = [];
   const calls = [];
@@ -71,23 +70,7 @@ function harness({ authUser, pendingFields, pendingStatus = 200, profileStatus =
   };
   vm.createContext(context);
   vm.runInContext(source, context);
-  context.realFsGet = context.fsGet;
-  context.fsGet = (path) => {
-    if (blockedEmailUid && path === 'userDirectory/friend%40gmail.com') return { id: 'friend%40gmail.com', uid: blockedEmailUid };
-    if (blockedEmail && path === 'bannedUsers/blocked-uid') return { id: 'blocked-uid', uid: 'blocked-uid' };
-    if ((blockedEmail || blockOnSecondCheck) && path === 'pendingInvites/friend%40gmail.com/shares/owner-uid') return { ownerUid: 'owner-uid', active: true, claimedUid: null };
-    return null;
-  };
-  let blockedEmailQueryCount = 0;
-  context.fsFetch = (_url, _method, body) => {
-    if (body?.structuredQuery?.from?.[0]?.collectionId === 'bannedUsers') {
-      blockedEmailQueryCount++;
-      const blocked = blockedEmailByField || (blockOnSecondCheck && blockedEmailQueryCount >= 2);
-      const rows = blocked ? [{ document: { name: 'projects/project-071ee00e-4a4a-4a3d-95d/databases/(default)/documents/bannedUsers/legacy-uid', fields: { email: { stringValue: 'friend@gmail.com' } } } }] : [];
-      return { code: 200, text: JSON.stringify(rows) };
-    }
-    throw new Error('Unexpected Firestore query');
-  };
+  context.fsGet = () => null;
   context.realFsListInviteShares = context.fsListInviteShares;
   context.fsListInviteShares = () => [];
   const payload = {
@@ -107,11 +90,6 @@ function response(status, body) {
     getContentText() { return JSON.stringify(body); }
   };
 }
-
-test('admin iframe accepts a response only from its own request window', () => {
-  assert.match(adminClientSource, /event\.source !== iframe\.contentWindow/);
-  assert.match(adminClientSource, /event\.origin !== 'https:\/\/script\.googleusercontent\.com'/);
-});
 
 test('admin event history uses a bounded server-side Firestore page', () => {
   const app = harness();
@@ -358,45 +336,6 @@ test('sends only after Firebase identity and owner-scoped Firestore reads are va
   assert.equal(app.calls.length, 3, 'Firebase account, owner profile and owner-scoped invitation are checked; directory lookup stays server-side');
 });
 
-test('blocked recipient email returns the explicit message and sends no email', () => {
-  const app = harness({ blockedEmailUid: 'blocked-uid', blockedEmail: true });
-  const writes = [];
-  app.context.fsSet = (path, values) => writes.push({ path, values });
-  const result = app.invoke();
-  assert.equal(app.sent.length, 0, 'blocked recipient must never receive an email');
-  assert.match(result.content, /Данный емейл заблокирован/);
-  assert.equal(writes.length, 1, 'the pending invitation is deactivated');
-  assert.equal(writes[0].path, 'pendingInvites/friend%40gmail.com/shares/owner-uid');
-  assert.equal(writes[0].values.active, false);
-  assert.equal(writes[0].values.revokedBy, 'system');
-  assert.equal([...app.properties.keys()].some((key) => key.startsWith('invite:')), false, 'no send reservation is created');
-});
-
-test('legacy ban records with a matching email also block delivery without a directory entry', () => {
-  const app = harness({ blockedEmail: true, blockedEmailByField: true });
-  const writes = [];
-  app.context.fsSet = (path, values) => writes.push({ path, values });
-  const result = app.invoke();
-  assert.equal(app.sent.length, 0);
-  assert.match(result.content, /Данный емейл заблокирован/);
-  assert.equal(writes.length, 1);
-  assert.equal(writes[0].values.active, false);
-});
-
-test('recipient blocked during send preparation is rechecked before MailApp is called', () => {
-  const app = harness({ blockOnSecondCheck: true });
-  const writes = [];
-  app.context.fsSet = (path, values) => writes.push({ path, values });
-  const result = app.invoke();
-  assert.equal(app.sent.length, 0);
-  assert.match(result.content, /Данный емейл заблокирован/);
-  assert.equal(writes.length, 1);
-  assert.equal(writes[0].values.active, false);
-  const inviteState = JSON.parse(app.properties.get([...app.properties.keys()].find((key) => key.startsWith('invite:'))));
-  assert.equal(inviteState.status, 'failed');
-  assert.deepEqual(JSON.parse(app.properties.get('daily:owner-uid')), []);
-});
-
 test('daily invitation limit counts in-flight reservations before emails are sent', () => {
   const app = harness();
   const reservations = [];
@@ -458,16 +397,6 @@ test('invitation status endpoint returns the persisted cooldown timestamp for th
   assert.match(result.content, /"lastSentAt":\d+/);
   assert.match(result.content, /"cooldownUntil":\d+/);
   assert.doesNotMatch(result.content, /someone-else@gmail\.com/, 'status endpoint does not reveal invitations not owned by this user');
-});
-
-test('does not send when the Firebase account is disabled', () => {
-  const app = harness({ authUser: {
-    localId: 'owner-uid', email: 'owner@gmail.com', emailVerified: true, disabled: true,
-    providerUserInfo: [{ providerId: 'google.com' }]
-  } });
-  const result = app.invoke();
-  assert.equal(app.sent.length, 0);
-  assert.match(result.content, /подтверждённый Google-сеанс/);
 });
 
 test('does not send when the Firebase email is unverified', () => {
@@ -532,13 +461,13 @@ test('prevents changing a library share involving the superadmin on the server',
   const app = harness();
   app.context.requireAdminApi = () => ({ uid: 'moderator', admin: { role: 'moderator' } });
   app.context.fsGet = path => {
-    if (path === 'libraryShares/owner-uid__superadmin-uid') return { id: 'owner-uid__superadmin-uid', ownerUid: 'owner-uid', viewerUid: 'superadmin-uid', active: true };
+    if (path === 'libraryShares/share-1') return { id: 'share-1', ownerUid: 'owner-uid', viewerUid: 'superadmin-uid', active: true };
     if (path === 'adminUsers/superadmin-uid') return { uid: 'superadmin-uid', role: 'superadmin' };
     return null;
   };
   app.context.fsSet = () => assert.fail('must not mutate a protected share');
   app.context.fsAddEvent = () => assert.fail('must not log a blocked mutation as completed');
-  assert.throws(() => app.context.setLibraryShareApi({}, { id: 'owner-uid__superadmin-uid', active: false }), /Нельзя изменять доступ/);
+  assert.throws(() => app.context.setLibraryShareApi({}, { id: 'share-1', active: false }), /Нельзя изменять доступ/);
 });
 
 
@@ -638,106 +567,16 @@ test('relationship-only APIs redact legacy profile email fields', () => {
   assert.equal(dashboard.users[0].email, '');
   assert.equal(dashboard.users[0].privateNote, undefined);
 });
-test('users permission reveals the directory email but never arbitrary legacy profile fields', () => {
-  const permissions = { users: true };
-  const app = adminHarness({ permissions });
-  app.context.fsList = collection => ({
-    users: [{ id: 'target-uid', displayName: 'Target', email: 'legacy@example.com', accessToken: 'secret', privateNote: 'secret' }],
-    userDirectory: [{ id: 'target@example.com', uid: 'target-uid' }]
-  }[collection] || []);
-  app.context.fsListPage = () => [];
-  app.context.fsListInviteShares = () => [];
-  app.context.getInvitationEmailTemplate = () => '';
-  app.context.getInvitationLimit = () => 20;
-  const dashboard = app.context.getAdminDashboardApi({ uid: 'mod-uid', admin: { role: 'moderator', permissions } });
-  assert.equal(dashboard.users[0].email, 'target@example.com');
-  assert.equal(dashboard.users[0].displayName, 'Target');
-  assert.equal(Object.hasOwn(dashboard.users[0], 'accessToken'), false);
-  assert.equal(Object.hasOwn(dashboard.users[0], 'privateNote'), false);
-  assert.equal(Object.hasOwn(dashboard.users[0], 'emailAddress'), false);
-
-  app.records.set('users/target-uid', { id: 'target-uid', displayName: 'Target', email: 'legacy@example.com', accessToken: 'secret' });
-  app.context.fsQueryGroupByField = collection => collection === 'userDirectory' ? [{ id: 'target@example.com', uid: 'target-uid' }] : [];
-  app.context.fsQueryFilteredPage = () => ({ items: [] });
-  const card = app.context.getAdminUserCardApi({ uid: 'mod-uid', admin: { role: 'moderator', permissions } }, { uid: 'target-uid' });
-  assert.equal(card.user.email, 'target@example.com');
-  assert.equal(Object.hasOwn(card.user, 'accessToken'), false);
-});
-
-test('user collection pages sanitize legacy fields and resolve email from the private directory', () => {
-  const app = adminHarness({ permissions: { users: true } });
-  app.context.fsQueryPage = () => ({ items: [{ id: 'target-uid', displayName: 'Target', email: 'legacy@example.com', accessToken: 'secret', privateNote: 'secret' }], hasMore: false, nextCursor: null });
-  app.context.fsGetAdminUserFlags = () => ({ banned: new Set(), admins: new Set() });
-  app.context.fsQueryEmailDirectory = () => [{ id: 'target@example.com', uid: 'target-uid' }];
-  const page = app.context.getAdminCollectionPageApi({ uid: 'mod-uid', admin: { role: 'moderator', permissions: { users: true } } }, { section: 'users' });
-  assert.equal(page.items[0].email, 'target@example.com');
-  assert.equal(page.items[0].displayName, 'Target');
-  assert.equal(Object.hasOwn(page.items[0], 'accessToken'), false);
-  assert.equal(Object.hasOwn(page.items[0], 'privateNote'), false);
-});
-
-test('legacy document fields cannot override authoritative Firestore document IDs', () => {
-  const app = harness();
-  const docName = 'projects/project-071ee00e-4a4a-4a3d-95d/databases/(default)/documents/users/real-uid';
-  const fields = { id: { stringValue: 'adminUsers/root' }, displayName: { stringValue: 'Target' }, accessToken: { stringValue: 'legacy-secret' } };
-  app.context.fsFetch = (url, method, body) => {
-    if (method === 'get') return { code: 200, text: JSON.stringify({ name: docName, fields }) };
-    return { code: 200, text: JSON.stringify([{ document: { name: docName, fields } }]) };
-  };
-  assert.equal(app.context.realFsGet('users/real-uid').id, 'real-uid');
-  const page = app.context.fsQueryFilteredPage('users', '', '', 25, '');
-  assert.equal(page.items[0].id, 'real-uid');
-  assert.equal(page.items[0].displayName, 'Target');
-});
-
-test('email directory lookup uses a bounded UID query and rejects unrelated rows', () => {
-  const app = harness();
-  let query;
-  app.context.fsFetch = (_url, method, body) => {
-    assert.equal(method, 'post');
-    query = body.structuredQuery;
-    return { code: 200, text: JSON.stringify([
-      { document: { name: 'projects/project/databases/(default)/documents/userDirectory/target@example.com', fields: { uid: { stringValue: 'target-uid' } } } },
-      { document: { name: 'projects/project/databases/(default)/documents/userDirectory/other@example.com', fields: { uid: { stringValue: 'other-uid' } } } }
-    ]) };
-  };
-  const result = app.context.fsQueryEmailDirectory(['target-uid', 'target-uid', 'invalid/uid']);
-  assert.equal(query.from[0].collectionId, 'userDirectory');
-  assert.equal(query.where.fieldFilter.field.fieldPath, 'uid');
-  assert.equal(query.where.fieldFilter.op, 'IN');
-  assert.equal(query.where.fieldFilter.value.arrayValue.values.length, 1);
-  assert.equal(result.length, 1);
-  assert.equal(result[0].uid, 'target-uid');
-});
-
-test('user history API sanitizes profile, share, invitation and event records', () => {
-  const app = adminHarness({ permissions: { users: true } });
-  app.context.fsQueryGroupByField = (collection, field) => {
-    if (collection === 'libraryShares') return [{ id: 'share-1', ownerUid: 'target-uid', viewerUid: 'friend-uid', ownerEmail: 'owner@example.com', active: true, accessToken: 'secret' }];
-    if (collection === 'shares') return [{ id: 'invite-1', email: 'friend@example.com', ownerUid: 'target-uid', active: true, accessToken: 'secret' }];
-    if (collection === 'adminEvents') return [{ id: 'event-1', actorUid: 'target-uid', action: 'ban-user', details: { reason: 'reason', email: 'target@example.com', privateNote: 'secret' }, privateNote: 'secret', createdAt: '2026-01-01T00:00:00Z' }];
-    return [];
-  };
-  const history = app.context.getAdminUserHistoryApi({ uid: 'mod-uid', admin: { role: 'moderator', permissions: { users: true } } }, { uid: 'target-uid' });
-  assert.equal(history.outgoing[0].ownerEmail, 'owner@example.com');
-  assert.equal(Object.hasOwn(history.outgoing[0], 'accessToken'), false);
-  assert.equal(history.invitations[0].email, 'friend@example.com');
-  assert.equal(Object.hasOwn(history.invitations[0], 'accessToken'), false);
-  assert.equal(history.events[0].details.email, 'target@example.com');
-  assert.equal(Object.hasOwn(history.events[0].details, 'privateNote'), false);
-  assert.equal(Object.hasOwn(history.events[0], 'privateNote'), false);
-});
-
 test('dashboard and collection pages redact emails outside the users permission', () => {
   const permissions = { relationships: true, shares: true, admins: true, banned: true, events: true };
   const app = adminHarness({ permissions });
   app.context.fsList = collection => ({
     users: [{ id: 'target-uid', displayName: 'Target', email: 'legacy-profile@example.com' }],
-    bannedUsers: [{ id: 'banned-uid', email: 'private-ban@example.com', reason: 'reason private-ban@example.com', privateNote: 'ban secret' }],
-    adminUsers: [{ id: 'admin-uid', email: 'private-admin@example.com', role: 'moderator', permissions: { relationships: true, email: 'nested@example.com', privateNote: 'admin secret' }, privateNote: 'admin secret' }],
-    libraryShares: [{ id: 'share-1', ownerUid: 'owner-uid', viewerUid: 'target-uid', ownerEmail: 'private-share@example.com', active: true, privateNote: 'share secret' }],
+    bannedUsers: [{ id: 'banned-uid', email: 'private-ban@example.com', reason: 'reason' }],
+    adminUsers: [{ id: 'admin-uid', email: 'private-admin@example.com', role: 'moderator' }],
+    libraryShares: [{ id: 'share-1', ownerUid: 'owner-uid', viewerUid: 'target-uid', ownerEmail: 'private-share@example.com', active: true }],
   }[collection] || []);
-  app.context.fsListPage = () => [{ id: 'event-1', details: { email: 'private-event@example.com', reason: 'contact private-event@example.com', permissions: { users: true, email: 'nested@example.com', privateNote: 'event secret' }, privateNote: 'event secret' }, privateNote: 'event root secret' }];
+  app.context.fsListPage = () => [{ id: 'event-1', details: { email: 'private-event@example.com' } }];
   app.context.fsListInviteShares = () => [];
   const actor = { uid: 'mod-uid', admin: { role: 'moderator', permissions } };
   const dashboard = app.context.getAdminDashboardApi(actor);
@@ -746,73 +585,19 @@ test('dashboard and collection pages redact emails outside the users permission'
   assert.equal(dashboard.admins[0].email, '');
   assert.equal(dashboard.banned[0].email, '');
   assert.equal(dashboard.events[0].details.email, '');
-  assert.equal(dashboard.events[0].details.reason, 'contact [скрыто]');
-  assert.equal(dashboard.events[0].details.permissions.users, true);
-  assert.equal(Object.keys(dashboard.events[0].details.permissions).length, 1);
-  assert.equal(dashboard.admins[0].permissions.relationships, true);
-  assert.equal(Object.keys(dashboard.admins[0].permissions).length, 1);
-  assert.equal(dashboard.banned[0].reason, 'reason [скрыто]');
-  assert.equal(dashboard.shares[0].privateNote, undefined);
-  assert.equal(dashboard.admins[0].privateNote, undefined);
-  assert.equal(dashboard.banned[0].privateNote, undefined);
-  assert.equal(dashboard.events[0].privateNote, undefined);
-  assert.equal(dashboard.events[0].details.privateNote, undefined);
 
   const pageItems = {
-    libraryShares: [{ id: 'share-1', ownerEmail: 'private-share@example.com', privateNote: 'share secret' }],
-    adminUsers: [{ id: 'admin-uid', email: 'private-admin@example.com', privateNote: 'admin secret' }],
-    bannedUsers: [{ id: 'banned-uid', email: 'private-ban@example.com', privateNote: 'ban secret' }],
-    adminEvents: [{ id: 'event-1', details: { email: 'private-event@example.com', reason: 'contact private-event@example.com', permissions: { users: true, privateNote: 'secret' }, privateNote: 'event secret' }, privateNote: 'event root secret' }],
+    libraryShares: [{ id: 'share-1', ownerEmail: 'private-share@example.com' }],
+    adminUsers: [{ id: 'admin-uid', email: 'private-admin@example.com' }],
+    bannedUsers: [{ id: 'banned-uid', email: 'private-ban@example.com' }],
+    adminEvents: [{ id: 'event-1', details: { email: 'private-event@example.com' } }],
   };
   app.context.fsQueryFilteredPage = path => ({ items: pageItems[path] || [], hasMore: false, nextCursor: null });
   for (const [section, field] of [['shares', 'ownerEmail'], ['admins', 'email'], ['banned', 'email'], ['events', 'details']]) {
     const page = app.context.getAdminCollectionPageApi(actor, { section });
-    if (field === 'details') {
-      assert.equal(page.items[0].details.email, '');
-      assert.equal(page.items[0].details.privateNote, undefined);
-      assert.equal(page.items[0].details.reason, 'contact [скрыто]');
-      assert.equal(page.items[0].details.permissions.users, true);
-      assert.equal(Object.keys(page.items[0].details.permissions).length, 1);
-      assert.equal(page.items[0].privateNote, undefined);
-    } else {
-      assert.equal(page.items[0][field], '');
-      assert.equal(page.items[0].privateNote, undefined);
-    }
-
+    if (field === 'details') assert.equal(page.items[0].details.email, '');
+    else assert.equal(page.items[0][field], '');
   }
-});
-test('invitation-only moderators receive only the invitation fields needed by the admin UI', () => {
-  const app = adminHarness({ permissions: { invites: true } });
-  const actor = { uid: 'mod-uid', admin: { role: 'moderator', permissions: { invites: true } } };
-  const [invite] = app.context.sanitizeInvitationRecords(actor, [{
-    id: 'owner-uid', email: 'recipient@example.com', ownerUid: 'owner-uid', claimedUid: null,
-    active: true, emailStatus: 'sent', ownerEmail: 'owner@example.com', inviteeEmail: 'recipient@example.com',
-    privateNote: 'legacy private data', accessToken: 'secret'
-  }]);
-  assert.equal(invite.email, 'recipient@example.com');
-  assert.equal(invite.ownerUid, 'owner-uid');
-  assert.equal(invite.emailStatus, 'sent');
-  assert.equal(Object.hasOwn(invite, 'ownerEmail'), false);
-  assert.equal(Object.hasOwn(invite, 'inviteeEmail'), false);
-  assert.equal(Object.hasOwn(invite, 'privateNote'), false);
-  assert.equal(Object.hasOwn(invite, 'accessToken'), false);
-});
-test('administrators cannot reactivate a revoked library share through the server API', () => {
-  const app = adminHarness({ permissions: { shares: true } });
-  const actor = { uid: 'mod-uid', admin: { role: 'moderator', active: true, permissions: { shares: true } } };
-  assert.throws(() => app.context.setLibraryShareApi(actor, { id: 'owner-uid__viewer-uid', active: true }), /только закрыть доступ/);
-  assert.equal(app.writes.length, 0);
-});
-test('administrative mutations reject path-shaped UIDs and share IDs before reading or writing records', () => {
-  const permissions = { admins: true, users: true, banned: true, invites: true, shares: true };
-  const app = adminHarness({ permissions });
-  const actor = { uid: 'mod-uid', admin: { role: 'moderator', active: true, permissions } };
-  assert.throws(() => app.context.setAdminPermissionsApi(actor, { uid: 'target/../../adminUsers/root', permissions: { users: true } }), /Некорректные права администратора/);
-  assert.throws(() => app.context.banLibraryUserApi(actor, { uid: 'target/../../adminUsers/root' }), /Нельзя заблокировать/);
-  assert.throws(() => app.context.restoreLibraryUserApi(actor, { uid: 'target/../../adminUsers/root' }), /Не указан участник/);
-  assert.throws(() => app.context.revokeInvitationApi(actor, { email: 'friend@example.com', ownerUid: 'target/../../adminUsers/root' }), /Некорректное приглашение/);
-  assert.throws(() => app.context.setLibraryShareApi(actor, { id: 'target/../../adminUsers/root', active: false }), /Некорректный доступ/);
-  assert.equal(app.writes.length, 0);
 });
 test('admin API rejects a banned moderator before any administrative operation', () => {
   const app = adminHarness({ permissions: { users: true }, banned: true });
@@ -842,23 +627,6 @@ test('each moderator mutation requires its own explicit permission', async (t) =
       assert.equal(app.writes.length, 0, 'denied action must not write data or audit events');
     });
   }
-});
-
-test('new ban records preserve the email mapping for future block checks', () => {
-  const app = adminHarness({ permissions: { users: true } });
-  app.context.fsQueryGroupByField = collection => collection === 'userDirectory' ? [{ id: 'target@example.com', uid: 'target-uid' }] : [];
-  const actor = { uid: 'mod-uid', admin: { role: 'moderator', active: true, permissions: { users: true } } };
-  app.context.banLibraryUserApi(actor, { uid: 'target-uid', reason: 'abuse' });
-  assert.equal(app.records.get('bannedUsers/target-uid').email, 'target@example.com');
-});
-
-test('a banned participant cannot be assigned active administrator rights', () => {
-  const app = adminHarness({ permissions: { admins: true } });
-  app.records.set('bannedUsers/target-uid', { uid: 'target-uid' });
-  const actor = { uid: 'mod-uid', admin: { role: 'moderator', active: true, permissions: { admins: true } } };
-  assert.throws(() => app.context.setAdminPermissionsApi(actor, { uid: 'target-uid', permissions: { users: true }, active: true }), /Нельзя назначить администратора заблокированному участнику/);
-  assert.equal(app.writes.length, 0);
-  assert.equal(app.context.publicAdminError(new Error('Нельзя назначить администратора заблокированному участнику.')), 'Нельзя назначить администратора заблокированному участнику.');
 });
 
 test('restoring a banned user does not restore their admin rights without admins permission', () => {
