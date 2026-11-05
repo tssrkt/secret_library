@@ -55,6 +55,16 @@ test('shared catalogs enforce incoming access, exclude private folders and revok
   await a.store.setSharing('viewer', true);
   const visible = await sharedB.load('owner');
   assert.deepEqual(visible.books.map((book) => book.id), ['yes', 'loose'], 'root-level books remain shareable outside excluded folders');
+  await sdk.setDoc(sdk.doc(a.db, 'sharedLibraries/owner'), {
+    revision: first.revision, signature: first.signature, chunkCount: first.chunkCount,
+    coversSignature: first.coversSignature, pendingRevision: 'revision-pending', pendingChunkCount: 1,
+  });
+  await assertFails(sdk.getDoc(sdk.doc(b.db, 'sharedLibraries/owner/covers/yes')),
+    'viewers cannot read covers while a new catalog revision is pending');
+  await sdk.setDoc(sdk.doc(a.db, 'sharedLibraries/owner'), {
+    revision: first.revision, signature: first.signature, chunkCount: first.chunkCount,
+    coversSignature: first.coversSignature,
+  });
   await assertSucceeds(sdk.getDoc(sdk.doc(b.db, 'sharedLibraries/owner/covers/yes')));
   await assertFails(sdk.getDoc(sdk.doc(c.db, 'sharedLibraries/owner/covers/yes')));
   assert.equal(await (await sharedB.loadCover('owner', 'yes')).text(), 'test-cover');

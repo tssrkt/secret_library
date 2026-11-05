@@ -51,7 +51,8 @@ service cloud.firestore {
       }
       match /covers/{bookId} {
         allow get: if canRead() && exists(/databases/$(database)/documents/sharedLibraries/$(owner))
-          && (me() == owner || get(/databases/$(database)/documents/sharedLibraries/$(owner)).data.revision.size() > 0);
+          && (me() == owner || (get(/databases/$(database)/documents/sharedLibraries/$(owner)).data.revision.size() > 0
+            && !('pendingRevision' in get(/databases/$(database)/documents/sharedLibraries/$(owner)).data)));
         allow list: if own(owner) && registered();
         allow create, update: if own(owner) && registered()
           && exists(/databases/$(database)/documents/sharedLibraries/$(owner))

@@ -134,11 +134,11 @@ export function createSharedLibraryStore({ db, sdk, user, downloadCover = downlo
           });
           const coverSync = await syncCovers(index, projection);
           ensureCurrent();
+          await deleteStaleCovers(coverSync.staleIds);
           await sdk.setDoc(manifest(user.uid), {
             revision: previous.revision, signature: previous.signature, chunkCount: previous.chunkCount,
             coversSignature: coverSync.signature,
           });
-          await deleteStaleCovers(coverSync.staleIds);
           return;
         }
         const revision = crypto.randomUUID();
@@ -154,8 +154,8 @@ export function createSharedLibraryStore({ db, sdk, user, downloadCover = downlo
           await batch.commit();
         }
         ensureCurrent();
-        await sdk.setDoc(manifest(user.uid), { revision, signature: payload.signature, chunkCount: payload.chunks.length, coversSignature: coverSync.signature });
         await deleteStaleCovers(coverSync.staleIds);
+        await sdk.setDoc(manifest(user.uid), { revision, signature: payload.signature, chunkCount: payload.chunks.length, coversSignature: coverSync.signature });
         if (before.exists()) {
           const old = await sdk.getDocsFromServer(chunks(user.uid, before.data().revision));
           for (let start = 0; start < old.docs.length; start += 100) {
