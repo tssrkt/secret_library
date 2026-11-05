@@ -72,10 +72,8 @@ document.addEventListener('click', (event) => {
     return;
   }
   if (link.hasAttribute('data-document-home') || link.id === 'library-home-link' || link.getAttribute('href') === './index.html') {
-    if (!view.hidden) {
-      event.preventDefault();
-      showLibrary();
-    }
+    event.preventDefault();
+    showLibrary();
   }
 });
 
