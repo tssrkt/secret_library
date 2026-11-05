@@ -61,7 +61,7 @@ function doPost(e) {
       return responsePage(requestId, true, 'Запрос обработан. Если получателю нужно приглашение, письмо отправлено.');
     }
     stage = 'check-unique-invitation-limit';
-    enforceUniqueInvitationLimit(user.localId, email, invitation);
+    const invitationCount = enforceUniqueInvitationLimit(user.localId, email, invitation);
     stage = 'reserve-send';
     reservation = reserveSend(user.localId, email, invitation.emailSentAt || (invitation.emailStatus === 'sent' ? invitation.createdAt : null));
     if (reservation.status === 'cooldown' || reservation.status === 'sending') {
@@ -88,7 +88,7 @@ function doPost(e) {
     stage = 'mark-sent';
     finishSend(user.localId, email, true, reservation.reservationId);
     reservation = null;
-    return responsePage(requestId, true, invitationSuccessMessage(user.localId));
+    return responsePage(requestId, true, invitationSuccessMessage(user.localId, invitationCount));
   } catch (error) {
     if (reservation && reservation.status === 'reserved' && !emailSent) {
       try { finishSend(reservation.uid, reservation.email, false, reservation.reservationId); } catch (_) {}
@@ -288,19 +288,19 @@ function reservationKey(uid, email) {
   }).join('');
 }
 
-function invitationSuccessMessage(uid) {
+function invitationSuccessMessage(uid, invitationCount) {
   const admin = fsGet('adminUsers/' + uid);
   if (admin && admin.active === true) return 'Приглашение отправлено.';
-  const count = fsListInviteShares().filter(item => item.ownerUid === uid).length;
+  const count = Number.isInteger(invitationCount) ? invitationCount : 0;
   return 'Приглашение отправлено (' + count + ' из ' + getInvitationLimit() + ').';
 }
 
 function enforceUniqueInvitationLimit(uid, email, invitation) {
   const admin = fsGet('adminUsers/' + uid);
-  if (admin && admin.active === true) return;
+  if (admin && admin.active === true) return null;
 
   const limit = getInvitationLimit();
-  const count = fsListInviteShares().filter(item => item.ownerUid === uid).length;
+  const count = fsListInviteSharesByOwner(uid).length;
   const current = JSON.parse(PropertiesService.getScriptProperties().getProperty(reservationKey(uid, email)) || 'null');
   const previouslySent = Boolean(invitation.emailSentAt || invitation.emailStatus === 'sent' || current?.status === 'sent');
   // The pending share is created before this endpoint is called, so the current
@@ -308,6 +308,7 @@ function enforceUniqueInvitationLimit(uid, email, invitation) {
   if (count > limit && !previouslySent) {
     throw new Error('Ваш лимит на приглашения исчерпан.');
   }
+  return count;
 }
 
 function reserveSend(uid, email, firestoreSentAt) {
@@ -548,6 +549,10 @@ function getAdminDashboardSummaryApi(actor) {
 }
 
 function fsFindSuperAdminUid() {
+  const cache = CacheService.getScriptCache();
+  const cacheKey = 'superadmin_uid';
+  const cached = cache.get(cacheKey);
+  if (cached) return cached === 'none' ? null : cached;
   const response = fsFetch(FIRESTORE_REST_ROOT.slice(0, -1) + ':runQuery', 'post', {
     structuredQuery: {
       from: [{ collectionId: 'adminUsers' }],
@@ -557,7 +562,9 @@ function fsFindSuperAdminUid() {
   });
   if (response.code !== 200) throw new Error('Не удалось определить главного администратора.');
   const document = JSON.parse(response.text).find(row => row && row.document)?.document;
-  return document ? document.name.split('/').pop() : null;
+  const uid = document ? document.name.split('/').pop() : null;
+  cache.put(cacheKey, uid || 'none', 30);
+  return uid;
 }
 function fsCount(collectionId, filter, allDescendants) {
   const structuredQuery = { from: [{ collectionId, ...(allDescendants ? { allDescendants: true } : {}) }] };
@@ -599,9 +606,13 @@ function getAdminCollectionPageApi(actor, data) {
 }
 function adminRelatedUserUids(section, items) {
   const uids = new Set();
+  const pageUids = section === 'users' ? new Set(items.map(item => item.uid || item.id).filter(isValidUid)) : null;
   const add = value => { if (isValidUid(value)) uids.add(value); };
   items.forEach(item => {
-    if (section === 'users') { add(item.uid || item.id); add(item.invitedByUid); }
+    if (section === 'users') {
+      // The current page already contains these user profiles; only fetch inviters not on this page.
+      if (isValidUid(item.invitedByUid) && !pageUids.has(item.invitedByUid)) add(item.invitedByUid);
+    }
     else if (section === 'invites') { add(item.ownerUid); add(item.claimedUid); }
     else if (section === 'shares') { add(item.ownerUid); add(item.viewerUid); }
     else if (section === 'events') { add(item.actorUid); add(item.targetUid); }
@@ -1125,6 +1136,26 @@ function fsListPage(path, pageSize, orderBy) {
   const body = JSON.parse(response.text);
   return (body.documents || []).map(doc => ({ ...fsDecodeFields(doc.fields || {}), id: doc.name.split('/').pop() }));
 }
+function fsListInviteSharesByOwner(uid) {
+  const url = FIRESTORE_REST_ROOT.slice(0, -1) + ':runQuery';
+  const response = fsFetch(url, 'post', {
+    structuredQuery: {
+      from: [{ collectionId: 'shares', allDescendants: true }],
+      where: { fieldFilter: { field: { fieldPath: 'ownerUid' }, op: 'EQUAL', value: { stringValue: String(uid) } } }
+    }
+  });
+  if (response.code !== 200) throw new Error('Не удалось проверить лимит приглашений Firebase.');
+  return JSON.parse(response.text).filter(row => row && row.document)
+    .filter(row => row.document.name.includes('/documents/pendingInvites/'))
+    .filter(row => {
+      const marker = '/documents/pendingInvites/';
+      const index = row.document.name.indexOf(marker);
+      if (index < 0) return false;
+      const segments = row.document.name.slice(index + marker.length).split('/');
+      return segments.length === 3 && segments[1] === 'shares';
+    })
+    .map(row => ({ ...fsDecodeFields(row.document.fields || {}), id: row.document.name.split('/').pop() }));
+}
 function fsListInviteShares() {
   const url = FIRESTORE_REST_ROOT.slice(0, -1) + ':runQuery';
   const response = fsFetch(url, 'post', {
@@ -1150,12 +1181,20 @@ function fsSet(path, values) {
   const mask = Object.keys(fields).map(key => 'updateMask.fieldPaths=' + encodeURIComponent(key)).join('&');
   const response = fsFetch(FIRESTORE_REST_ROOT + path + '?' + mask, 'patch', { fields: fields });
   if (response.code < 200 || response.code >= 300) throw new Error('Не удалось сохранить данные Firebase (HTTP ' + response.code + ').' + (response.code === 403 ? ' Проверьте роль Cloud Datastore User (roles/datastore.user) у аккаунта, который развёртывает Apps Script.' : ''));
-  if (String(path).indexOf('adminUsers/') === 0) CacheService.getScriptCache().remove('admin_record_' + String(path).slice('adminUsers/'.length));
+  if (String(path).indexOf('adminUsers/') === 0) {
+    const cache = CacheService.getScriptCache();
+    cache.remove('admin_record_' + String(path).slice('adminUsers/'.length));
+    cache.remove('superadmin_uid');
+  }
 }
 function fsDelete(path) {
   const response = fsFetch(FIRESTORE_REST_ROOT + path, 'delete');
   if (response.code !== 200 && response.code !== 204 && response.code !== 404) throw new Error('Не удалось удалить запись Firebase.');
-  if (String(path).indexOf('adminUsers/') === 0) CacheService.getScriptCache().remove('admin_record_' + String(path).slice('adminUsers/'.length));
+  if (String(path).indexOf('adminUsers/') === 0) {
+    const cache = CacheService.getScriptCache();
+    cache.remove('admin_record_' + String(path).slice('adminUsers/'.length));
+    cache.remove('superadmin_uid');
+  }
 }
 function fsAddEvent(actorUid, action, targetUid, details) {
   const id = Utilities.getUuid();

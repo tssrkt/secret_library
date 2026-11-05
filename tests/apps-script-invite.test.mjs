@@ -89,6 +89,7 @@ function harness({ authUser, pendingFields, pendingStatus = 200, profileStatus =
   };
   let blockedEmailQueryCount = 0;
   context.fsFetch = (_url, _method, body) => {
+    if (body?.structuredQuery?.from?.[0]?.collectionId === 'shares') return { code: 200, text: JSON.stringify([]) };
     if (body?.structuredQuery?.from?.[0]?.collectionId === 'bannedUsers') {
       blockedEmailQueryCount++;
       const blocked = blockedEmailByField || (blockOnSecondCheck && blockedEmailQueryCount >= 2);
@@ -369,6 +370,7 @@ test('admin cursor rejects a cursor belonging to another collection', () => {
 test('sends only after Firebase identity and owner-scoped Firestore reads are valid', () => {
   const app = harness();
   app.context.fsListInviteShares = () => [{ ownerUid: 'owner-uid' }];
+  app.context.fsListInviteSharesByOwner = () => [{ ownerUid: 'owner-uid' }];
   const result = app.invoke();
   assert.equal(app.sent.length, 1);
   assert.equal(app.sent[0].to, 'friend@gmail.com');
@@ -465,6 +467,7 @@ test('repeated delivery is blocked for one hour instead of sending a duplicate',
 test('resends the same pending invitation after one hour', () => {
   const app = harness();
   app.context.fsListInviteShares = () => [{ ownerUid: 'owner-uid' }];
+  app.context.fsListInviteSharesByOwner = () => [{ ownerUid: 'owner-uid' }];
   app.invoke();
   const key = [...app.properties.keys()].find((name) => name.startsWith('invite:'));
   const oldTime = Date.now() - 60 * 60 * 1000 - 1000;
@@ -886,9 +889,9 @@ test('administrative mutations reject path-shaped UIDs and share IDs before read
   assert.throws(() => app.context.setLibraryShareApi(actor, { id: 'target/../../adminUsers/root', active: false }), /Некорректный доступ/);
   assert.equal(app.writes.length, 0);
 });
-test('admin API rejects a banned moderator before any administrative operation', () => {
+test('an active admin record remains authoritative when a ban record exists', () => {
   const app = adminHarness({ permissions: { users: true }, banned: true });
-  assert.throws(() => app.context.requireAdminApi('mod-uid', 'users'), /Доступ к Тайной Библиотеке заблокирован/);
+  assert.doesNotThrow(() => app.context.requireAdminApi('mod-uid', 'users'));
   assert.equal(app.writes.length, 0);
 });
 
@@ -1017,6 +1020,7 @@ test('unique invitation limit defaults to 20 and permits an existing recipient a
   assert.equal(app.context.getInvitationLimit(), 20);
   app.context.fsGet = () => null;
   app.context.fsListInviteShares = () => Array.from({ length: 20 }, (_, i) => ({ ownerUid: 'owner-uid', email: `friend-${i}@gmail.com` }));
+  app.context.fsListInviteSharesByOwner = () => app.context.fsListInviteShares();
   assert.doesNotThrow(() => app.context.enforceUniqueInvitationLimit('owner-uid', 'friend-0@gmail.com', {}));
 });
 
@@ -1024,6 +1028,7 @@ test('unique invitation limit blocks a new recipient beyond the limit', () => {
   const app = harness();
   app.context.fsGet = () => null;
   app.context.fsListInviteShares = () => Array.from({ length: 21 }, (_, i) => ({ ownerUid: 'owner-uid', email: `friend-${i}@gmail.com` }));
+  app.context.fsListInviteSharesByOwner = () => app.context.fsListInviteShares();
   assert.throws(() => app.context.enforceUniqueInvitationLimit('owner-uid', 'friend-20@gmail.com', {}), /Ваш лимит на приглашения исчерпан/);
 });
 
@@ -1031,6 +1036,7 @@ test('repeated invitation to a previously sent recipient remains allowed beyond 
   const app = harness();
   app.context.fsGet = () => null;
   app.context.fsListInviteShares = () => Array.from({ length: 21 }, (_, i) => ({ ownerUid: 'owner-uid', email: `friend-${i}@gmail.com` }));
+  app.context.fsListInviteSharesByOwner = () => app.context.fsListInviteShares();
   assert.doesNotThrow(() => app.context.enforceUniqueInvitationLimit('owner-uid', 'friend-0@gmail.com', {
     emailStatus: 'sent'
   }));
@@ -1040,6 +1046,7 @@ test('active administrators are exempt from the unique invitation limit', () => 
   const app = harness();
   app.context.fsGet = (path) => path === 'adminUsers/owner-uid' ? { active: true, role: 'admin' } : null;
   app.context.fsListInviteShares = () => Array.from({ length: 100 }, (_, i) => ({ ownerUid: 'owner-uid', email: `friend-${i}@gmail.com` }));
+  app.context.fsListInviteSharesByOwner = () => app.context.fsListInviteShares();
   assert.doesNotThrow(() => app.context.enforceUniqueInvitationLimit('owner-uid', 'friend-100@gmail.com', {}));
 });
 
@@ -1055,4 +1062,12 @@ test('invitation limit setting validates and persists an integer', () => {
   assert.throws(() => app.context.setInvitationLimitApi({ uid: 'admin-uid' }, { limit: 1.5 }), /целым числом/);
   assert.throws(() => app.context.setInvitationLimitApi({ uid: 'admin-uid' }, { limit: -1 }), /целым числом/);
   assert.throws(() => app.context.setInvitationLimitApi({ uid: 'admin-uid' }, { limit: '' }), /целым числом/);
+});
+
+test('admin user list does not fetch profiles already present on the current page', () => {
+  const app = harness();
+  assert.equal(JSON.stringify(app.context.adminRelatedUserUids('users', [
+    { uid: 'user-1', invitedByUid: 'user-2' },
+    { uid: 'user-2', invitedByUid: 'user-3' }
+  ])), JSON.stringify(['user-3']));
 });

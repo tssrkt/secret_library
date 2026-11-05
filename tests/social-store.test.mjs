@@ -5,6 +5,8 @@ import { createSocialStore } from '../js/social-store.js';
 test('a legacy private profile cannot hide an otherwise valid friend relationship', async () => {
   const uid = 'current-user';
   const share = { ownerUid: 'legacy-friend', viewerUid: uid, active: true, sharedAt: 1 };
+  const profileReads = new Map();
+  const watchers = [];
   const sdk = {
     doc: (_db, ...path) => ({ path: path.join('/') }),
     collection: (_db, ...path) => ({ path: path.join('/'), kind: 'collection' }),
@@ -12,6 +14,7 @@ test('a legacy private profile cannot hide an otherwise valid friend relationshi
     where: (field, op, value) => ({ field, op, value }),
     query: (target, ...filters) => ({ ...target, filters }),
     getDoc: async (reference) => {
+      profileReads.set(reference.path, (profileReads.get(reference.path) || 0) + 1);
       if (reference.path === 'users/legacy-friend') {
         const error = new Error('Missing or insufficient permissions.');
         error.code = 'permission-denied';
@@ -27,6 +30,7 @@ test('a legacy private profile cannot hide an otherwise valid friend relationshi
       const filters = target.filters || [];
       let docs = [];
       if (target.path === 'libraryShares' && filters.some((f) => f.field === 'viewerUid' && f.value === uid)) docs = [{ data: () => share }];
+      watchers.push({ target, filters, next, docs });
       next({ metadata: { hasPendingWrites: false }, docs });
       return () => {};
     },
@@ -41,4 +45,11 @@ test('a legacy private profile cannot hide an otherwise valid friend relationshi
   assert.equal(latest.friends.length, 1, 'friend relationship remains visible');
   assert.equal(latest.friends[0].uid, 'legacy-friend');
   assert.equal(latest.friends[0].displayName, 'Пользователь', 'private legacy name is not leaked');
+  assert.equal(profileReads.get('users/legacy-friend'), 1);
+
+  const incoming = watchers.find(({ target, filters }) => target.path === 'libraryShares' &&
+    filters.some((filter) => filter.field === 'viewerUid' && filter.value === uid));
+  incoming.next({ metadata: { hasPendingWrites: false }, docs: incoming.docs });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(profileReads.get('users/legacy-friend'), 1, 'repeated snapshots reuse the briefly cached denied profile');
 });

@@ -149,6 +149,34 @@ export function createSocialStore({ db, sdk, user }) {
   function subscribe(listener, onError) {
     const collections = { outgoing: [], incoming: [], invitations: [], contacts: {}, reads: {} };
     const profiles = {};
+    // Snapshot callbacks for several collections often arrive together. Reuse recent
+    // profile reads and share in-flight requests instead of charging one read per emit.
+    const profileCache = new Map();
+    const profileRequests = new Map();
+    const profileCacheTtlMs = 30_000;
+    const deniedProfileCacheTtlMs = 5_000;
+    const loadProfile = (id) => {
+      const cached = profileCache.get(id);
+      if (cached && cached.expiresAt > Date.now()) return Promise.resolve(cached.profile);
+      if (profileRequests.has(id)) return profileRequests.get(id);
+      const request = (async () => {
+        try {
+          const profile = data(await getDoc(ref('users', id)));
+          profileCache.set(id, { profile, expiresAt: Date.now() + profileCacheTtlMs });
+          return profile;
+        } catch (error) {
+          // A legacy private profile may become readable after its owner migrates it.
+          // Cache that denial only briefly; do not cache transient/network failures.
+          if (!String(error?.code || '').includes('permission-denied')) throw error;
+          profileCache.set(id, { profile: null, expiresAt: Date.now() + deniedProfileCacheTtlMs });
+          return null;
+        } finally {
+          profileRequests.delete(id);
+        }
+      })();
+      profileRequests.set(id, request);
+      return request;
+    };
     let revision = 0;
     let stopped = false;
     const emit = async () => {
@@ -157,15 +185,7 @@ export function createSocialStore({ db, sdk, user }) {
         const shares = [...collections.outgoing, ...collections.incoming];
         const ids = new Set(shares.filter((item) => item.active).flatMap((item) => [item.ownerUid, item.viewerUid]));
         await Promise.all([...ids].map(async (id) => {
-          let profile = null;
-          try {
-            profile = data(await getDoc(ref('users', id)));
-          } catch (error) {
-            // Legacy profiles may still contain private fields and are deliberately unreadable
-            // until their owner signs in and migrates the document. One hidden profile must not
-            // suppress every friend and shared library.
-            if (!String(error?.code || '').includes('permission-denied')) throw error;
-          }
+          const profile = await loadProfile(id);
           const safeProfile = profile || { uid: id, displayName: 'Пользователь' };
           profiles[id] = id === superAdminUid ? { ...safeProfile, isAdmin: true } : safeProfile;
         }));
