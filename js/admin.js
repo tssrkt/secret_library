@@ -51,7 +51,7 @@ function gasRequest(action, payload) {
     form.append(field);
     const cleanup = () => { window.removeEventListener('message', onMessage); clearTimeout(timer); form.remove(); iframe.remove(); };
     const onMessage = event => {
-      const allowedOrigin = event.origin === 'https://script.google.com' || /^https:\/\/[a-z0-9-]+-script\.googleusercontent\.com$/.test(event.origin);
+      const allowedOrigin = event.origin === 'https://script.google.com' || event.origin === 'https://script.googleusercontent.com' || /^https:\/\/[a-z0-9-]+-script\.googleusercontent\.com$/.test(event.origin);
       if (!allowedOrigin) return;
       if (event.data?.type !== 'secret-library-admin-result' || event.data?.requestId !== requestId) return;
       cleanup();
