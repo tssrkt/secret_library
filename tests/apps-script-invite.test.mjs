@@ -220,6 +220,47 @@ test('admin page requests reuse profiles already loaded by the client', () => {
   assert.equal(profiles['viewer-uid'].displayName, 'Reader');
 });
 
+test('admin card batches related document reads and collection queries in one fetchAll', () => {
+  const app = harness();
+  app.context.ScriptApp = { getOAuthToken: () => 'test-token' };
+  let batches = 0;
+  let requests = [];
+  app.context.UrlFetchApp.fetchAll = batch => {
+    batches++;
+    requests = batch;
+    return batch.map((request, index) => {
+      if (request.method === 'get') {
+        const path = request.url.split('/documents/')[1];
+        return response(200, {
+          name: 'projects/project-071ee00e-4a4a-4a3d-95d/databases/(default)/documents/' + path,
+          fields: { displayName: { stringValue: 'Record ' + index } }
+        });
+      }
+      const query = JSON.parse(request.payload).structuredQuery;
+      const collection = query.from[0].collectionId;
+      const name = collection === 'userDirectory'
+        ? 'projects/project-071ee00e-4a4a-4a3d-95d/databases/(default)/documents/userDirectory/target%40example.com'
+        : 'projects/project-071ee00e-4a4a-4a3d-95d/databases/(default)/documents/' + collection + '/row-' + index;
+      return response(200, [{ document: { name, fields: { uid: { stringValue: 'target-uid' } } } }]);
+    });
+  };
+  const result = app.context.fsGetManyAndQueryGroupByFieldMany(
+    ['users/inviter-uid', 'adminUsers/target-uid'],
+    [
+      { collectionId: 'userDirectory', field: 'uid', value: 'target-uid', limit: 1 },
+      { collectionId: 'libraryShares', field: 'ownerUid', value: 'target-uid', limit: 100 }
+    ]
+  );
+  assert.equal(batches, 1);
+  assert.equal(requests.length, 4);
+  assert.deepEqual(requests.map(request => request.method), ['get', 'get', 'post', 'post']);
+  assert.ok(requests.every(request => request.headers.Authorization === 'Bearer test-token'));
+  assert.equal(result.records[0].id, 'inviter-uid');
+  assert.equal(result.records[1].id, 'target-uid');
+  assert.equal(result.groups[0][0].id, 'target%40example.com');
+  assert.equal(result.groups[1][0].id, 'row-3');
+});
+
 test('admin history batches independent collection-group queries concurrently', () => {
   const app = harness();
   let requests = [];

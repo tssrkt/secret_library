@@ -969,8 +969,9 @@ function getAdminUserCardApi(actor, data) {
   const outgoingIndex = groupSpecs.push({ collectionId: 'libraryShares', field: 'ownerUid', value: uid, limit: 100 }) - 1;
   const incomingIndex = groupSpecs.push({ collectionId: 'libraryShares', field: 'viewerUid', value: uid, limit: 100 }) - 1;
   const invitedIndex = groupSpecs.push({ collectionId: 'users', field: 'invitedByUid', value: uid, limit: 100, allDescendants: false }) - 1;
-  const relatedRecords = fsGetMany(relatedPaths);
-  const groupRows = fsQueryGroupByFieldMany(groupSpecs);
+  const related = fsGetManyAndQueryGroupByFieldMany(relatedPaths, groupSpecs);
+  const relatedRecords = related.records;
+  const groupRows = related.groups;
   const inviter = inviterPathIndex >= 0 ? relatedRecords[inviterPathIndex] : null;
   const adminRecord = adminPathIndex >= 0 ? relatedRecords[adminPathIndex] : null;
   const bannedRecord = bannedPathIndex >= 0 ? relatedRecords[bannedPathIndex] : null;
@@ -1318,6 +1319,41 @@ function setLibraryShareApi(actor, data) {
 function fsGet(path) {
   const response = fsRequest('get', path);
   return response ? { ...fsDecodeFields(response.fields || {}), id: response.name.split('/').pop() } : null;
+}
+function fsGetManyAndQueryGroupByFieldMany(paths, specs) {
+  const safePaths = Array.isArray(paths) ? paths : [];
+  const safeSpecs = Array.isArray(specs) ? specs : [];
+  if (!safePaths.length || typeof UrlFetchApp.fetchAll !== 'function') {
+    return { records: fsGetMany(safePaths), groups: fsQueryGroupByFieldMany(safeSpecs) };
+  }
+  if (!safeSpecs.length) return { records: fsGetMany(safePaths), groups: [] };
+  const token = ScriptApp.getOAuthToken();
+  const requests = safePaths.map(path => ({
+    url: FIRESTORE_REST_ROOT + path, method: 'get',
+    headers: { Authorization: 'Bearer ' + token }, muteHttpExceptions: true
+  }));
+  const queryUrl = FIRESTORE_REST_ROOT.slice(0, -1) + ':runQuery';
+  safeSpecs.forEach(spec => requests.push({
+    url: queryUrl, method: 'post',
+    headers: { Authorization: 'Bearer ' + token }, muteHttpExceptions: true,
+    contentType: 'application/json',
+    payload: JSON.stringify({ structuredQuery: {
+      from: [{ collectionId: spec.collectionId, ...(spec.allDescendants === false ? {} : { allDescendants: true }) }],
+      where: { fieldFilter: { field: { fieldPath: spec.field }, op: 'EQUAL', value: { stringValue: String(spec.value) } } },
+      limit: Math.min(100, Number(spec.limit) || 100)
+    } })
+  }));
+  const responses = UrlFetchApp.fetchAll(requests);
+  const records = responses.slice(0, safePaths.length).map((response, index) => {
+    const code = response.getResponseCode();
+    if (code === 404) return null;
+    if (code < 200 || code >= 300) return fsGet(safePaths[index]);
+    const document = JSON.parse(response.getContentText());
+    return { ...fsDecodeFields(document.fields || {}), id: document.name.split('/').pop() };
+  });
+  const groups = responses.slice(safePaths.length).map((response, index) =>
+    fsDecodeGroupByFieldResponse({ code: response.getResponseCode(), text: response.getContentText() }, safeSpecs[index].nestedOnly));
+  return { records, groups };
 }
 function fsGetMany(paths) {
   if (!Array.isArray(paths) || !paths.length) return [];
