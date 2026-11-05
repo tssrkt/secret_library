@@ -1243,9 +1243,11 @@ function banLibraryUserApi(actor, data) {
   const uid = String(data.uid || '');
   const reason = typeof data.reason === 'string' ? data.reason.trim().slice(0, 500) : '';
   if (!isValidUid(uid) || uid === actor.uid) throw new Error('Нельзя заблокировать эту учётную запись.');
-  const admin = fsGet('adminUsers/' + uid);
+  const [admin, profile] = fsGetMany([
+    'adminUsers/' + uid,
+    'users/' + uid
+  ]);
   if (admin?.role === 'superadmin') throw new Error('Главного администратора нельзя заблокировать.');
-  const profile = fsGet('users/' + uid);
   if (!profile) throw new Error('Участник не найден.');
   let email = '';
   try {
