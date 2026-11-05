@@ -54,7 +54,13 @@ function gasRequest(action, payload) {
       // Apps Script may post from its nested sandbox frame rather than the outer form iframe.
       // The allowlisted origin and unpredictable requestId authenticate the response.
       if (event.origin !== 'https://script.google.com' && event.origin !== 'https://script.googleusercontent.com') return;
-      if (event.data?.type !== 'secret-library-admin-result' || event.data?.requestId !== requestId) return;
+      if (event.data?.requestId !== requestId) return;
+      if (event.data?.type === 'secret-library-invite-result') {
+        cleanup();
+        reject(new Error("Сервер админки работает на старой версии. Обновите веб-развёртывание Google Apps Script."));
+        return;
+      }
+      if (event.data?.type !== 'secret-library-admin-result') return;
       cleanup();
       if (event.data.ok) resolve(event.data.result);
       else reject(new Error(event.data.message || 'Административная операция не выполнена.'));
