@@ -892,9 +892,16 @@ function fsRequest(method, path, body) {
 function fsFetch(url, method, body) {
   const options = { method: method, headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() }, muteHttpExceptions: true };
   if (body !== undefined) { options.contentType = 'application/json'; options.payload = JSON.stringify(body); }
-  const response = UrlFetchApp.fetch(url, options);
-  const code = response.getResponseCode();
-  const responseText = response.getContentText();
+  let response;
+  let code = 0;
+  let responseText = '';
+  for (let attempt = 0; attempt < 4; attempt++) {
+    response = UrlFetchApp.fetch(url, options);
+    code = response.getResponseCode();
+    responseText = response.getContentText();
+    if (code !== 429 && code < 500) break;
+    if (attempt < 3) Utilities.sleep(500 * Math.pow(2, attempt));
+  }
   if (code === 429 || code >= 500) {
     let detail = '';
     try {
