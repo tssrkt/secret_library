@@ -82,9 +82,10 @@ function doPost(e) {
     if (reservation && reservation.status === 'reserved' && !emailSent) {
       try { finishSend(reservation.uid, reservation.email, false, reservation.reservationId); } catch (_) {}
     }
-    console.error('Invitation mailer failed', {
+    console.error(adminRequest ? 'Admin request failed' : 'Invitation mailer failed', {
       stage: stage,
-      name: error && error.name ? String(error.name) : 'UnknownError'
+      name: error && error.name ? String(error.name) : 'UnknownError',
+      message: error && error.message ? String(error.message).slice(0, 500) : 'No error message'
     });
     return adminRequest
       ? adminResponsePage(requestId, false, publicAdminError(error), null)
@@ -928,7 +929,15 @@ function fsEncodeValue(value) {
 function publicAdminError(error) {
   const message = error && error.message ? String(error.message) : '';
   if (/^(Сеанс Google|Для отправки приглашений|Нет прав администратора|Доступ к Тайной Библиотеке|Главный администратор|Первоначальная настройка|Учётная запись администратора|Недостаточно прав|Не назначены права|Некорректные права|Нельзя менять права|Участник не найден|Нельзя заблокировать|Главного администратора|Не указан участник|Приглашение не найдено|Приглашение уже принято|Некорректное приглашение|Некорректный доступ|Связь доступа не найдена)/.test(message)) return message;
-  return 'Административная операция не выполнена. Проверьте разрешения Apps Script и доступ к Firebase.';
+  if (!message) return '\u041e\u0448\u0438\u0431\u043a\u0430 Apps Script: \u0438\u0441\u043a\u043b\u044e\u0447\u0435\u043d\u0438\u0435 \u0431\u0435\u0437 \u043e\u043f\u0438\u0441\u0430\u043d\u0438\u044f. \u041f\u0440\u043e\u0432\u0435\u0440\u044c\u0442\u0435 \u0436\u0443\u0440\u043d\u0430\u043b \u0432\u044b\u043f\u043e\u043b\u043d\u0435\u043d\u0438\u0439.';
+  const safe = message
+    .replace(new RegExp('Bearer\\s+[^\\s]+', 'gi'), 'Bearer [redacted]')
+    .replace(new RegExp('AIza[0-9A-Za-z_-]{20,}'), '[API key redacted]')
+    .replace(new RegExp('eyJ[A-Za-z0-9_-]{20,}\\.[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}'), '[token redacted]')
+    .replace(new RegExp('https?:\\/\\/[^\\s\"<>]+', 'gi'), '[URL redacted]')
+    .replace(/[\r\n]+/g, ' ')
+    .slice(0, 350);
+  return '\u041e\u0448\u0438\u0431\u043a\u0430 Apps Script: ' + safe;
 }
 
 function adminResponsePage(requestId, ok, message, result) {
