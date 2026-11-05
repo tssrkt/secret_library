@@ -2,6 +2,7 @@ import { initializeApp } from 'firebase-admin/app';
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 import { getAuth } from 'firebase-admin/auth';
 import { HttpsError, onCall } from 'firebase-functions/v2/https';
+import { canRestoreAdminRights, isValidLibraryShareId, isValidUid, projectDashboardAdmin, projectDashboardBan, projectDashboardEvent, projectDashboardInvitation, projectDashboardShare, projectDashboardUser } from './admin-security.js';
 
 initializeApp();
 const db = getFirestore();
@@ -71,34 +72,59 @@ export const bootstrapAdmin = onCall({ region: 'europe-west1', invoker: 'public'
 });
 
 export const getAdminDashboard = onCall({ region: 'europe-west1', invoker: 'public' }, async (request) => {
-  const { uid, admin } = await requireAdmin(request);
-  const allPermissions = admin.role === 'superadmin' ? Object.fromEntries(ADMIN_SECTIONS.map((key) => [key, true])) : (admin.permissions || {});
+  const { admin } = await requireAdmin(request);
+  const allPermissions = admin.role === 'superadmin'
+    ? Object.fromEntries(ADMIN_SECTIONS.map((key) => [key, true]))
+    : Object.fromEntries(ADMIN_SECTIONS.filter((key) => typeof admin.permissions?.[key] === 'boolean').map((key) => [key, admin.permissions[key]]));
   if (!Object.values(allPermissions).some(Boolean)) throw new HttpsError('permission-denied', 'Не назначены права для просмотра админки.');
+
+  const needsUsers = Boolean(allPermissions.users || allPermissions.relationships);
+  const needsBans = Boolean(allPermissions.banned || allPermissions.users || allPermissions.relationships);
+  const needsAdmins = Boolean(allPermissions.admins || allPermissions.users);
+  const needsShares = Boolean(allPermissions.shares || allPermissions.relationships);
   const [users, invites, shares, admins, banned, events, directory] = await Promise.all([
-    db.collection('users').get(),
-    db.collection('pendingInvites').get(),
-    db.collection('libraryShares').get(),
-    db.collection('adminUsers').get(),
-    db.collection('bannedUsers').get(),
-    db.collection('adminEvents').orderBy('createdAt', 'desc').limit(100).get(),
-    db.collection('userDirectory').get()
+    needsUsers ? db.collection('users').get() : Promise.resolve(null),
+    allPermissions.invites ? db.collection('pendingInvites').get() : Promise.resolve(null),
+    needsShares ? db.collection('libraryShares').get() : Promise.resolve(null),
+    needsAdmins ? db.collection('adminUsers').get() : Promise.resolve(null),
+    needsBans ? db.collection('bannedUsers').get() : Promise.resolve(null),
+    allPermissions.events ? db.collection('adminEvents').orderBy('createdAt', 'desc').limit(100).get() : Promise.resolve(null),
+    allPermissions.users ? db.collection('userDirectory').get() : Promise.resolve(null)
   ]);
-  const emailByUid = new Map(directory.docs.map((d) => [d.data().uid, d.id]));
-  const userRows = users.docs.map((d) => ({ uid: d.id, ...d.data(), email: emailByUid.get(d.id) || d.data().email || '', banned: banned.docs.some((b) => b.id === d.id), admin: admins.docs.some((a) => a.id === d.id) }));
+  const userDocs = users?.docs || [];
+  const inviteDocs = invites?.docs || [];
+  const shareDocs = shares?.docs || [];
+  const adminDocs = admins?.docs || [];
+  const bannedDocs = banned?.docs || [];
+  const eventDocs = events?.docs || [];
+  const emailByUid = new Map((directory?.docs || []).map((d) => [d.data().uid, d.id]));
+  const userRows = userDocs.map((d) => projectDashboardUser(d.id, d.data(), {
+    includeEmail: Boolean(allPermissions.users),
+    email: emailByUid.get(d.id) || '',
+    banned: bannedDocs.some((b) => b.id === d.id),
+    admin: adminDocs.some((a) => a.id === d.id)
+  }));
   const inviteRows = [];
-  for (const invite of invites.docs) {
+  for (const invite of inviteDocs) {
     const child = await invite.ref.collection('shares').get();
-    for (const item of child.docs) inviteRows.push({ id: item.id, email: invite.id, ...item.data() });
+    for (const item of child.docs) inviteRows.push(projectDashboardInvitation(item.id, invite.id, item.data()));
   }
   return {
     permissions: allPermissions,
-    counts: { users: allPermissions.users ? users.size : null, invitations: allPermissions.invites ? inviteRows.length : null, acceptedInvitations: allPermissions.invites ? inviteRows.filter((x) => Boolean(x.claimedUid)).length : null, shares: allPermissions.shares ? shares.docs.filter((d) => d.data().active === true).length : null, admins: allPermissions.admins ? admins.size : null, banned: allPermissions.banned ? banned.size : null },
+    counts: {
+      users: allPermissions.users ? userDocs.length : null,
+      invitations: allPermissions.invites ? inviteRows.length : null,
+      acceptedInvitations: allPermissions.invites ? inviteRows.filter((x) => Boolean(x.claimedUid)).length : null,
+      shares: allPermissions.shares ? shareDocs.filter((d) => d.data().active === true).length : null,
+      admins: allPermissions.admins ? adminDocs.length : null,
+      banned: allPermissions.banned ? bannedDocs.length : null
+    },
     users: allPermissions.users || allPermissions.relationships ? userRows : [],
     invitations: allPermissions.invites ? inviteRows : [],
-    shares: allPermissions.shares || allPermissions.relationships ? shares.docs.map((d) => ({ id: d.id, ...d.data() })) : [],
-    admins: allPermissions.admins ? admins.docs.map((d) => ({ uid: d.id, ...d.data() })) : [],
-    banned: allPermissions.banned ? banned.docs.map((d) => ({ uid: d.id, ...d.data() })) : [],
-    events: allPermissions.events ? events.docs.map((d) => ({ id: d.id, ...d.data() })) : []
+    shares: needsShares ? shareDocs.map((d) => projectDashboardShare(d.id, d.data(), { includeOwnerEmail: Boolean(allPermissions.shares) })) : [],
+    admins: allPermissions.admins ? adminDocs.map((d) => projectDashboardAdmin(d.id, d.data(), { includeEmail: Boolean(allPermissions.users) })) : [],
+    banned: allPermissions.banned ? bannedDocs.map((d) => projectDashboardBan(d.id, d.data(), { includeUserDetails: Boolean(allPermissions.users) })) : [],
+    events: allPermissions.events ? eventDocs.map((d) => projectDashboardEvent(d.id, d.data(), { includeUserDetails: Boolean(allPermissions.users) })) : []
   };
 });
 
@@ -106,16 +132,18 @@ export const setAdminPermissions = onCall({ region: 'europe-west1', invoker: 'pu
   const { uid } = await requireAdmin(request, 'admins');
   const targetUid = String(request.data?.uid || '');
   const permissions = request.data?.permissions;
-  if (!targetUid || targetUid === uid || !permissions || typeof permissions !== 'object'
+  if (!isValidUid(targetUid) || targetUid === uid || !permissions || typeof permissions !== 'object'
       || Object.keys(permissions).some((key) => !ADMIN_SECTIONS.includes(key) || typeof permissions[key] !== 'boolean')) {
     throw new HttpsError('invalid-argument', 'Некорректные права администратора.');
   }
+  const bannedTarget = await banRef(targetUid).get();
+  if (bannedTarget.exists) throw new HttpsError('failed-precondition', 'Нельзя назначить администратора заблокированному участнику.');
   const user = await db.doc(`users/${targetUid}`).get();
   if (!user.exists) throw new HttpsError('not-found', 'Участник не найден.');
   const existing = await adminRef(targetUid).get();
   if (existing.data()?.role === 'superadmin') throw new HttpsError('failed-precondition', 'Нельзя менять права главного администратора.');
   const active = request.data?.active !== false;
-  await adminRef(targetUid).set({ uid: targetUid, email: normalEmail(request.data?.email) || normalEmail(existing.data()?.email), role: 'moderator', active, permissions, updatedAt: FieldValue.serverTimestamp(), updatedBy: uid }, { merge: true });
+  await adminRef(targetUid).set({ uid: targetUid, email: normalEmail(existing.data()?.email), role: 'moderator', active, permissions, updatedAt: FieldValue.serverTimestamp(), updatedBy: uid }, { merge: true });
   await db.doc(`users/${targetUid}`).set({ isAdmin: active }, { merge: true });
   await logAdminEvent(uid, 'set-admin-permissions', targetUid, { permissions, active });
   return { ok: true };
@@ -125,7 +153,7 @@ export const banLibraryUser = onCall({ region: 'europe-west1', invoker: 'public'
   const { uid } = await requireAdmin(request, 'users');
   const targetUid = String(request.data?.uid || '');
   const reason = typeof request.data?.reason === 'string' ? request.data.reason.trim().slice(0, 500) : '';
-  if (!targetUid || targetUid === uid) throw new HttpsError('invalid-argument', 'Нельзя заблокировать эту учётную запись.');
+  if (!isValidUid(targetUid) || targetUid === uid) throw new HttpsError('invalid-argument', 'Нельзя заблокировать эту учётную запись.');
   const admin = await adminRef(targetUid).get();
   if (admin.data()?.role === 'superadmin') throw new HttpsError('failed-precondition', 'Главного администратора нельзя заблокировать.');
   const profile = await db.doc(`users/${targetUid}`).get();
@@ -142,14 +170,14 @@ export const banLibraryUser = onCall({ region: 'europe-west1', invoker: 'public'
 });
 
 export const restoreLibraryUser = onCall({ region: 'europe-west1', invoker: 'public' }, async (request) => {
-  const { uid } = await requireAdmin(request, 'banned');
+  const { uid, admin: actorAdmin } = await requireAdmin(request, 'banned');
   const targetUid = String(request.data?.uid || '');
-  if (!targetUid) throw new HttpsError('invalid-argument', 'Не указан участник.');
+  if (!isValidUid(targetUid)) throw new HttpsError('invalid-argument', 'Не указан участник.');
   const banned = await banRef(targetUid).get();
   if (!banned.exists) return { ok: true };
   await banRef(targetUid).delete();
-  const admin = await adminRef(targetUid).get();
-  if (admin.exists && banned.data()?.adminWasActive === true) {
+  const targetAdmin = await adminRef(targetUid).get();
+  if (canRestoreAdminRights(actorAdmin, targetAdmin.exists, banned.data()?.adminWasActive === true)) {
     await adminRef(targetUid).update({ active: true, updatedAt: FieldValue.serverTimestamp(), updatedBy: uid });
     await db.doc(`users/${targetUid}`).set({ isAdmin: true }, { merge: true });
   }
@@ -161,7 +189,7 @@ export const adminRevokeInvitation = onCall({ region: 'europe-west1', invoker: '
   const { uid } = await requireAdmin(request, 'invites');
   const email = normalEmail(request.data?.email);
   const ownerUid = String(request.data?.ownerUid || '');
-  if (!emailPattern.test(email) || !ownerUid) throw new HttpsError('invalid-argument', 'Некорректное приглашение.');
+  if (!emailPattern.test(email) || !isValidUid(ownerUid)) throw new HttpsError('invalid-argument', 'Некорректное приглашение.');
   const ref = pendingShare(email, ownerUid);
   const snapshot = await ref.get();
   if (!snapshot.exists) throw new HttpsError('not-found', 'Приглашение не найдено.');
@@ -174,12 +202,18 @@ export const adminRevokeInvitation = onCall({ region: 'europe-west1', invoker: '
 export const adminSetLibraryShare = onCall({ region: 'europe-west1', invoker: 'public' }, async (request) => {
   const { uid } = await requireAdmin(request, 'shares');
   const id = String(request.data?.id || '');
-  if (!id || typeof request.data?.active !== 'boolean') throw new HttpsError('invalid-argument', 'Некорректный доступ.');
+  if (!isValidLibraryShareId(id) || typeof request.data?.active !== 'boolean') throw new HttpsError('invalid-argument', 'Некорректный доступ.');
+  if (request.data.active !== false) throw new HttpsError('failed-precondition', 'Администратор может только закрыть доступ; повторное открытие выполняет владелец.');
   const ref = db.doc(`libraryShares/${id}`);
   const snapshot = await ref.get();
   if (!snapshot.exists) throw new HttpsError('not-found', 'Связь доступа не найдена.');
   const current = snapshot.data();
-  await ref.update({ active: request.data.active, revokedAt: request.data.active ? null : FieldValue.serverTimestamp() });
+  const protectedUids = [...new Set([current.ownerUid, current.viewerUid].filter(Boolean))];
+  const protectedAdmins = await Promise.all(protectedUids.map((protectedUid) => adminRef(protectedUid).get()));
+  if (protectedAdmins.some((entry) => entry.exists && entry.data()?.role === 'superadmin')) {
+    throw new HttpsError('failed-precondition', 'Нельзя изменять доступ, связанный с главным администратором.');
+  }
+  await ref.update({ active: false, revokedAt: FieldValue.serverTimestamp() });
   await logAdminEvent(uid, request.data.active ? 'admin-open-share' : 'admin-close-share', current.viewerUid, { ownerUid: current.ownerUid });
   return { ok: true };
 });

@@ -39,8 +39,8 @@ function submitMailerPayload(payload, returnData = false) {
       else resolve(result);
     };
     const onMessage = (event) => {
-      if (event.origin !== 'https://script.google.com' &&
-          !event.origin.endsWith('.googleusercontent.com')) return;
+      if (event.source !== frame.contentWindow) return;
+      if (event.origin !== 'https://script.google.com' && event.origin !== 'https://script.googleusercontent.com') return;
       const data = event.data;
       if (!data || data.type !== RESULT_TYPE || data.requestId !== requestId) return;
       if (data.ok === true) finish(null, returnData ? (data.data || {}) : String(data.message || 'Приглашение отправлено.'));

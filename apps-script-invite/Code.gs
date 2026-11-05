@@ -52,6 +52,11 @@ function doPost(e) {
     stage = 'verify-pending-invitation';
     const invitation = readPendingInvitation(idToken, email, user.localId);
     if (!invitation) throw new Error('Приглашение не найдено. Повторите попытку из библиотеки.');
+    stage = 'check-blocked-recipient';
+    if (isBlockedInvitationEmail(email)) {
+      deactivateBlockedInvitation(email, user.localId);
+      throw new Error('Данный емейл заблокирован');
+    }
     if (invitation.claimedUid) {
       return responsePage(requestId, true, 'Запрос обработан. Если получателю нужно приглашение, письмо отправлено.');
     }
@@ -62,6 +67,12 @@ function doPost(e) {
     if (reservation.status === 'cooldown' || reservation.status === 'sending') {
       // Do not reveal whether an address belongs to an existing member.
       return responsePage(requestId, true, 'Запрос обработан. Если получателю нужно приглашение, письмо отправлено.');
+    }
+
+    stage = 'recheck-blocked-recipient';
+    if (isBlockedInvitationEmail(email)) {
+      deactivateBlockedInvitation(email, user.localId);
+      throw new Error('Данный емейл заблокирован');
     }
 
     stage = 'send-email';
@@ -96,8 +107,42 @@ function normalizeEmail(value) {
   return typeof value === 'string' ? value.trim().toLowerCase() : '';
 }
 
+function isValidUid(value) {
+  return typeof value === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(value);
+}
+
+function isValidLibraryShareId(value) {
+  if (typeof value !== 'string' || value.length > 258) return false;
+  const parts = value.split('__');
+  return parts.length === 2 && parts.every(isValidUid);
+}
+
 function isValidEmail(value) {
   return value.length <= 254 && /^[^\s/@]+@[^\s/@]+\.[^\s/@]+$/.test(value);
+}
+
+function isBlockedInvitationEmail(email) {
+  const address = normalizeEmail(email);
+  const directory = fsGet('userDirectory/' + encodeURIComponent(address));
+  if (directory && isValidUid(directory.uid) && fsGet('bannedUsers/' + encodeURIComponent(directory.uid))) return true;
+
+  // Older ban records may contain the email but have no directory entry.
+  const response = fsFetch(FIRESTORE_REST_ROOT.slice(0, -1) + ':runQuery', 'post', {
+    structuredQuery: {
+      from: [{ collectionId: 'bannedUsers' }],
+      where: { fieldFilter: { field: { fieldPath: 'email' }, op: 'EQUAL', value: { stringValue: address } } },
+      limit: 1
+    }
+  });
+  if (response.code !== 200) throw new Error('Не удалось проверить блокировку адреса получателя.');
+  return JSON.parse(response.text).some(row => row && row.document);
+}
+
+function deactivateBlockedInvitation(email, ownerUid) {
+  const path = 'pendingInvites/' + encodeURIComponent(email) + '/shares/' + encodeURIComponent(ownerUid);
+  const invitation = fsGet(path);
+  if (!invitation || invitation.ownerUid !== ownerUid || invitation.active !== true || invitation.claimedUid) return;
+  fsSet(path, { active: false, revokedAt: new Date(), revokedBy: 'system' });
 }
 
 function verifyFirebaseUser(idToken) {
@@ -115,7 +160,7 @@ function verifyFirebaseUser(idToken) {
   const user = body.users && body.users[0];
   const googleProvider = user && Array.isArray(user.providerUserInfo) &&
     user.providerUserInfo.some(function (provider) { return provider.providerId === 'google.com'; });
-  if (!user || !user.localId || user.emailVerified !== true || !googleProvider) {
+  if (!user || !user.localId || user.disabled === true || user.emailVerified !== true || !googleProvider) {
     throw new Error('Для отправки приглашений нужен подтверждённый Google-сеанс.');
   }
   return user;
@@ -308,6 +353,7 @@ function publicError(error) {
       message.indexOf('Проверьте адрес') === 0 ||
       message.indexOf('Не удалось обновить состояние приглашений') === 0 ||
       message.indexOf('Приглашение') === 0 ||
+      message.indexOf('Данный емейл заблокирован') === 0 ||
       message.indexOf('Не удалось проверить') === 0) return message;
   return 'Не удалось отправить приглашение. Повторите попытку позже.';
 }
@@ -395,7 +441,7 @@ function requireAdminApi(uid, permission) {
 
 function getAdminDashboardApi(actor) {
   const p = actor.admin.role === 'superadmin'
-    ? Object.fromEntries(ADMIN_SECTIONS_API.map(k => [k, true])) : (actor.admin.permissions || {});
+    ? Object.fromEntries(ADMIN_SECTIONS_API.map(k => [k, true])) : sanitizeAdminPermissions(actor.admin.permissions || {});
   if (!Object.values(p).some(Boolean)) throw new Error('Не назначены права для просмотра админки.');
   const users = p.users || p.relationships ? fsList('users') : [];
   const banned = p.banned || p.users || p.relationships ? fsList('bannedUsers') : [];
@@ -406,11 +452,12 @@ function getAdminDashboardApi(actor) {
   const directory = p.users ? fsList('userDirectory') : [];
   const emailByUid = new Map(directory.filter(item => item.uid && item.id).map(item => [item.uid, item.id]));
   const events = p.events ? fsListPage('adminEvents', 100, 'createdAt desc') : [];
-  const userRows = users.map(u => ({ ...(p.users ? u : sanitizeRelationshipProfile(u)), uid: u.id, email: p.users ? (emailByUid.get(u.id) || '') : '', banned: banned.some(b => b.id === u.id), admin: admins.some(a => a.id === u.id) }));
-  const visibleShares = redactPrivateEmails(actor, shares);
-  const visibleAdmins = redactPrivateEmails(actor, admins);
-  const visibleBanned = redactPrivateEmails(actor, banned);
-  const visibleEvents = redactPrivateEmails(actor, events);
+  const userRows = users.map(u => ({ ...sanitizeRelationshipProfile(u), uid: u.id, email: p.users ? (emailByUid.get(u.id) || '') : '', banned: banned.some(b => b.id === u.id), admin: admins.some(a => a.id === u.id) }));
+  const visibleShares = redactPrivateEmails(actor, shares, 'shares');
+  const visibleAdmins = redactPrivateEmails(actor, admins, 'admins');
+  const visibleBanned = redactPrivateEmails(actor, banned, 'banned');
+  const visibleEvents = redactPrivateEmails(actor, events, 'events');
+  const visibleInvitations = sanitizeInvitationRecords(actor, invites);
   return {
     permissions: p,
     counts: {
@@ -422,7 +469,7 @@ function getAdminDashboardApi(actor) {
       banned: p.banned ? banned.length : null
     },
     users: p.users || p.relationships ? userRows : [],
-    invitations: p.invites ? invites : [],
+    invitations: p.invites ? visibleInvitations : [],
     shares: p.shares || p.relationships ? visibleShares : [],
     admins: p.admins ? visibleAdmins : [],
     banned: p.banned ? visibleBanned : [],
@@ -434,7 +481,7 @@ function getAdminDashboardApi(actor) {
 
 function getAdminDashboardSummaryApi(actor) {
   const p = actor.admin.role === 'superadmin'
-    ? Object.fromEntries(ADMIN_SECTIONS_API.map(k => [k, true])) : (actor.admin.permissions || {});
+    ? Object.fromEntries(ADMIN_SECTIONS_API.map(k => [k, true])) : sanitizeAdminPermissions(actor.admin.permissions || {});
   if (!Object.values(p).some(Boolean)) throw new Error('Не назначены права для просмотра админки.');
   const counts = {
     users: p.users ? fsCount('users') : null,
@@ -487,10 +534,13 @@ function getAdminCollectionPageApi(actor, data) {
   else if ((section === 'shares' || section === 'admins') && ['active', 'inactive'].includes(data.filter)) {
     page = fsQueryFilteredPage(config[section][1], 'active', data.filter === 'active', 25, data.cursor || '');
   } else page = fsQueryPage(config[section][1], 25, data.cursor || '');
-  if (['shares', 'admins', 'banned', 'events'].includes(section)) page.items = redactPrivateEmails(actor, page.items);
+  if (['shares', 'admins', 'banned', 'events'].includes(section)) page.items = redactPrivateEmails(actor, page.items, section);
+  if (section === 'invites') page.items = sanitizeInvitationRecords(actor, page.items);
   if (section === 'users') {
-    const flags = fsGetAdminUserFlags(page.items.map(user => user.id));
-    page.items = page.items.map(user => ({ ...user, uid: user.id, banned: flags.banned.has(user.id), admin: flags.admins.has(user.id) }));
+    const uids = page.items.map(user => user.id);
+    const flags = fsGetAdminUserFlags(uids);
+    const emailByUid = new Map(fsQueryEmailDirectory(uids).map(item => [item.uid, item.id]));
+    page.items = page.items.map(user => ({ ...sanitizeRelationshipProfile(user), uid: user.id, email: emailByUid.get(user.id) || '', banned: flags.banned.has(user.id), admin: flags.admins.has(user.id) }));
   }
   return page;
 }
@@ -502,6 +552,23 @@ function fsGetAdminUserFlags(uids) {
   fsQueryDocumentIds('adminUsers', uids).forEach(uid => result.admins.add(uid));
   return result;
 }
+function fsQueryEmailDirectory(uids) {
+  const unique = [...new Set((uids || []).filter(isValidUid))].slice(0, 30);
+  if (!unique.length) return [];
+  const values = unique.map(uid => ({ stringValue: uid }));
+  const response = fsFetch(FIRESTORE_REST_ROOT.slice(0, -1) + ':runQuery', 'post', {
+    structuredQuery: {
+      from: [{ collectionId: 'userDirectory' }],
+      where: { fieldFilter: { field: { fieldPath: 'uid' }, op: 'IN', value: { arrayValue: { values } } } },
+      limit: unique.length
+    }
+  });
+  if (response.code !== 200) throw new Error('Не удалось получить адреса участников.');
+  return JSON.parse(response.text).filter(row => row && row.document).map(row => ({
+    ...fsDecodeFields(row.document.fields || {}), id: row.document.name.split('/').pop()
+  })).filter(item => isValidUid(item.uid) && unique.includes(item.uid));
+}
+
 function fsQueryDocumentIds(collectionId, ids) {
   const values = ids.slice(0, 30).map(uid => ({ referenceValue: 'projects/' + FIREBASE_PROJECT_ID + '/databases/(default)/documents/' + collectionId + '/' + uid }));
   if (!values.length) return [];
@@ -519,20 +586,75 @@ function sanitizeRelationshipProfile(profile) {
   return safe;
 }
 function visibleUserProfile(actor, profile, uid) {
-  const canReadUserDetails = actor.admin.role === 'superadmin' || actor.admin.permissions?.users === true;
-  return { ...(canReadUserDetails ? profile : sanitizeRelationshipProfile(profile)), ...(uid ? { uid } : {}) };
+  return { ...sanitizeRelationshipProfile(profile), ...(uid ? { uid } : {}) };
 }
-function redactPrivateEmails(actor, items) {
+function sanitizeInvitationRecords(actor, items) {
+  const allowed = ['id', 'email', 'ownerUid', 'claimedUid', 'active', 'createdAt', 'claimedAt', 'emailStatus', 'emailSentAt', 'revokedAt', 'revokedBy'];
+  return items.map(item => {
+    const safe = {};
+    allowed.forEach(key => {
+      if (Object.prototype.hasOwnProperty.call(item, key)) safe[key] = item[key];
+    });
+    return safe;
+  });
+}
+function sanitizeAdminPermissions(value) {
+  const safe = {};
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return safe;
+  ADMIN_SECTIONS_API.forEach(key => {
+    if (typeof value[key] === 'boolean') safe[key] = value[key];
+  });
+  return safe;
+}
+function redactEmailAddresses(value) {
+  return String(value || '').replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, '[скрыто]');
+}
+function sanitizeEventDetails(source, canReadEmails) {
+  const details = {};
+  if (!source || typeof source !== 'object' || Array.isArray(source)) return details;
+  if (source.permissions && typeof source.permissions === 'object' && !Array.isArray(source.permissions)) {
+    details.permissions = sanitizeAdminPermissions(source.permissions);
+  }
+  if (typeof source.active === 'boolean') details.active = source.active;
+  if (typeof source.reason === 'string') {
+    const reason = source.reason.slice(0, 500);
+    details.reason = canReadEmails ? reason : redactEmailAddresses(reason);
+  }
+  if (isValidUid(source.ownerUid)) details.ownerUid = source.ownerUid;
+  if (Number.isFinite(source.limit) && source.limit >= 0) details.limit = source.limit;
+  if (Number.isFinite(source.length) && source.length >= 0) details.length = source.length;
+  if (typeof source.adminRestored === 'boolean') details.adminRestored = source.adminRestored;
+  if (typeof source.email === 'string') details.email = canReadEmails ? source.email : '';
+  return details;
+}
+function redactPrivateEmails(actor, items, section) {
   const canReadEmails = actor.admin.role === 'superadmin' || actor.admin.permissions?.users === true;
-  if (canReadEmails) return items;
-  const redact = value => {
-    if (Array.isArray(value)) return value.map(redact);
-    if (!value || typeof value !== 'object') return value;
-    return Object.fromEntries(Object.entries(value).map(([key, item]) => [
-      key, ['email', 'ownerEmail', 'viewerEmail', 'inviteeEmail'].includes(key) ? '' : redact(item)
-    ]));
+  const pick = (value, fields) => {
+    const safe = {};
+    fields.forEach(key => {
+      if (Object.prototype.hasOwnProperty.call(value, key)) safe[key] = value[key];
+    });
+    return safe;
   };
-  return items.map(redact);
+  return items.map(item => {
+    if (section === 'shares') {
+      return { ...pick(item, ['id', 'ownerUid', 'viewerUid', 'active', 'sharedAt', 'revokedAt']), ownerEmail: canReadEmails ? (item.ownerEmail || '') : '' };
+    }
+    if (section === 'admins') {
+      const safe = pick(item, ['id', 'uid', 'role', 'active', 'createdAt', 'createdBy', 'updatedAt', 'updatedBy']);
+      if (Object.prototype.hasOwnProperty.call(item, 'permissions')) safe.permissions = sanitizeAdminPermissions(item.permissions);
+      return { ...safe, email: canReadEmails ? (item.email || '') : '' };
+    }
+    if (section === 'banned') {
+      const safe = pick(item, ['id', 'uid', 'displayName', 'reason', 'bannedBy', 'adminWasActive', 'bannedAt']);
+      if (!canReadEmails && typeof safe.reason === 'string') safe.reason = redactEmailAddresses(safe.reason);
+      return { ...safe, email: canReadEmails ? (item.email || '') : '' };
+    }
+    if (section === 'events') {
+      return { ...pick(item, ['id', 'actorUid', 'action', 'targetUid', 'createdAt']), details: sanitizeEventDetails(item.details, canReadEmails) };
+    }
+    return {};
+  });
 }
 function getAdminRelationshipRootsApi(actor, data) {
   requireAdminApi(actor.uid, 'relationships');
@@ -543,7 +665,7 @@ function getAdminRelationshipRootsApi(actor, data) {
 function getAdminBranchApi(actor, data) {
   requireAdminApi(actor.uid, 'relationships');
   const uid = String(data.uid || '');
-  if (!uid || uid.length > 128) throw new Error('Некорректный UID участника.');
+  if (!isValidUid(uid)) throw new Error('Некорректный UID участника.');
   const page = fsQueryFilteredPage('users', 'invitedByUid', uid, 25, data.cursor || '');
   page.items = page.items.map(user => visibleUserProfile(actor, user, user.id));
   return page;
@@ -558,7 +680,7 @@ function getAdminUserCardApi(actor, data) {
   const canReadAdminDetails = current.admin.role === 'superadmin' || current.admin.permissions?.admins === true || current.admin.permissions?.users === true;
   const canReadBanDetails = current.admin.role === 'superadmin' || current.admin.permissions?.banned === true || current.admin.permissions?.users === true;
   const uid = String(data.uid || '');
-  if (!uid || uid.length > 128) throw new Error('Некорректный UID участника.');
+  if (!isValidUid(uid)) throw new Error('Некорректный UID участника.');
   const profile = fsGet('users/' + encodeURIComponent(uid));
   if (!profile) throw new Error('Участник не найден.');
   const directory = canReadEmails ? fsQueryGroupByField('userDirectory', 'uid', uid, 1)[0] : null;
@@ -572,25 +694,25 @@ function getAdminUserCardApi(actor, data) {
     user: { ...visibleUserProfile(current, profile, uid), email: directory?.id ? decodeURIComponent(directory.id) : '' },
     inviter: inviter ? visibleUserProfile(current, inviter, profile.invitedByUid) : null,
     invited: invited.map(user => visibleUserProfile(current, user, user.id)),
-    admin: adminRecord ? redactPrivateEmails(actor, [adminRecord])[0] : null,
-    banned: bannedRecord ? redactPrivateEmails(actor, [bannedRecord])[0] : null,
-    outgoing: redactPrivateEmails(actor, outgoing.filter(share => share.active === true)),
-    incoming: redactPrivateEmails(actor, incoming.filter(share => share.active === true))
+    admin: adminRecord ? redactPrivateEmails(actor, [adminRecord], 'admins')[0] : null,
+    banned: bannedRecord ? redactPrivateEmails(actor, [bannedRecord], 'banned')[0] : null,
+    outgoing: redactPrivateEmails(actor, outgoing.filter(share => share.active === true), 'shares'),
+    incoming: redactPrivateEmails(actor, incoming.filter(share => share.active === true), 'shares')
   };
 }
 function getAdminUserHistoryApi(actor, data) {
   requireAdminApi(actor.uid, 'users');
   const uid = String(data.uid || '');
-  if (!uid || uid.length > 128) throw new Error('Некорректный UID участника.');
+  if (!isValidUid(uid)) throw new Error('Некорректный UID участника.');
   const invitations = fsQueryGroupByField('shares', 'ownerUid', uid, 100, true)
     .concat(fsQueryGroupByField('shares', 'claimedUid', uid, 100, true));
   const events = fsQueryGroupByField('adminEvents', 'targetUid', uid, 100)
     .concat(fsQueryGroupByField('adminEvents', 'actorUid', uid, 100));
   return {
-    outgoing: fsQueryGroupByField('libraryShares', 'ownerUid', uid, 100),
-    incoming: fsQueryGroupByField('libraryShares', 'viewerUid', uid, 100),
-    invitations: [...new Map(invitations.map(item => [item.id + ':' + item.email, item])).values()],
-    events: [...new Map(events.map(item => [item.id, item])).values()].sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0)).slice(0, 100)
+    outgoing: redactPrivateEmails(actor, fsQueryGroupByField('libraryShares', 'ownerUid', uid, 100), 'shares'),
+    incoming: redactPrivateEmails(actor, fsQueryGroupByField('libraryShares', 'viewerUid', uid, 100), 'shares'),
+    invitations: sanitizeInvitationRecords(actor, [...new Map(invitations.map(item => [item.id + ':' + item.email, item])).values()]),
+    events: redactPrivateEmails(actor, [...new Map(events.map(item => [item.id, item])).values()].sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0)).slice(0, 100), 'events')
   };
 }
 
@@ -619,7 +741,7 @@ function fsQueryFilteredPage(path, filterField, filterValue, pageSize, cursor, f
   const response = fsFetch(FIRESTORE_REST_ROOT.slice(0, -1) + ':runQuery', 'post', { structuredQuery });
   if (response.code !== 200) throw new Error('Не удалось загрузить страницу Firebase (' + response.code + ').');
   const rows = JSON.parse(response.text).filter(row => row && row.document).map(row => ({
-    id: row.document.name.split('/').pop(), ...fsDecodeFields(row.document.fields || {}), _documentName: row.document.name
+    ...fsDecodeFields(row.document.fields || {}), id: row.document.name.split('/').pop(), _documentName: row.document.name
   }));
   const hasMore = rows.length > size;
   const items = rows.slice(0, size);
@@ -659,7 +781,7 @@ function fsQueryUsersSearchPage(pageSize, cursor, search) {
   const response = fsFetch(FIRESTORE_REST_ROOT.slice(0, -1) + ':runQuery', 'post', { structuredQuery });
   if (response.code !== 200) throw new Error('Не удалось выполнить поиск участников (' + response.code + ').');
   const rows = JSON.parse(response.text).filter(row => row && row.document).map(row => ({
-    id: row.document.name.split('/').pop(), ...fsDecodeFields(row.document.fields || {}), _documentName: row.document.name
+    ...fsDecodeFields(row.document.fields || {}), id: row.document.name.split('/').pop(), _documentName: row.document.name
   }));
   const hasMore = rows.length > size;
   const items = rows.slice(0, size);
@@ -699,9 +821,10 @@ function fsQueryInvitationPage(pageSize, cursor, filter) {
   const rows = JSON.parse(response.text).filter(row => row && row.document &&
     row.document.name.includes('/documents/pendingInvites/') && row.document.name.includes('/shares/'))
     .map(row => ({
+      ...fsDecodeFields(row.document.fields || {}),
       id: row.document.name.split('/').pop(),
       email: decodeURIComponent(row.document.name.split('/documents/pendingInvites/')[1].split('/shares/')[0]),
-      ...fsDecodeFields(row.document.fields || {}), _documentName: row.document.name
+      _documentName: row.document.name
     }));
   const hasMore = rows.length > size;
   const items = rows.slice(0, size);
@@ -723,9 +846,9 @@ function fsQueryGroupByField(collectionId, field, value, limit, nestedOnly) {
   return JSON.parse(response.text).filter(row => row && row.document)
     .filter(row => !nestedOnly || row.document.name.includes('/pendingInvites/'))
     .map(row => ({
+      ...fsDecodeFields(row.document.fields || {}),
       id: row.document.name.split('/').pop(),
-      ...(nestedOnly ? { email: decodeURIComponent(row.document.name.split('/documents/pendingInvites/')[1].split('/shares/')[0]) } : {}),
-      ...fsDecodeFields(row.document.fields || {})
+      ...(nestedOnly ? { email: decodeURIComponent(row.document.name.split('/documents/pendingInvites/')[1].split('/shares/')[0]) } : {})
     }));
 }
 function getInvitationEmailTemplate() {
@@ -778,10 +901,11 @@ function setAdminPermissionsApi(actor, data) {
   requireAdminApi(actor.uid, 'admins');
   const uid = String(data.uid || '');
   const permissions = data.permissions;
-  if (!uid || uid === actor.uid || !permissions || typeof permissions !== 'object' ||
+  if (!isValidUid(uid) || uid === actor.uid || !permissions || typeof permissions !== 'object' || Array.isArray(permissions) ||
       Object.keys(permissions).some(k => !ADMIN_SECTIONS_API.includes(k) || typeof permissions[k] !== 'boolean')) {
     throw new Error('Некорректные права администратора.');
   }
+  if (fsGet('bannedUsers/' + uid)) throw new Error('Нельзя назначить администратора заблокированному участнику.');
   if (!fsGet('users/' + uid)) throw new Error('Участник не найден.');
   const old = fsGet('adminUsers/' + uid);
   if (old?.role === 'superadmin') throw new Error('Нельзя менять права главного администратора.');
@@ -799,13 +923,18 @@ function banLibraryUserApi(actor, data) {
   requireAdminApi(actor.uid, 'users');
   const uid = String(data.uid || '');
   const reason = typeof data.reason === 'string' ? data.reason.trim().slice(0, 500) : '';
-  if (!uid || uid === actor.uid) throw new Error('Нельзя заблокировать эту учётную запись.');
+  if (!isValidUid(uid) || uid === actor.uid) throw new Error('Нельзя заблокировать эту учётную запись.');
   const admin = fsGet('adminUsers/' + uid);
   if (admin?.role === 'superadmin') throw new Error('Главного администратора нельзя заблокировать.');
   const profile = fsGet('users/' + uid);
   if (!profile) throw new Error('Участник не найден.');
+  let email = '';
+  try {
+    const directory = fsQueryGroupByField('userDirectory', 'uid', uid, 1)[0];
+    if (directory?.id) email = normalizeEmail(decodeURIComponent(directory.id));
+  } catch (_) {}
   fsSet('bannedUsers/' + uid, {
-    uid, email: '', displayName: profile.displayName || '', reason, bannedBy: actor.uid,
+    uid, email, displayName: profile.displayName || '', reason, bannedBy: actor.uid,
     adminWasActive: Boolean(admin && admin.active === true), bannedAt: new Date()
   });
   if (admin) {
@@ -819,7 +948,7 @@ function banLibraryUserApi(actor, data) {
 function restoreLibraryUserApi(actor, data) {
   const currentActor = requireAdminApi(actor.uid, 'banned');
   const uid = String(data.uid || '');
-  if (!uid) throw new Error('Не указан участник.');
+  if (!isValidUid(uid)) throw new Error('Не указан участник.');
   const banned = fsGet('bannedUsers/' + uid);
   if (!banned) return { ok: true };
   fsDelete('bannedUsers/' + uid);
@@ -839,7 +968,7 @@ function revokeInvitationApi(actor, data) {
   requireAdminApi(actor.uid, 'invites');
   const email = normalizeEmail(data.email);
   const ownerUid = String(data.ownerUid || '');
-  if (!isValidEmail(email) || !ownerUid) throw new Error('Некорректное приглашение.');
+  if (!isValidEmail(email) || !isValidUid(ownerUid)) throw new Error('Некорректное приглашение.');
   const path = 'pendingInvites/' + encodeURIComponent(email) + '/shares/' + encodeURIComponent(ownerUid);
   const item = fsGet(path);
   if (!item) throw new Error('Приглашение не найдено.');
@@ -852,7 +981,8 @@ function revokeInvitationApi(actor, data) {
 function setLibraryShareApi(actor, data) {
   requireAdminApi(actor.uid, 'shares');
   const id = String(data.id || '');
-  if (!id || typeof data.active !== 'boolean') throw new Error('Некорректный доступ.');
+  if (!isValidLibraryShareId(id) || typeof data.active !== 'boolean') throw new Error('Некорректный доступ.');
+  if (data.active !== false) throw new Error('Администратор может только закрыть доступ; повторное открытие выполняет владелец.');
   const current = fsGet('libraryShares/' + encodeURIComponent(id));
   if (!current) throw new Error('Связь доступа не найдена.');
   const protectedUids = [current.ownerUid, current.viewerUid].filter(Boolean);
@@ -866,7 +996,7 @@ function setLibraryShareApi(actor, data) {
 
 function fsGet(path) {
   const response = fsRequest('get', path);
-  return response ? { id: response.name.split('/').pop(), ...fsDecodeFields(response.fields || {}) } : null;
+  return response ? { ...fsDecodeFields(response.fields || {}), id: response.name.split('/').pop() } : null;
 }
 function fsList(path) {
   const out = [];
@@ -876,7 +1006,7 @@ function fsList(path) {
     const response = fsFetch(url, 'get');
     if (response.code !== 200) throw new Error('Не удалось прочитать данные Firebase.');
     const body = JSON.parse(response.text);
-    (body.documents || []).forEach(doc => out.push({ id: doc.name.split('/').pop(), ...fsDecodeFields(doc.fields || {}) }));
+    (body.documents || []).forEach(doc => out.push({ ...fsDecodeFields(doc.fields || {}), id: doc.name.split('/').pop() }));
     token = body.nextPageToken || '';
   } while (token);
   return out;
@@ -888,7 +1018,7 @@ function fsListPage(path, pageSize, orderBy) {
   const response = fsFetch(FIRESTORE_REST_ROOT + path + '?' + query.join('&'), 'get');
   if (response.code !== 200) throw new Error('Не удалось прочитать данные Firebase.');
   const body = JSON.parse(response.text);
-  return (body.documents || []).map(doc => ({ id: doc.name.split('/').pop(), ...fsDecodeFields(doc.fields || {}) }));
+  return (body.documents || []).map(doc => ({ ...fsDecodeFields(doc.fields || {}), id: doc.name.split('/').pop() }));
 }
 function fsListInviteShares() {
   const url = FIRESTORE_REST_ROOT.slice(0, -1) + ':runQuery';
@@ -906,7 +1036,7 @@ function fsListInviteShares() {
     if (markerIndex < 0) return;
     const segments = doc.name.slice(markerIndex + marker.length).split('/');
     if (segments.length !== 3 || segments[1] !== 'shares') return;
-    out.push({ id: segments[2], ...fsDecodeFields(doc.fields || {}), email: segments[0] });
+    out.push({ ...fsDecodeFields(doc.fields || {}), id: segments[2], email: segments[0] });
   });
   return out;
 }
@@ -969,7 +1099,7 @@ function fsEncodeValue(value) {
 }
 function publicAdminError(error) {
   const message = error && error.message ? String(error.message) : '';
-  if (/^(Сеанс Google|Для отправки приглашений|Нет прав администратора|Доступ к Тайной Библиотеке|Главный администратор|Первоначальная настройка|Учётная запись администратора|Недостаточно прав|Не назначены права|Некорректные права|Нельзя менять права|Участник не найден|Нельзя заблокировать|Главного администратора|Не указан участник|Приглашение не найдено|Приглашение уже принято|Некорректное приглашение|Некорректный доступ|Связь доступа не найдена)/.test(message)) return message;
+  if (/^(Сеанс Google|Для отправки приглашений|Нет прав администратора|Доступ к Тайной Библиотеке|Главный администратор|Первоначальная настройка|Учётная запись администратора|Недостаточно прав|Не назначены права|Некорректные права|Нельзя менять права|Нельзя назначить администратора|Участник не найден|Нельзя заблокировать|Главного администратора|Не указан участник|Приглашение не найдено|Приглашение уже принято|Некорректное приглашение|Некорректный доступ|Связь доступа не найдена)/.test(message)) return message;
   return 'Административная операция не выполнена. Проверьте разрешения Apps Script и доступ к Firebase.';
 }
 

@@ -114,12 +114,13 @@ await test('late Google response cannot restore authorization after logout', () 
 
 async function test(name, callback) {
   console.debug('TEST', name);
-  output.textContent = `${passed} passed, ${failures.length} failed; running: ${name}`;
+  output.textContent = `${passed} passed, ${failures.length} failed; running: ${name}\n\n${failures.join('\n\n')}`;
   try {
     await callback();
     passed += 1;
   } catch (error) {
     failures.push(`${name}: ${error.stack || error.message}`);
+    output.textContent = `${passed} passed, ${failures.length} failed; running: ${name}\n\n${failures.join('\n\n')}`;
   }
 }
 
@@ -1545,7 +1546,7 @@ await test('root folder picker navigates folders, carries resource keys and retu
     },
     scanFolder: async (folderId, onProgress, options) => {
       calls.push(['scan', folderId, options.rootResourceKey || '']);
-      assert.equal(typeof onProgress, 'function', 'scan receives progress callback');
+      equal(typeof onProgress, 'function', 'scan receives progress callback');
       return { books: Array.from({ length: 11 }), folders: [{ id: folderId }] };
     },
   });
