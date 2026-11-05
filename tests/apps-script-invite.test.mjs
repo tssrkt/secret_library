@@ -504,6 +504,11 @@ test('relationship-only moderator dashboard does not load the private email dire
 
 test('relationship-only moderator card does not query or expose the participant email directory', () => {
   const app = adminHarness({ permissions: { relationships: true } });
+  app.records.set('adminUsers/target-uid', { uid: 'target-uid', role: 'moderator', email: 'private-admin@example.com' });
+  app.records.set('bannedUsers/target-uid', { uid: 'target-uid', reason: 'private reason', email: 'private-ban@example.com' });
+  const reads = [];
+  const originalFsGet = app.context.fsGet;
+  app.context.fsGet = path => { reads.push(path); return originalFsGet(path); };
   const queried = [];
   app.context.fsQueryGroupByField = (collection, field, value) => {
     queried.push({ collection, field, value });
@@ -513,9 +518,25 @@ test('relationship-only moderator card does not query or expose the participant 
   app.context.fsQueryFilteredPage = () => ({ items: [] });
   const card = app.context.getAdminUserCardApi({ uid: 'mod-uid', admin: { role: 'moderator', permissions: { relationships: true } } }, { uid: 'target-uid' });
   assert.equal(card.user.email, '');
+  assert.equal(card.admin, null);
+  assert.equal(card.banned, null);
+  assert.equal(reads.includes('adminUsers/target-uid'), false);
+  assert.equal(reads.includes('bannedUsers/target-uid'), false);
   assert.equal(queried.some(item => item.collection === 'userDirectory'), false);
 });
 
+test('non-user moderators do not receive email addresses from admin or ban records', () => {
+  const app = adminHarness({ permissions: { relationships: true, admins: true, banned: true } });
+  app.records.set('adminUsers/target-uid', { uid: 'target-uid', role: 'moderator', email: 'private-admin@example.com' });
+  app.records.set('bannedUsers/target-uid', { uid: 'target-uid', reason: 'private reason', email: 'private-ban@example.com' });
+  app.context.fsQueryGroupByField = () => [];
+  app.context.fsQueryFilteredPage = () => ({ items: [] });
+  const card = app.context.getAdminUserCardApi({ uid: 'mod-uid', admin: { role: 'moderator', permissions: { relationships: true, admins: true, banned: true } } }, { uid: 'target-uid' });
+  assert.equal(card.admin.role, 'moderator');
+  assert.equal(card.admin.email, '');
+  assert.equal(card.banned.reason, 'private reason');
+  assert.equal(card.banned.email, '');
+});
 test('admin API rejects a banned moderator before any administrative operation', () => {
   const app = adminHarness({ permissions: { users: true }, banned: true });
   assert.throws(() => app.context.requireAdminApi('mod-uid', 'users'), /Доступ к Тайной Библиотеке заблокирован/);

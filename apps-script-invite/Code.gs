@@ -520,6 +520,8 @@ function getAdminUserCardApi(actor, data) {
     throw new Error('Недостаточно прав для просмотра карточки участника.');
   }
   const canReadEmails = current.admin.role === 'superadmin' || current.admin.permissions?.users === true;
+  const canReadAdminDetails = current.admin.role === 'superadmin' || current.admin.permissions?.admins === true || current.admin.permissions?.users === true;
+  const canReadBanDetails = current.admin.role === 'superadmin' || current.admin.permissions?.banned === true || current.admin.permissions?.users === true;
   const uid = String(data.uid || '');
   if (!uid || uid.length > 128) throw new Error('Некорректный UID участника.');
   const profile = fsGet('users/' + encodeURIComponent(uid));
@@ -529,12 +531,14 @@ function getAdminUserCardApi(actor, data) {
   const invited = fsQueryFilteredPage('users', 'invitedByUid', uid, 100, '').items;
   const outgoing = fsQueryGroupByField('libraryShares', 'ownerUid', uid, 100);
   const incoming = fsQueryGroupByField('libraryShares', 'viewerUid', uid, 100);
+  const adminRecord = canReadAdminDetails ? fsGet('adminUsers/' + encodeURIComponent(uid)) : null;
+  const bannedRecord = canReadBanDetails ? fsGet('bannedUsers/' + encodeURIComponent(uid)) : null;
   return {
     user: { ...profile, uid, email: directory?.id ? decodeURIComponent(directory.id) : '' },
     inviter: inviter ? { ...inviter, uid: profile.invitedByUid } : null,
     invited: invited.map(user => ({ ...user, uid: user.id })),
-    admin: fsGet('adminUsers/' + encodeURIComponent(uid)),
-    banned: fsGet('bannedUsers/' + encodeURIComponent(uid)),
+    admin: adminRecord ? { ...adminRecord, email: canReadEmails ? (adminRecord.email || '') : '' } : null,
+    banned: bannedRecord ? { ...bannedRecord, email: canReadEmails ? (bannedRecord.email || '') : '' } : null,
     outgoing: outgoing.filter(share => share.active === true),
     incoming: incoming.filter(share => share.active === true)
   };

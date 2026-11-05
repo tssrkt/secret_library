@@ -139,8 +139,8 @@ function renderUserCard(uid) {
     ['Пригласил', invitedBy ? (invitedBy.displayName || invitedBy.uid) : (user.invitedByUid || '—')],
     ['Приглашённые участники', invitedUsers.map(u => personLabel(u.uid)).join(', ') || '—'],
     ['Статус', ban || user.banned ? 'Заблокирован' : 'Активен'],
-    ['Права администратора', admin ? `${admin.role || 'moderator'} · ${admin.active === true ? 'активен' : 'отключён'}` : 'Нет'],
-    ...(ban || user.banned ? [['Причина блокировки', ban?.reason || 'Не указана']] : []),
+    ['Права администратора', data.permissions?.admins || data.permissions?.users ? (admin ? `${admin.role || 'moderator'} · ${admin.active === true ? 'активен' : 'отключён'}` : 'Нет') : 'Недостаточно прав'],
+    ...(ban || user.banned ? [['Причина блокировки', data.permissions?.banned || data.permissions?.users ? (ban?.reason || 'Не указана') : 'Недостаточно прав']] : []),
     ['Пользуется', incoming.length ? incoming.map(s => `${personLabel(s.ownerUid)}${s.active ? '' : ' (доступ отозван)'}`).join(', ') : '—'],
     ['Делится', outgoing.length ? outgoing.map(s => `${personLabel(s.viewerUid)}${s.active ? '' : ' (доступ отозван)'}`).join(', ') : '—']
   ];
