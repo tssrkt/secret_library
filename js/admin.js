@@ -5,6 +5,9 @@ import { INVITATION_MAILER_URL } from './config.js';
 const $ = (selector) => document.querySelector(selector);
 const authPanel = $('#auth'), dashboard = $('#dashboard'), status = $('#status'), stats = $('#stats'), tabs = $('#tabs'), content = $('#content');
 let session, call, data, activeTab = 'users';
+const adminPageState = Object.create(null);
+const adminPageFields = { users: 'users', relationships: 'users', invites: 'invitations', shares: 'shares', events: 'events', banned: 'banned', admins: 'admins' };
+function resetAdminPages() { Object.keys(adminPageState).forEach(key => delete adminPageState[key]); }
 const sections = [
   ['users','Участники'],['relationships','Связи'],['invites','Приглашения'],
   ['shares','Доступ к библиотекам'],['events','Журнал событий'],['banned','Забаненные'],['admins','Администраторы'],['texts','Тексты']
@@ -103,10 +106,20 @@ function details(name, email, uid) {
   d.append(node('p', 'UID: ' + uid));
   return d;
 }
+function resolveAdminUser(uid) {
+  if (!uid) return null;
+  return (data?.users || []).find(user => user.uid === uid)
+    || data?.userProfiles?.[uid]
+    || (data?.banned || []).find(user => user.uid === uid)
+    || (data?.admins || []).find(user => user.uid === uid)
+    || null;
+}
 function userLink(user, fallbackUid = '') {
   const uid = user?.uid || fallbackUid;
-  if (!uid) return node('span', user?.displayName || user?.email || '—');
-  const b = button(user?.displayName || user?.email || uid, () => renderUserCard(uid), 'user-link');
+  const profile = uid ? data?.userProfiles?.[uid] : null;
+  const name = user?.displayName || profile?.displayName || user?.email || profile?.email || '';
+  if (!uid) return node('span', name || '—');
+  const b = button(name || uid, () => renderUserCard(uid), 'user-link');
   b.title = 'Открыть карточку пользователя · UID: ' + uid;
   return b;
 }
@@ -117,10 +130,10 @@ function userLinks(users) {
   return wrap;
 }
 function renderUserCard(uid) {
-  const user = (data.users || []).find(u => u.uid === uid) || (data.banned || []).find(u => u.uid === uid) || (data.admins || []).find(u => u.uid === uid) || { uid };
+  const user = resolveAdminUser(uid) || { uid };
   const admin = (data.admins || []).find(a => a.uid === uid);
   const ban = (data.banned || []).find(u => u.uid === uid);
-  const byUid = new Map((data.users || []).map(u => [u.uid, u]));
+  const byUid = new Map([...(data.users || []), ...Object.values(data.userProfiles || {})].map(u => [u.uid, u]));
   const invitedBy = byUid.get(user.invitedByUid);
   const invitedUsers = (data.users || []).filter(u => u.invitedByUid === uid);
   const shares = (data.shares || []).filter(s => s.ownerUid === uid || s.viewerUid === uid);
@@ -153,9 +166,45 @@ function renderUserCard(uid) {
   if (data.permissions?.admins && !user.banned && !admin) actions.append(button('Назначить администратором', () => { activeTab = 'admins'; renderAdminEditor(user); }));
   content.append(actions);
 }
+async function loadAdminPage(key, cursor = '', shouldRender = true) {
+  if (!data?.permissions?.[key]) return;
+  let result;
+  if (key === 'relationships') result = await call('getAdminRelationshipRoots')({ cursor });
+  else result = await call('getAdminCollectionPage')({ section: key, cursor });
+  if (result.userProfiles && typeof result.userProfiles === 'object') {
+    data.userProfiles = { ...(data.userProfiles || {}), ...result.userProfiles };
+  }
+  if (key === 'relationships' && Array.isArray(result.shares)) data.shares = result.shares;
+  const field = adminPageFields[key];
+  data[field] = result.items || [];
+  adminPageState[key] = { cursor, nextCursor: result.nextCursor || '', hasMore: Boolean(result.hasMore), history: adminPageState[key]?.history || [''] };
+  if (shouldRender) render();
+}
+async function changeAdminPage(direction) {
+  const state = adminPageState[activeTab];
+  if (!state) return;
+  const history = state.history || [''];
+  if (direction > 0) {
+    if (!state.hasMore || !state.nextCursor) return;
+    history.push(state.nextCursor);
+  } else {
+    if (history.length <= 1) return;
+    history.pop();
+  }
+  state.history = history;
+  await loadAdminPage(activeTab, history[history.length - 1]);
+}
 async function refresh() {
   say('Загружаем данные администратора…');
-  data = await call('getAdminDashboard')({});
+  data = await call('getAdminDashboardSummary')({});
+  resetAdminPages();
+  if (!data.permissions?.[activeTab] && activeTab !== 'texts') {
+    activeTab = sections.find(([key]) => data.permissions?.[key])?.[0] || 'users';
+  }
+  if (activeTab !== 'texts') {
+    await loadAdminPage(activeTab, '', false);
+    if (adminPageState[activeTab]) adminPageState[activeTab].history = [''];
+  }
   render();
   say('Данные обновлены.');
 }
@@ -183,12 +232,21 @@ function renderStats() {
 function renderTabs() {
   tabs.replaceChildren();
   sections.filter(([key]) => data.permissions?.[key]).forEach(([key,title]) => {
-    tabs.append(button(title, () => { activeTab = key; render(); }, 'tab'));
+    tabs.append(button(title, async () => {
+      activeTab = key;
+      try {
+        if (key !== 'texts' && !adminPageState[key]) {
+          await loadAdminPage(key, '', false);
+          if (adminPageState[key]) adminPageState[key].history = [''];
+        }
+        render();
+      } catch (error) { say(error?.message || 'Не удалось загрузить раздел админки.', true); }
+    }, 'tab'));
   });
   [...tabs.children].forEach((b,i) => b.setAttribute('aria-pressed', String(sections.filter(([key]) => data.permissions?.[key])[i]?.[0] === activeTab)));
 }
 function renderUsers() {
-  const superAdminUid = (data.admins || []).find(a => a.role === 'superadmin')?.uid;
+  const superAdminUid = data.superAdminUid || (data.admins || []).find(a => a.role === 'superadmin')?.uid;
   const allUsers = [...(data.users || [])];
   const byUid = new Map(allUsers.map(u => [u.uid,u]));
   const controls = node('div', null, 'actions');
@@ -270,7 +328,7 @@ function renderUsers() {
   renderList();
 }
 function renderRelations() {
-  const byUid = new Map((data.users||[]).map(u=>[u.uid,u]));
+  const byUid = new Map([...(data.users||[]), ...Object.values(data.userProfiles||{})].map(u=>[u.uid,u]));
   const tree = node('div');
   const childMap = new Map();
   (data.users||[]).forEach(u=>{if(u.invitedByUid){const a=childMap.get(u.invitedByUid)||[];a.push(u);childMap.set(u.invitedByUid,a);}});
@@ -362,7 +420,7 @@ function renderRelations() {
   });
   content.append(paginatedTable(['Участник','Пригласитель','Приглашённые','Связи доступа'],alphabeticRows,25,['','inviter-column','invited-column','']));
   content.append(node('h3','Отдельные связи доступа'));
-  const ownerName = uid => byUid.get(uid)?.displayName || byUid.get(uid)?.email || uid || '';
+  const ownerName = uid => resolveAdminUser(uid)?.displayName || resolveAdminUser(uid)?.email || uid || '';
   const sortedShares = [...(data.shares || [])].sort((a,b) => ownerName(a.ownerUid).localeCompare(ownerName(b.ownerUid),'ru') || ownerName(a.viewerUid).localeCompare(ownerName(b.viewerUid),'ru') || String(a.id || '').localeCompare(String(b.id || '')));
   const ownerColors = new Map();
   const shareRows = sortedShares.map(s=>{
@@ -409,15 +467,15 @@ function renderInvites() {
   content.append(settings);
   const invitations = data.invitations || [];
   const rows = invitations.map(i=>[
-    i.email,userLink((data.users||[]).find(u=>u.uid===i.ownerUid)||{uid:i.ownerUid},i.ownerUid),i.claimedUid ? userLink((data.users||[]).find(u=>u.uid===i.claimedUid)||{uid:i.claimedUid},i.claimedUid) : 'Не принято',invitationEmailStatus(i),dateLabel(i.createdAt),
+    i.email,userLink(resolveAdminUser(i.ownerUid)||{uid:i.ownerUid},i.ownerUid),i.claimedUid ? userLink(resolveAdminUser(i.claimedUid)||{uid:i.claimedUid},i.claimedUid) : 'Не принято',invitationEmailStatus(i),dateLabel(i.createdAt),
     invitationActionState(i) || button('Отменить приглашение',async()=>{if(!confirm('Отменить это приглашение?'))return;try{await call('adminRevokeInvitation')({email:i.email,ownerUid:i.ownerUid||i.id});await refresh();}catch(e){say(e?.message||'Не удалось отменить приглашение.',true);}},'danger')
   ]);
   const rowClasses = invitations.map(i => i.claimedUid ? '' : 'invitation-unaccepted');
-  content.append(paginatedTable(['Адрес приглашения','Пригласитель UID','Приглашённый UID','Статус письма','Создано','Действие'],rows,25,[],rowClasses));
+  content.append(paginatedTable(['Адрес приглашения','Пригласитель','Приглашённый','Статус письма','Создано','Действие'],rows,25,[],rowClasses));
 }
 function renderShares() {
-  const users=new Map((data.users||[]).map(u=>[u.uid,u]));
-  const superAdminUid = (data.admins || []).find(a => a.role === 'superadmin')?.uid;
+  const users=new Map([...(data.users||[]), ...Object.values(data.userProfiles||{})].map(u=>[u.uid,u]));
+  const superAdminUid = data.superAdminUid || (data.admins || []).find(a => a.role === 'superadmin')?.uid;
   const ownerName = uid => users.get(uid)?.displayName || users.get(uid)?.email || uid || '';
   const shares = [...(data.shares || [])].sort((a,b) => ownerName(a.ownerUid).localeCompare(ownerName(b.ownerUid),'ru') || ownerName(a.viewerUid).localeCompare(ownerName(b.viewerUid),'ru') || String(a.id || '').localeCompare(String(b.id || '')));
   const ownerColors = new Map();
@@ -435,9 +493,9 @@ function renderShares() {
 }
 function renderEvents() {
   const rows = (data.events||[]).map(e=>[
-    dateLabel(e.createdAt),userLink((data.users||[]).find(u=>u.uid===e.actorUid)||{uid:e.actorUid},e.actorUid),e.action,e.targetUid ? userLink((data.users||[]).find(u=>u.uid===e.targetUid)||{uid:e.targetUid},e.targetUid) : '—',JSON.stringify(e.details||{})
+    dateLabel(e.createdAt),userLink(resolveAdminUser(e.actorUid)||{uid:e.actorUid},e.actorUid),e.action,e.targetUid ? userLink(resolveAdminUser(e.targetUid)||{uid:e.targetUid},e.targetUid) : '—',JSON.stringify(e.details||{})
   ]);
-  content.append(paginatedTable(['Время','Администратор UID','Событие','Участник UID','Подробности'],rows));
+  content.append(paginatedTable(['Время','Администратор','Событие','Участник','Подробности'],rows));
 }
 function renderBanned() {
   const rows = (data.banned||[]).map(u=>[
@@ -459,8 +517,8 @@ function renderAdminEditor(user=null) {
     form.append(button('Отмена',()=>render()));content.append(form);return;
   }
   const rows = (data.admins||[]).map(a=>[
-    userLink((data.users||[]).find(u=>u.uid===a.uid)||a,a.uid),a.role,a.active?'Активен':'Отключён',Object.entries(a.permissions||{}).filter(([,v])=>v).map(([k])=>sections.find(s=>s[0]===k)?.[1]||k).join(', '),
-    a.role==='superadmin'?'—':button('Изменить права',()=>renderAdminEditor((data.users||[]).find(u=>u.uid===a.uid)||{uid:a.uid,displayName:a.displayName||a.email}))
+    userLink(resolveAdminUser(a.uid)||a,a.uid),a.role,a.active?'Активен':'Отключён',Object.entries(a.permissions||{}).filter(([,v])=>v).map(([k])=>sections.find(s=>s[0]===k)?.[1]||k).join(', '),
+    a.role==='superadmin'?'—':button('Изменить права',()=>renderAdminEditor(resolveAdminUser(a.uid)||{uid:a.uid,displayName:a.displayName||a.email}))
   ]);
   content.append(paginatedTable(['Участник','Роль','Статус','Права','Действие'],rows));
   content.append(node('p','Назначение модератора доступно из раздела «Участники».'));
@@ -502,6 +560,17 @@ function render() {
   else if(activeTab==='banned') renderBanned();
   else if(activeTab==='admins') renderAdminEditor();
   else if(activeTab==='texts') renderTexts();
+  const page = adminPageState[activeTab];
+  if (page && activeTab !== 'texts') {
+    const nav = node('div', null, 'actions');
+    nav.style.marginTop = '16px';
+    const previous = button('← Назад', () => changeAdminPage(-1), 'secondary');
+    previous.disabled = (page.history || ['']).length <= 1;
+    const next = button('Дальше →', () => changeAdminPage(1), 'secondary');
+    next.disabled = !page.hasMore;
+    nav.append(previous, node('span', `Страница ${(page.history || ['']).length}`), next);
+    content.append(nav);
+  }
 }
 async function login() {
   $('#login').disabled=true;
