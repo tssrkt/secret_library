@@ -9,6 +9,7 @@ const adminClientSource = await readFile(new URL('../js/admin.js', import.meta.u
 
 function harness({ authUser, pendingFields, pendingStatus = 200, profileStatus = 200, blockedEmailUid = null, blockedEmail = false, blockedEmailByField = false, blockOnSecondCheck = false } = {}) {
   const properties = new Map();
+  const cacheEntries = new Map();
   const sent = [];
   const calls = [];
   let uuidCounter = 0;
@@ -24,6 +25,14 @@ function harness({ authUser, pendingFields, pendingStatus = 200, profileStatus =
   };
   const context = {
     console: { error() {} },
+    CacheService: {
+      getScriptCache() {
+        return {
+          get(key) { return cacheEntries.has(key) ? cacheEntries.get(key) : null; },
+          put(key, value, _ttl) { cacheEntries.set(key, value); }
+        };
+      }
+    },
     Date, JSON, Object, Array, String, Number, Math, RegExp, Error, isFinite,
     encodeURIComponent,
     HtmlService: {
@@ -107,6 +116,13 @@ function response(status, body) {
     getContentText() { return JSON.stringify(body); }
   };
 }
+
+test('verifyFirebaseUser caches a successful lookup for the same token', () => {
+  const app = harness();
+  app.context.verifyFirebaseUser(app.payload.idToken);
+  app.context.verifyFirebaseUser(app.payload.idToken);
+  assert.equal(app.calls.filter(call => call.url.includes('accounts:lookup')).length, 1);
+});
 
 test('admin startup uses bounded summary and paginated collection APIs, not the unbounded dashboard', () => {
   assert.match(adminClientSource, /call\('getAdminDashboardSummary'\)/);

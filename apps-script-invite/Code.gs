@@ -147,6 +147,21 @@ function deactivateBlockedInvitation(email, ownerUid) {
 }
 
 function verifyFirebaseUser(idToken) {
+  // Cache successful Firebase identity lookups briefly to reduce parallel request bursts.
+  // Only a digest is used in the cache key; the raw ID token is never stored.
+  const cache = CacheService.getScriptCache();
+  const digest = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, idToken, Utilities.Charset.UTF_8);
+  const tokenHash = digest.map(function (chr) { return (chr < 0 ? chr + 256 : chr).toString(16).padStart(2, '0'); }).join('');
+  const cacheKey = 'verified_user_' + tokenHash;
+  const cached = cache.get(cacheKey);
+  if (cached) return JSON.parse(cached);
+  const lock = LockService.getScriptLock();
+  let locked = false;
+  try {
+    lock.waitLock(5000);
+    locked = true;
+    const cachedAfterLock = cache.get(cacheKey);
+    if (cachedAfterLock) return JSON.parse(cachedAfterLock);
   const response = UrlFetchApp.fetch(
     'https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=' + FIREBASE_API_KEY,
     {
@@ -156,7 +171,11 @@ function verifyFirebaseUser(idToken) {
       muteHttpExceptions: true
     }
   );
-  if (response.getResponseCode() !== 200) throw new Error('Сеанс Google истёк. Переподключите Google и повторите попытку.');
+  if (response.getResponseCode() !== 200) {
+    const status = response.getResponseCode();
+    if (status === 429) throw new Error('Firebase Auth accounts:lookup failed (HTTP 429).');
+    throw new Error('\u0421\u0435\u0430\u043d\u0441 Google \u0438\u0441\u0442\u0451\u043a. \u041f\u0435\u0440\u0435\u043f\u043e\u0434\u043a\u043b\u044e\u0447\u0438\u0442\u0435 Google \u0438 \u043f\u043e\u0432\u0442\u043e\u0440\u0438\u0442\u0435 \u043f\u043e\u043f\u044b\u0442\u043a\u0443.');
+  }
   const body = JSON.parse(response.getContentText());
   const user = body.users && body.users[0];
   const googleProvider = user && Array.isArray(user.providerUserInfo) &&
@@ -164,7 +183,18 @@ function verifyFirebaseUser(idToken) {
   if (!user || !user.localId || user.disabled === true || user.emailVerified !== true || !googleProvider) {
     throw new Error('Для отправки приглашений нужен подтверждённый Google-сеанс.');
   }
-  return user;
+  const cachedUser = {
+    localId: user.localId,
+    email: user.email || '',
+    emailVerified: user.emailVerified === true,
+    disabled: user.disabled === true,
+    providerUserInfo: [{ providerId: 'google.com' }]
+  };
+  cache.put(cacheKey, JSON.stringify(cachedUser), 300);
+  return cachedUser;
+  } finally {
+    if (locked) lock.releaseLock();
+  }
 }
 
 function readOwnerDisplayName(idToken, uid) {
@@ -1145,6 +1175,7 @@ function publicAdminError(error) {
   // response bodies, tokens, document contents, or arbitrary exception text.
   if (/^(Сеанс Google|Для отправки приглашений|Нет прав администратора|Доступ к Тайной Библиотеке|Главный администратор|Первоначальная настройка|Учётная запись администратора|Недостаточно прав|Не назначены права|Некорректные права|Нельзя менять права|Нельзя назначить администратора|Участник не найден|Нельзя заблокировать|Главного администратора|Не указан участник|Приглашение не найдено|Приглашение уже принято|Некорректное приглашение|Некорректный доступ|Связь доступа не найдена|Операция Firebase не выполнена|Некорректная административная операция|Неизвестная административная операция)/i.test(message) ||
       (/^Не удалось .{0,450}$/i.test(message) && /(Firebase|Firestore|участник|адрес|данн|счётчик|профил|приглаш|администратор|доступ)/i.test(message))) return message;
+  if (/^Firebase Auth accounts:lookup failed \(HTTP \d{3}\)\.$/.test(message)) return message;
   if (!message) return '\u041e\u0448\u0438\u0431\u043a\u0430 Apps Script: \u0438\u0441\u043a\u043b\u044e\u0447\u0435\u043d\u0438\u0435 \u0431\u0435\u0437 \u043e\u043f\u0438\u0441\u0430\u043d\u0438\u044f. \u041f\u0440\u043e\u0432\u0435\u0440\u044c\u0442\u0435 \u0436\u0443\u0440\u043d\u0430\u043b \u0432\u044b\u043f\u043e\u043b\u043d\u0435\u043d\u0438\u0439.';
   const safe = message
     .replace(/Bearer\s+[^\s]+/gi, 'Bearer [redacted]')
