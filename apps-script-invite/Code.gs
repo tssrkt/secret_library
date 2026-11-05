@@ -1179,8 +1179,12 @@ function fsRequest(method, path, body) {
       const errorBody = JSON.parse(response.text || '{}').error || {};
       const status = String(errorBody.status || '').replace(/[^A-Z_]/g, '').slice(0, 40);
       const message = String(errorBody.message || '').replace(/[\r\n]+/g, ' ').slice(0, 220);
-      if (status || message) diagnostic = '; ' + [status, message].filter(Boolean).join(': ');
-      console.error('Firestore request failed', { code: response.code, operation: operation, status: status, message: message });
+      const errorInfo = (errorBody.details || []).find(item => item && item['@type'] === 'type.googleapis.com/google.rpc.ErrorInfo');
+      const metadata = errorInfo && errorInfo.metadata ? errorInfo.metadata : {};
+      const quota = [metadata.quota_limit, metadata.quota_metric, metadata.quota_location, metadata.consumer]
+        .filter(Boolean).map(value => String(value).replace(/[^A-Za-z0-9_./:-]/g, '').slice(0, 120)).join(', ');
+      if (status || message || quota) diagnostic = '; ' + [status, message, quota ? 'quota=' + quota : ''].filter(Boolean).join(': ');
+      console.error('Firestore request failed', { code: response.code, operation: operation, status: status, message: message, quota: quota });
     } catch (_) {}
     throw new Error('Операция Firebase не выполнена (' + response.code + '; ' + operation + diagnostic + ').');
   }
