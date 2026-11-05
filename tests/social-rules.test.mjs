@@ -157,6 +157,21 @@ test('verified Google registration with an invitation creates a safe profile and
   await assertFails(sdk.getDoc(sdk.doc(env.unauthenticatedContext().firestore(), 'users/anna')));
 });
 
+test('legacy profiles containing private fields cannot be read by other participants', async () => {
+  const anna = client('legacy-reader'); const boris = client('legacy-profile');
+  await register(anna); await register(boris);
+  await env.withSecurityRulesDisabled(async (context) => {
+    await sdk.setDoc(sdk.doc(context.firestore(), 'users/legacy-profile'), {
+      displayName: 'Boris', photoURL: '', createdAt: sdk.Timestamp.now(),
+      invitedByUid: FOUNDER_UID, email: 'private@example.com',
+    });
+  });
+  await assertFails(sdk.getDoc(sdk.doc(anna.db, 'users/legacy-profile')),
+    'legacy private fields must not be exposed through a full-document profile read');
+  assert.equal((await get(boris.db, 'users/legacy-profile')).email, 'private@example.com',
+    'the account owner retains access to their own profile');
+});
+
 test('only the fixed founder may create a profile without an invitation', async () => {
   const founder = client(FOUNDER_UID, FOUNDER_EMAIL);
   await founder.store.register();

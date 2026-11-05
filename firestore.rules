@@ -66,7 +66,10 @@ service cloud.firestore {
     }
     match /users/{uid} {
       // Unregistered Google accounts may read only their own profile while onboarding.
-      allow get: if signed() && (uid == me() || registered());
+      // Other participants may read only the public profile schema; Firestore cannot mask
+      // individual fields, so legacy documents with private/unknown fields must stay private.
+      allow get: if signed() && (uid == me() || (registered()
+        && resource.data.keys().hasOnly(['displayName', 'photoURL', 'createdAt', 'invitedByUid', 'isAdmin'])));
       allow list, delete: if false;
       function shape() {
         let d = request.resource.data;
