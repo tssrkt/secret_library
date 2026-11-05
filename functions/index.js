@@ -98,17 +98,23 @@ export const getAdminDashboard = onCall({ region: 'europe-west1', invoker: 'publ
   const bannedDocs = banned?.docs || [];
   const eventDocs = events?.docs || [];
   const emailByUid = new Map((directory?.docs || []).map((d) => [d.data().uid, d.id]));
+  const bannedUids = new Set(bannedDocs.map((doc) => doc.id));
+  const adminUids = new Set(adminDocs.map((doc) => doc.id));
   const userRows = userDocs.map((d) => projectDashboardUser(d.id, d.data(), {
     includeEmail: Boolean(allPermissions.users),
     email: emailByUid.get(d.id) || '',
-    banned: bannedDocs.some((b) => b.id === d.id),
-    admin: adminDocs.some((a) => a.id === d.id)
+    banned: bannedUids.has(d.id),
+    admin: adminUids.has(d.id)
   }));
+  // Read invitation subcollections concurrently; sequential reads add one network
+  // round trip per pending invitation and can make this legacy endpoint time out.
+  const inviteSnapshots = await Promise.all(inviteDocs.map((invite) => invite.ref.collection('shares').get()));
   const inviteRows = [];
-  for (const invite of inviteDocs) {
-    const child = await invite.ref.collection('shares').get();
-    for (const item of child.docs) inviteRows.push(projectDashboardInvitation(item.id, invite.id, item.data()));
-  }
+  inviteSnapshots.forEach((snapshot, index) => {
+    for (const item of snapshot.docs) {
+      inviteRows.push(projectDashboardInvitation(item.id, inviteDocs[index].id, item.data()));
+    }
+  });
   return {
     permissions: allPermissions,
     counts: {
