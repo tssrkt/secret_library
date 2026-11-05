@@ -615,6 +615,32 @@ test('each moderator mutation requires its own explicit permission', async (t) =
   }
 });
 
+test('restoring a banned user does not restore their admin rights without admins permission', () => {
+  const app = adminHarness({ permissions: { banned: true } });
+  app.records.set('bannedUsers/target-uid', { uid: 'target-uid', adminWasActive: true });
+  app.records.set('adminUsers/target-uid', { uid: 'target-uid', role: 'moderator', active: false });
+  const actor = { uid: 'mod-uid', admin: { role: 'moderator', active: true, permissions: { banned: true } } };
+
+  assert.equal(app.context.restoreLibraryUserApi(actor, { uid: 'target-uid' }).ok, true);
+  assert.equal(app.records.has('bannedUsers/target-uid'), false);
+  assert.equal(app.records.get('adminUsers/target-uid').active, false);
+  assert.notEqual(app.records.get('users/target-uid').isAdmin, true);
+  assert.equal(app.writes.find(item => item.event)?.event[3].adminRestored, false);
+});
+
+test('restoring a banned user restores prior admin rights only with admins permission', () => {
+  const app = adminHarness({ permissions: { banned: true, admins: true } });
+  app.records.set('bannedUsers/target-uid', { uid: 'target-uid', adminWasActive: true });
+  app.records.set('adminUsers/target-uid', { uid: 'target-uid', role: 'moderator', active: false });
+  const actor = { uid: 'mod-uid', admin: { role: 'moderator', active: true, permissions: { banned: true, admins: true } } };
+
+  assert.equal(app.context.restoreLibraryUserApi(actor, { uid: 'target-uid' }).ok, true);
+  assert.equal(app.records.has('bannedUsers/target-uid'), false);
+  assert.equal(app.records.get('adminUsers/target-uid').active, true);
+  assert.equal(app.records.get('users/target-uid').isAdmin, true);
+  assert.equal(app.writes.find(item => item.event)?.event[3].adminRestored, true);
+});
+
 test('moderator cannot grant themselves privileges or alter the superadmin', () => {
   const app = adminHarness({ permissions: { admins: true } });
   const actor = { uid: 'mod-uid', admin: { role: 'moderator', active: true, permissions: { admins: true } } };

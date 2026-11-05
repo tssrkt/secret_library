@@ -803,18 +803,21 @@ function banLibraryUserApi(actor, data) {
 }
 
 function restoreLibraryUserApi(actor, data) {
-  requireAdminApi(actor.uid, 'banned');
+  const currentActor = requireAdminApi(actor.uid, 'banned');
   const uid = String(data.uid || '');
   if (!uid) throw new Error('Не указан участник.');
   const banned = fsGet('bannedUsers/' + uid);
   if (!banned) return { ok: true };
   fsDelete('bannedUsers/' + uid);
   const admin = fsGet('adminUsers/' + uid);
-  if (admin && banned.adminWasActive === true) {
+  const canRestoreAdmin = currentActor.admin.role === 'superadmin' ||
+    currentActor.admin.permissions?.admins === true;
+  const adminRestored = Boolean(admin && banned.adminWasActive === true && canRestoreAdmin);
+  if (adminRestored) {
     fsSet('adminUsers/' + uid, { active: true, updatedAt: new Date(), updatedBy: actor.uid });
     fsSet('users/' + uid, { isAdmin: true });
   }
-  fsAddEvent(actor.uid, 'restore-user', uid, {});
+  fsAddEvent(actor.uid, 'restore-user', uid, { adminRestored });
   return { ok: true };
 }
 
