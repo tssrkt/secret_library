@@ -1,6 +1,7 @@
 {
   "projects": {
-    "default": "secret-library-6f289"
+    "default": "project-071ee00e-4a4a-4a3d-95d",
+    "test": "secret-library-6f289"
   },
   "targets": {},
   "etags": {}
