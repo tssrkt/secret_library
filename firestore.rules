@@ -65,7 +65,8 @@ service cloud.firestore {
       }
     }
     match /users/{uid} {
-      allow get: if signed();
+      // Unregistered Google accounts may read only their own profile while onboarding.
+      allow get: if signed() && (uid == me() || registered());
       allow list, delete: if false;
       function shape() {
         let d = request.resource.data;

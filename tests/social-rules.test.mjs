@@ -164,6 +164,9 @@ test('only the fixed founder may create a profile without an invitation', async 
 
   const stranger = client('uninvited-person');
   await assert.rejects(stranger.store.register(), /только по приглашению/);
+  await assertFails(sdk.getDoc(sdk.doc(stranger.db, `users/${FOUNDER_UID}`)), 'unregistered accounts cannot read other profiles');
+  await assertFails(sdk.getDoc(sdk.doc(stranger.db, 'users/someone-else')));
+  await assertSucceeds(sdk.getDoc(sdk.doc(stranger.db, 'users/uninvited-person')), 'an account may inspect its own missing profile during registration');
   await assertFails(sdk.setDoc(sdk.doc(stranger.db, 'users/uninvited-person'), {
     displayName: 'Uninvited', photoURL: '', createdAt: sdk.serverTimestamp(), invitedByUid: null,
   }));
