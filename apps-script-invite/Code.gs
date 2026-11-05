@@ -399,7 +399,8 @@ function getAdminDashboardApi(actor) {
   const admins = p.admins || p.users ? fsList('adminUsers') : [];
   const invites = p.invites ? fsListInviteShares() : [];
   const shares = p.shares || p.relationships ? fsList('libraryShares') : [];
-  const directory = p.users || p.relationships ? fsList('userDirectory') : [];
+  // Relationship-only moderators need the graph, not the private email directory.
+  const directory = p.users ? fsList('userDirectory') : [];
   const emailByUid = new Map(directory.filter(item => item.uid && item.id).map(item => [item.uid, item.id]));
   const events = p.events ? fsListPage('adminEvents', 100, 'createdAt desc') : [];
   const userRows = users.map(u => ({ ...u, uid: u.id, email: emailByUid.get(u.id) || '', banned: banned.some(b => b.id === u.id), admin: admins.some(a => a.id === u.id) }));
@@ -518,11 +519,12 @@ function getAdminUserCardApi(actor, data) {
   if (current.admin.role !== 'superadmin' && current.admin.permissions?.users !== true && current.admin.permissions?.relationships !== true) {
     throw new Error('Недостаточно прав для просмотра карточки участника.');
   }
+  const canReadEmails = current.admin.role === 'superadmin' || current.admin.permissions?.users === true;
   const uid = String(data.uid || '');
   if (!uid || uid.length > 128) throw new Error('Некорректный UID участника.');
   const profile = fsGet('users/' + encodeURIComponent(uid));
   if (!profile) throw new Error('Участник не найден.');
-  const directory = fsQueryGroupByField('userDirectory', 'uid', uid, 1)[0];
+  const directory = canReadEmails ? fsQueryGroupByField('userDirectory', 'uid', uid, 1)[0] : null;
   const inviter = profile.invitedByUid ? fsGet('users/' + encodeURIComponent(profile.invitedByUid)) : null;
   const invited = fsQueryFilteredPage('users', 'invitedByUid', uid, 100, '').items;
   const outgoing = fsQueryGroupByField('libraryShares', 'ownerUid', uid, 100);

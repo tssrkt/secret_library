@@ -486,6 +486,36 @@ function adminHarness({ permissions = {}, active = true, banned = false, role = 
   return { ...app, writes, records };
 }
 
+test('relationship-only moderator dashboard does not load the private email directory', () => {
+  const app = adminHarness({ permissions: { relationships: true } });
+  const loaded = [];
+  app.context.fsList = collection => {
+    loaded.push(collection);
+    if (collection === 'users') return [{ id: 'target-uid', displayName: 'Участник' }];
+    return [];
+  };
+  app.context.fsListPage = () => [];
+  app.context.getInvitationEmailTemplate = () => '';
+  app.context.getInvitationLimit = () => 20;
+  const dashboard = app.context.getAdminDashboardApi({ uid: 'mod-uid', admin: { role: 'moderator', permissions: { relationships: true } } });
+  assert.equal(dashboard.users[0].email, '');
+  assert.equal(loaded.includes('userDirectory'), false);
+});
+
+test('relationship-only moderator card does not query or expose the participant email directory', () => {
+  const app = adminHarness({ permissions: { relationships: true } });
+  const queried = [];
+  app.context.fsQueryGroupByField = (collection, field, value) => {
+    queried.push({ collection, field, value });
+    if (collection === 'userDirectory') return [{ id: 'private%40example.com', uid: 'target-uid' }];
+    return [];
+  };
+  app.context.fsQueryFilteredPage = () => ({ items: [] });
+  const card = app.context.getAdminUserCardApi({ uid: 'mod-uid', admin: { role: 'moderator', permissions: { relationships: true } } }, { uid: 'target-uid' });
+  assert.equal(card.user.email, '');
+  assert.equal(queried.some(item => item.collection === 'userDirectory'), false);
+});
+
 test('admin API rejects a banned moderator before any administrative operation', () => {
   const app = adminHarness({ permissions: { users: true }, banned: true });
   assert.throws(() => app.context.requireAdminApi('mod-uid', 'users'), /Доступ к Тайной Библиотеке заблокирован/);
