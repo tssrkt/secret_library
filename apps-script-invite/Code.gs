@@ -237,11 +237,29 @@ function readPendingInvitation(idToken, email, uid) {
     headers: { Authorization: 'Bearer ' + idToken },
     muteHttpExceptions: true
   });
-  if (response.getResponseCode() === 404) return null;
-  if (response.getResponseCode() !== 200) {
-    throw new Error('Не удалось проверить приглашение в Firebase. Повторите попытку.');
+  return decodePendingInvitationResponse(response.getResponseCode(), response.getContentText(), email, uid);
+}
+
+function readPendingInvitationsMany(idToken, emails, uid) {
+  if (!emails.length) return [];
+  if (typeof UrlFetchApp.fetchAll !== 'function' || emails.length === 1) {
+    return emails.map(email => readPendingInvitation(idToken, email, uid));
   }
-  const fields = JSON.parse(response.getContentText()).fields || {};
+  const requests = emails.map(email => ({
+    url: 'https://firestore.googleapis.com/v1/projects/' + FIREBASE_PROJECT_ID +
+      '/databases/(default)/documents/pendingInvites/' + encodeURIComponent(email) + '/shares/' + encodeURIComponent(uid),
+    method: 'get',
+    headers: { Authorization: 'Bearer ' + idToken },
+    muteHttpExceptions: true
+  }));
+  return UrlFetchApp.fetchAll(requests).map((response, index) =>
+    decodePendingInvitationResponse(response.getResponseCode(), response.getContentText(), emails[index], uid));
+}
+
+function decodePendingInvitationResponse(status, text, email, uid) {
+  if (status === 404) return null;
+  if (status !== 200) throw new Error('Не удалось проверить приглашение в Firebase. Повторите попытку.');
+  const fields = JSON.parse(text).fields || {};
   const value = function (name, key) {
     return fields[name] && Object.prototype.hasOwnProperty.call(fields[name], key) ? fields[name][key] : null;
   };
@@ -265,9 +283,12 @@ function handleInvitationStatuses(input) {
   const user = verifyFirebaseUser(idToken);
   const properties = PropertiesService.getScriptProperties();
   const statuses = {};
+  const recipientEmails = emails.filter(email => email !== normalizeEmail(user.email));
+  const invitations = readPendingInvitationsMany(idToken, recipientEmails, user.localId);
+  const invitationByEmail = new Map(recipientEmails.map((email, index) => [email, invitations[index]]));
   emails.forEach(function (email) {
     if (email === normalizeEmail(user.email)) return;
-    const invitation = readPendingInvitation(idToken, email, user.localId);
+    const invitation = invitationByEmail.get(email);
     if (!invitation || invitation.claimedUid) return;
     const current = JSON.parse(properties.getProperty(reservationKey(user.localId, email)) || 'null');
     let lastSentAt = 0;

@@ -139,6 +139,31 @@ test('admin document reads use a concurrent Firestore batch and preserve missing
   assert.equal(rows[1], null);
 });
 
+test('invitation status checks batch owner-scoped Firestore reads and skip the owner email', () => {
+  const app = harness();
+  const requests = [];
+  app.context.UrlFetchApp.fetchAll = batch => {
+    requests.push(...batch);
+    return batch.map(request => {
+      const email = decodeURIComponent(request.url.split('/pendingInvites/')[1].split('/shares/')[0]);
+      return response(200, { fields: {
+        ownerUid: { stringValue: 'owner-uid' },
+        inviteeEmail: { stringValue: email },
+        active: { booleanValue: true },
+        claimedUid: { nullValue: null },
+        emailStatus: { stringValue: 'sent' },
+        emailSentAt: { timestampValue: '2026-11-05T10:00:00.000Z' }
+      } });
+    });
+  };
+  const result = app.invoke({ action: 'getInvitationStatuses', emails: ['friend@gmail.com', 'owner@gmail.com', 'other@gmail.com'] });
+  assert.equal(requests.length, 2);
+  assert.equal(requests.every(request => request.headers.Authorization === 'Bearer ' + app.payload.idToken), true);
+  assert.equal(requests.some(request => request.url.includes('owner%40gmail.com')), false);
+  assert.match(result.content, /"friend@gmail.com":\{"lastSentAt":1793872800000,"cooldownUntil":1793876400000\}/);
+  assert.match(result.content, /"other@gmail.com":\{"lastSentAt":1793872800000,"cooldownUntil":1793876400000\}/);
+});
+
 test('verifyFirebaseUser caches a successful lookup for the same token', () => {
   const app = harness();
   app.context.verifyFirebaseUser(app.payload.idToken);
