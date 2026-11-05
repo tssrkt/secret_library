@@ -95,10 +95,10 @@ export async function runUserSettingsTests(test, assert, equal) {
       assert(fields().every((field) => field.closest('label')?.querySelector('span')), 'folder names are labels');
       fields()[1].checked = false;
       submit(); submit();
-      assert(container.querySelector('[type=submit]').disabled && writes.length === 1, 'only save is disabled and duplicate submit ignored');
+      assert(container.querySelector('[type=submit]').disabled && fields().every((field) => field.disabled) && writes.length === 1, 'save and folder checkboxes are disabled while writing; duplicate submit ignored');
       rejectSave(new Error('Не удалось сохранить настройки.'));
       await tick();
-      assert(errors.length === 1 && !fields()[1].checked && !container.querySelector('[type=submit]').disabled, 'failure preserves draft and enables retry');
+      assert(errors.length === 1 && !fields()[1].checked && fields().every((field) => !field.disabled) && !container.querySelector('[type=submit]').disabled, 'failure preserves draft and re-enables all controls for retry');
       submit();
       equal(writes[1].value.sharing.excludedFolderIds, ['sf', 'history'], 'save captures current unchecked folders');
       resolveSave('settings-id');

@@ -293,8 +293,24 @@ export function renderLibrary(index, onDownload = async () => {}, { ownerIndex =
       throw settingsLoadError || new Error('Не удалось загрузить настройки.');
     },
     save: async (settings, settingsIndex, fileId) => {
-      await beforeSettingsSave();
-      const saved = await saveUserSettings(settings, settingsIndex, fileId);
+      const restorePreviousPublication = async () => {
+        if (!savedUserSettings) return;
+        try { await onSettingsSaved(settingsIndex, savedUserSettings.settings); }
+        catch (error) { reportSettingsError(error); }
+      };
+      try {
+        await beforeSettingsSave();
+      } catch (error) {
+        await restorePreviousPublication();
+        throw error;
+      }
+      let saved;
+      try {
+        saved = await saveUserSettings(settings, settingsIndex, fileId);
+      } catch (error) {
+        await restorePreviousPublication();
+        throw error;
+      }
       savedUserSettings = { fileId: saved, settings };
       try { await onSettingsSaved(settingsIndex, settings); }
       catch (error) { reportSettingsError(error); }

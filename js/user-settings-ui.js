@@ -68,7 +68,9 @@ export function createUserSettingsController({ container, index, onError, clearE
         if (saving || !isCurrent()) return;
         const settings = { ...saved.settings, version: 1, rootFolderId: index.rootFolderId,
           sharing: { excludedFolderIds: [...list.querySelectorAll('input')].filter((field) => !field.checked).map((field) => field.value) } };
+        const fields = [...list.querySelectorAll('input')];
         button.disabled = true;
+        fields.forEach((field) => { field.disabled = true; });
         status.textContent = '';
         clearError();
         saving = (async () => {
@@ -79,6 +81,7 @@ export function createUserSettingsController({ container, index, onError, clearE
           } catch (error) {
             if (isCurrent() || error?.status === 401 || error?.code === 'unauthorized') onError(error);
           } finally {
+            fields.forEach((field) => { field.disabled = false; });
             button.disabled = false;
           }
         })();
