@@ -689,8 +689,9 @@ function fsQueryUserProfiles(uids, knownUids) {
 function fsGetAdminUserFlags(uids) {
   const result = { banned: new Set(), admins: new Set() };
   if (!uids.length) return result;
-  fsQueryDocumentIds('bannedUsers', uids).forEach(uid => result.banned.add(uid));
-  fsQueryDocumentIds('adminUsers', uids).forEach(uid => result.admins.add(uid));
+  const found = fsQueryDocumentIdsMany(['bannedUsers', 'adminUsers'], uids);
+  found.bannedUsers.forEach(uid => result.banned.add(uid));
+  found.adminUsers.forEach(uid => result.admins.add(uid));
   return result;
 }
 function fsQueryEmailDirectory(uids) {
@@ -711,13 +712,26 @@ function fsQueryEmailDirectory(uids) {
 }
 
 function fsQueryDocumentIds(collectionId, ids) {
-  const values = ids.slice(0, 30).map(uid => ({ referenceValue: 'projects/' + FIREBASE_PROJECT_ID + '/databases/(default)/documents/' + collectionId + '/' + uid }));
-  if (!values.length) return [];
-  const response = fsFetch(FIRESTORE_REST_ROOT.slice(0, -1) + ':runQuery', 'post', {
-    structuredQuery: { from: [{ collectionId }], where: { fieldFilter: { field: { fieldPath: '__name__' }, op: 'IN', value: { arrayValue: { values } } } }, limit: values.length }
+  return fsQueryDocumentIdsMany([collectionId], ids)[collectionId] || [];
+}
+function fsQueryDocumentIdsMany(collectionIds, ids) {
+  const unique = [...new Set((ids || []).filter(isValidUid))].slice(0, 30);
+  const collections = [...new Set(collectionIds || [])];
+  const result = Object.fromEntries(collections.map(collectionId => [collectionId, []]));
+  if (!unique.length || !collections.length) return result;
+  const url = FIRESTORE_REST_ROOT.slice(0, -1) + ':runQuery';
+  const bodies = collections.map(collectionId => {
+    const values = unique.map(uid => ({ referenceValue: 'projects/' + FIREBASE_PROJECT_ID + '/databases/(default)/documents/' + collectionId + '/' + uid }));
+    return { structuredQuery: { from: [{ collectionId }], where: { fieldFilter: { field: { fieldPath: '__name__' }, op: 'IN', value: { arrayValue: { values } } } }, limit: values.length } };
   });
-  if (response.code !== 200) throw new Error('Не удалось получить статусы участников.');
-  return JSON.parse(response.text).filter(row => row && row.document).map(row => row.document.name.split('/').pop());
+  const responses = bodies.length > 1 && typeof UrlFetchApp.fetchAll === 'function'
+    ? UrlFetchApp.fetchAll(bodies.map(body => ({ url, method: 'post', headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() }, muteHttpExceptions: true, contentType: 'application/json', payload: JSON.stringify(body) }))).map(response => ({ code: response.getResponseCode(), text: response.getContentText() }))
+    : bodies.map(body => fsFetch(url, 'post', body));
+  responses.forEach((response, index) => {
+    if (response.code !== 200) throw new Error('Не удалось получить статусы участников.');
+    result[collections[index]] = JSON.parse(response.text).filter(row => row && row.document).map(row => row.document.name.split('/').pop());
+  });
+  return result;
 }
 function sanitizeRelationshipProfile(profile) {
   const safe = {};

@@ -174,6 +174,30 @@ test('admin page requests reuse profiles already loaded by the client', () => {
   assert.equal(profiles['viewer-uid'].displayName, 'Reader');
 });
 
+test('admin user flags fetch banned and admin records concurrently', () => {
+  const app = harness();
+  let requests = [];
+  app.context.ScriptApp = { getOAuthToken: () => 'test-token' };
+  app.context.UrlFetchApp.fetchAll = batch => {
+    requests = batch;
+    return batch.map(request => {
+      const query = JSON.parse(request.payload).structuredQuery;
+      const collectionId = query.from[0].collectionId;
+      return {
+        getResponseCode: () => 200,
+        getContentText: () => JSON.stringify([{ document: {
+          name: `projects/project/databases/(default)/documents/${collectionId}/user-1`, fields: {}
+        } }])
+      };
+    });
+  };
+  const flags = app.context.fsGetAdminUserFlags(['user-1', 'user-2']);
+  assert.equal(requests.length, 2);
+  assert.equal(flags.banned.has('user-1'), true);
+  assert.equal(flags.admins.has('user-1'), true);
+  assert.equal(flags.banned.has('user-2'), false);
+});
+
 test('admin related profiles fetch multiple Firestore batches concurrently', () => {
   const app = harness();
   let requests = [];
