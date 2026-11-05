@@ -330,7 +330,9 @@ function responsePage(requestId, ok, message, data) {
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
 }
 
-const ADMIN_EMAIL_ADDRESS = 'tssrkt777@gmail.com';
+function getBootstrapAdminEmail() {
+  return normalizeEmail(PropertiesService.getScriptProperties().getProperty('BOOTSTRAP_ADMIN_EMAIL') || '');
+}
 const ADMIN_SECTIONS_API = ['overview', 'users', 'relationships', 'invites', 'shares', 'events', 'banned', 'admins', 'texts'];
 const FIRESTORE_REST_ROOT = 'https://firestore.googleapis.com/v1/projects/' +
   FIREBASE_PROJECT_ID + '/databases/(default)/documents/';
@@ -342,7 +344,8 @@ function handleAdminRequest(input) {
   const action = String(input.action || '');
   const data = input.data && typeof input.data === 'object' ? input.data : {};
   if (action === 'bootstrapAdmin') {
-    if (normalizeEmail(user.email) !== ADMIN_EMAIL_ADDRESS) throw new Error('Первоначальная настройка доступна только владельцу проекта.');
+    const bootstrapEmail = getBootstrapAdminEmail();
+    if (!bootstrapEmail || normalizeEmail(user.email) !== bootstrapEmail) throw new Error('Первоначальная настройка доступна только владельцу проекта.');
     if (fsGet('bannedUsers/' + user.localId)) throw new Error('Доступ к Тайной Библиотеке заблокирован.');
     const admins = fsList('adminUsers');
     const current = fsGet('adminUsers/' + user.localId);
@@ -352,7 +355,7 @@ function handleAdminRequest(input) {
       return { ok: true, alreadyAdmin: true };
     }
     fsSet('adminUsers/' + user.localId, {
-      uid: user.localId, email: ADMIN_EMAIL_ADDRESS, role: 'superadmin', active: true,
+      uid: user.localId, email: bootstrapEmail, role: 'superadmin', active: true,
       permissions: Object.fromEntries(ADMIN_SECTIONS_API.map(k => [k, true])),
       createdAt: new Date(), createdBy: 'bootstrap'
     });
