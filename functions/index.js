@@ -142,11 +142,13 @@ export const setAdminPermissions = onCall({ region: 'europe-west1', invoker: 'pu
       || Object.keys(permissions).some((key) => !ADMIN_SECTIONS.includes(key) || typeof permissions[key] !== 'boolean')) {
     throw new HttpsError('invalid-argument', 'Некорректные права администратора.');
   }
-  const bannedTarget = await banRef(targetUid).get();
+  const [bannedTarget, user, existing] = await Promise.all([
+    banRef(targetUid).get(),
+    db.doc(`users/${targetUid}`).get(),
+    adminRef(targetUid).get()
+  ]);
   if (bannedTarget.exists) throw new HttpsError('failed-precondition', 'Нельзя назначить администратора заблокированному участнику.');
-  const user = await db.doc(`users/${targetUid}`).get();
   if (!user.exists) throw new HttpsError('not-found', 'Участник не найден.');
-  const existing = await adminRef(targetUid).get();
   if (existing.data()?.role === 'superadmin') throw new HttpsError('failed-precondition', 'Нельзя менять права главного администратора.');
   const active = request.data?.active !== false;
   await adminRef(targetUid).set({ uid: targetUid, email: normalEmail(existing.data()?.email), role: 'moderator', active, permissions, updatedAt: FieldValue.serverTimestamp(), updatedBy: uid }, { merge: true });
@@ -160,9 +162,11 @@ export const banLibraryUser = onCall({ region: 'europe-west1', invoker: 'public'
   const targetUid = String(request.data?.uid || '');
   const reason = typeof request.data?.reason === 'string' ? request.data.reason.trim().slice(0, 500) : '';
   if (!isValidUid(targetUid) || targetUid === uid) throw new HttpsError('invalid-argument', 'Нельзя заблокировать эту учётную запись.');
-  const admin = await adminRef(targetUid).get();
+  const [admin, profile] = await Promise.all([
+    adminRef(targetUid).get(),
+    db.doc(`users/${targetUid}`).get()
+  ]);
   if (admin.data()?.role === 'superadmin') throw new HttpsError('failed-precondition', 'Главного администратора нельзя заблокировать.');
-  const profile = await db.doc(`users/${targetUid}`).get();
   if (!profile.exists) throw new HttpsError('not-found', 'Участник не найден.');
   const authUser = await getAuth().getUser(targetUid).catch(() => null);
   await banRef(targetUid).set({ uid: targetUid, email: normalEmail(authUser?.email), displayName: profile.data()?.displayName || '', reason, bannedBy: uid, adminWasActive: admin.exists && admin.data()?.active === true, bannedAt: FieldValue.serverTimestamp() });
