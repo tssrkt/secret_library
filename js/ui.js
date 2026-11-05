@@ -141,8 +141,11 @@ export function bindActions(actions) {
   reportSettingsError = actions.settingsError || reportSettingsError;
   elements.settings?.addEventListener('click', () => openSettings());
   elements.home?.addEventListener('click', (event) => {
-    // In document mode, let document-view.js switch back to the library view.
-    if (!document.querySelector('#document-view')?.hidden) return;
+    // Reset library subviews (including settings) even when a public document is visible.
+    if (!document.querySelector('#document-view')?.hidden) {
+      actions.home?.();
+      return;
+    }
     event.preventDefault();
     actions.home?.();
   });
