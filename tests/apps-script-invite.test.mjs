@@ -174,6 +174,31 @@ test('admin page requests reuse profiles already loaded by the client', () => {
   assert.equal(profiles['viewer-uid'].displayName, 'Reader');
 });
 
+test('admin history batches independent collection-group queries concurrently', () => {
+  const app = harness();
+  let requests = [];
+  app.context.ScriptApp = { getOAuthToken: () => 'test-token' };
+  app.context.UrlFetchApp.fetchAll = batch => {
+    requests = batch;
+    return batch.map((request, index) => ({
+      getResponseCode: () => 200,
+      getContentText: () => JSON.stringify([{ document: {
+        name: `projects/project/databases/(default)/documents/${JSON.parse(request.payload).structuredQuery.from[0].collectionId}/record-${index}`,
+        fields: { action: { stringValue: `result-${index}` } }
+      } }])
+    }));
+  };
+  const rows = app.context.fsQueryGroupByFieldMany([
+    { collectionId: 'shares', field: 'ownerUid', value: 'user-1', limit: 100, nestedOnly: false },
+    { collectionId: 'adminEvents', field: 'targetUid', value: 'user-1', limit: 100 },
+    { collectionId: 'libraryShares', field: 'viewerUid', value: 'user-1', limit: 100 }
+  ]);
+  assert.equal(requests.length, 3);
+  assert.ok(requests.every(request => request.headers.Authorization === 'Bearer test-token'));
+  assert.equal(rows[0][0].action, 'result-0');
+  assert.equal(rows[2][0].id, 'record-2');
+});
+
 test('admin user flags fetch banned and admin records concurrently', () => {
   const app = harness();
   let requests = [];

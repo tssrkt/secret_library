@@ -885,13 +885,19 @@ function getAdminUserHistoryApi(actor, data) {
   requireAdminApi(actor.uid, 'users');
   const uid = String(data.uid || '');
   if (!isValidUid(uid)) throw new Error('Некорректный UID участника.');
-  const invitations = fsQueryGroupByField('shares', 'ownerUid', uid, 100, true)
-    .concat(fsQueryGroupByField('shares', 'claimedUid', uid, 100, true));
-  const events = fsQueryGroupByField('adminEvents', 'targetUid', uid, 100)
-    .concat(fsQueryGroupByField('adminEvents', 'actorUid', uid, 100));
+  const rows = fsQueryGroupByFieldMany([
+    { collectionId: 'shares', field: 'ownerUid', value: uid, limit: 100, nestedOnly: true },
+    { collectionId: 'shares', field: 'claimedUid', value: uid, limit: 100, nestedOnly: true },
+    { collectionId: 'adminEvents', field: 'targetUid', value: uid, limit: 100 },
+    { collectionId: 'adminEvents', field: 'actorUid', value: uid, limit: 100 },
+    { collectionId: 'libraryShares', field: 'ownerUid', value: uid, limit: 100 },
+    { collectionId: 'libraryShares', field: 'viewerUid', value: uid, limit: 100 }
+  ]);
+  const invitations = rows[0].concat(rows[1]);
+  const events = rows[2].concat(rows[3]);
   return {
-    outgoing: redactPrivateEmails(actor, fsQueryGroupByField('libraryShares', 'ownerUid', uid, 100), 'shares'),
-    incoming: redactPrivateEmails(actor, fsQueryGroupByField('libraryShares', 'viewerUid', uid, 100), 'shares'),
+    outgoing: redactPrivateEmails(actor, rows[4], 'shares'),
+    incoming: redactPrivateEmails(actor, rows[5], 'shares'),
     invitations: sanitizeInvitationRecords(actor, [...new Map(invitations.map(item => [item.id + ':' + item.email, item])).values()]),
     events: redactPrivateEmails(actor, [...new Map(events.map(item => [item.id, item])).values()].sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0)).slice(0, 100), 'events')
   };
@@ -1023,6 +1029,25 @@ function fsQueryGroupByField(collectionId, field, value, limit, nestedOnly) {
     limit: Math.min(100, Number(limit) || 100)
   };
   const response = fsFetch(FIRESTORE_REST_ROOT.slice(0, -1) + ':runQuery', 'post', { structuredQuery });
+  return fsDecodeGroupByFieldResponse(response, nestedOnly);
+}
+function fsQueryGroupByFieldMany(specs) {
+  if (!Array.isArray(specs) || !specs.length) return [];
+  if (specs.length === 1 || typeof UrlFetchApp.fetchAll !== 'function') {
+    return specs.map(spec => fsQueryGroupByField(spec.collectionId, spec.field, spec.value, spec.limit, spec.nestedOnly));
+  }
+  const url = FIRESTORE_REST_ROOT.slice(0, -1) + ':runQuery';
+  const requests = specs.map(spec => ({
+    url, method: 'post', headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() }, muteHttpExceptions: true, contentType: 'application/json',
+    payload: JSON.stringify({ structuredQuery: {
+      from: [{ collectionId: spec.collectionId, allDescendants: true }],
+      where: { fieldFilter: { field: { fieldPath: spec.field }, op: 'EQUAL', value: { stringValue: String(spec.value) } } },
+      limit: Math.min(100, Number(spec.limit) || 100)
+    } })
+  }));
+  return UrlFetchApp.fetchAll(requests).map((response, index) => fsDecodeGroupByFieldResponse({ code: response.getResponseCode(), text: response.getContentText() }, specs[index].nestedOnly));
+}
+function fsDecodeGroupByFieldResponse(response, nestedOnly) {
   if (response.code !== 200) throw new Error('Не удалось загрузить историю участника.');
   return JSON.parse(response.text).filter(row => row && row.document)
     .filter(row => !nestedOnly || row.document.name.includes('/pendingInvites/'))
