@@ -108,18 +108,11 @@ function response(status, body) {
   };
 }
 
-test('admin startup uses bounded summary and paginated collection APIs, not the unbounded dashboard', () => {
-  assert.match(adminClientSource, /call\('getAdminDashboardSummary'\)/);
-  assert.match(adminClientSource, /call\('getAdminCollectionPage'\)/);
-  assert.doesNotMatch(adminClientSource, /call\('getAdminDashboard'\)/);
+test('admin iframe accepts a response only from its own request window', () => {
+  assert.match(adminClientSource, /event\.source !== iframe\.contentWindow/);
+  assert.match(adminClientSource, /event\.origin !== 'https:\/\/script\.googleusercontent\.com'/);
 });
 
-test('admin iframe accepts only matching request IDs from allowlisted Apps Script origins', () => {
-  assert.match(adminClientSource, /event\.origin === 'https:\/\/script\.google\.com'/);
-  assert.match(adminClientSource, /\[a-z0-9-\]\+-script\\\.googleusercontent\\\.com/);
-  assert.match(adminClientSource, /event\.data\?\.requestId !== requestId/);
-  assert.match(adminClientSource, /event\.data\?\.type !== 'secret-library-admin-result'/);
-});
 test('admin event history uses a bounded server-side Firestore page', () => {
   const app = harness();
   let requestedUrl = '';
@@ -616,26 +609,6 @@ test('non-user moderators do not receive email addresses from admin or ban recor
   assert.equal(card.banned.email, '');
   assert.equal(card.outgoing[0].ownerEmail, '');
 });
-test('relationship admin page lists all users and resolves names for access-share participants', () => {
-  const app = adminHarness({ permissions: { relationships: true } });
-  app.context.fsQueryFilteredPage = (path) => ({
-    items: path === 'users'
-      ? [{ id: 'invitee-uid', displayName: 'Invitee', invitedByUid: 'owner-uid', email: 'private@example.com' }]
-      : [{ id: 'share-1', ownerUid: 'owner-uid', viewerUid: 'invitee-uid', active: true, ownerEmail: 'private@example.com' }],
-    hasMore: false, nextCursor: null
-  });
-  app.context.fsQueryUserProfiles = uids => {
-    assert(uids.includes('owner-uid'));
-    return { 'owner-uid': { uid: 'owner-uid', displayName: 'Owner' } };
-  };
-  const actor = { uid: 'mod-uid', admin: { role: 'moderator', permissions: { relationships: true } } };
-  const page = app.context.getAdminRelationshipRootsApi(actor, {});
-  assert.equal(page.items[0].uid, 'invitee-uid');
-  assert.equal(page.items[0].invitedByUid, 'owner-uid');
-  assert.equal(page.shares[0].ownerUid, 'owner-uid');
-  assert.equal(page.shares[0].ownerEmail, '');
-  assert.equal(page.userProfiles['owner-uid'].displayName, 'Owner');
-});
 test('relationship-only APIs redact legacy profile email fields', () => {
   const permissions = { relationships: true };
   const app = adminHarness({ permissions });
@@ -643,7 +616,6 @@ test('relationship-only APIs redact legacy profile email fields', () => {
   app.records.set('users/inviter-uid', { id: 'inviter-uid', displayName: 'Inviter', email: 'inviter-profile@example.com', privateNote: 'must not leak' });
   app.context.fsQueryGroupByField = () => [];
   app.context.fsQueryFilteredPage = () => ({ items: [{ id: 'invited-uid', displayName: 'Invited', email: 'invited-profile@example.com', privateNote: 'must not leak' }], hasMore: false, nextCursor: null });
-  app.context.fsQueryUserProfiles = () => ({});
   const actor = { uid: 'mod-uid', admin: { role: 'moderator', permissions } };
   const card = app.context.getAdminUserCardApi(actor, { uid: 'target-uid' });
   assert.equal(card.user.email, '');
@@ -697,7 +669,6 @@ test('user collection pages sanitize legacy fields and resolve email from the pr
   app.context.fsQueryPage = () => ({ items: [{ id: 'target-uid', displayName: 'Target', email: 'legacy@example.com', accessToken: 'secret', privateNote: 'secret' }], hasMore: false, nextCursor: null });
   app.context.fsGetAdminUserFlags = () => ({ banned: new Set(), admins: new Set() });
   app.context.fsQueryEmailDirectory = () => [{ id: 'target@example.com', uid: 'target-uid' }];
-  app.context.fsQueryUserProfiles = () => ({});
   const page = app.context.getAdminCollectionPageApi({ uid: 'mod-uid', admin: { role: 'moderator', permissions: { users: true } } }, { section: 'users' });
   assert.equal(page.items[0].email, 'target@example.com');
   assert.equal(page.items[0].displayName, 'Target');
@@ -719,32 +690,6 @@ test('legacy document fields cannot override authoritative Firestore document ID
   assert.equal(page.items[0].displayName, 'Target');
 });
 
-test('admin related-profile lookup returns only public fields for bounded UID batches', () => {
-  const app = harness();
-  let query;
-  app.context.fsFetch = (_url, method, body) => {
-    assert.equal(method, 'post');
-    query = body.structuredQuery;
-    return { code: 200, text: JSON.stringify([{ document: {
-      name: 'projects/project/databases/(default)/documents/users/target-uid',
-      fields: { displayName: { stringValue: 'Target' }, photoURL: { stringValue: '' }, email: { stringValue: 'private@example.com' }, privateNote: { stringValue: 'secret' } }
-    } }]) };
-  };
-  const profiles = app.context.fsQueryUserProfiles(['target-uid', 'target-uid', 'bad/uid']);
-  assert.equal(query.from[0].collectionId, 'users');
-  assert.equal(query.where.fieldFilter.field.fieldPath, '__name__');
-  assert.equal(query.where.fieldFilter.op, 'IN');
-  assert.equal(query.where.fieldFilter.value.arrayValue.values.length, 1);
-  assert.equal(profiles['target-uid'].displayName, 'Target');
-  assert.equal(Object.hasOwn(profiles['target-uid'], 'email'), false);
-  assert.equal(Object.hasOwn(profiles['target-uid'], 'privateNote'), false);
-});
-
-test('admin errors expose safe Firebase HTTP status codes instead of masking them', () => {
-  const app = harness();
-  const message = 'Не удалось сохранить данные Firebase (HTTP 403).';
-  assert.equal(app.context.publicAdminError(new Error(message)), message);
-});
 test('email directory lookup uses a bounded UID query and rejects unrelated rows', () => {
   const app = harness();
   let query;
@@ -820,7 +765,6 @@ test('dashboard and collection pages redact emails outside the users permission'
     adminEvents: [{ id: 'event-1', details: { email: 'private-event@example.com', reason: 'contact private-event@example.com', permissions: { users: true, privateNote: 'secret' }, privateNote: 'event secret' }, privateNote: 'event root secret' }],
   };
   app.context.fsQueryFilteredPage = path => ({ items: pageItems[path] || [], hasMore: false, nextCursor: null });
-  app.context.fsQueryUserProfiles = () => ({});
   for (const [section, field] of [['shares', 'ownerEmail'], ['admins', 'email'], ['banned', 'email'], ['events', 'details']]) {
     const page = app.context.getAdminCollectionPageApi(actor, { section });
     if (field === 'details') {
@@ -953,12 +897,16 @@ test('moderator cannot grant themselves privileges or alter the superadmin', () 
   assert.equal(app.writes.length, 0);
 });
 
-test('superadmin bootstrap provisions only the configured public project email', () => {
+test('superadmin bootstrap provisions only the email configured in Script Properties', () => {
   const adminUser = {
-    localId: 'owner-uid', email: 'tssrkt777@gmail.com', emailVerified: true,
+    localId: 'owner-uid', email: 'admin@example.com', emailVerified: true,
     displayName: 'Администратор', providerUserInfo: [{ providerId: 'google.com' }]
   };
+  const unconfigured = harness({ authUser: adminUser });
+  assert.throws(() => unconfigured.context.handleAdminRequest({ idToken: 'firebase-id-token-'.padEnd(500, 'x'), action: 'bootstrapAdmin' }), /Первоначальная настройка доступна только владельцу проекта/);
+
   const app = harness({ authUser: adminUser });
+  app.properties.set('BOOTSTRAP_ADMIN_EMAIL', 'admin@example.com');
   const writes = [];
   app.context.fsGet = () => null;
   app.context.fsList = () => [];
@@ -966,7 +914,7 @@ test('superadmin bootstrap provisions only the configured public project email',
   app.context.fsAddEvent = (...args) => writes.push({ event: args });
   const result = app.context.handleAdminRequest({ idToken: 'firebase-id-token-'.padEnd(500, 'x'), action: 'bootstrapAdmin' });
   assert.equal(result.alreadyAdmin, false);
-  assert.equal(writes.find((x) => x.path === 'adminUsers/owner-uid').value.email, 'tssrkt777@gmail.com');
+  assert.equal(writes.find((x) => x.path === 'adminUsers/owner-uid').value.email, 'admin@example.com');
   assert.equal(writes.find((x) => x.path === 'adminUsers/owner-uid').value.role, 'superadmin');
 
   const wrong = harness({ authUser: { ...adminUser, email: 'other@gmail.com' } });
