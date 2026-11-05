@@ -55,6 +55,13 @@ function showLibrary({ updateHistory = true } = {}) {
 }
 
 document.addEventListener('click', (event) => {
+  // Settings are rendered in the library tree. Leave document mode after the
+  // settings button's own handler has opened them, otherwise the document view
+  // keeps the settings panel hidden behind it.
+  if (event.target.closest('#settings-button') && !view.hidden) {
+    showLibrary();
+    return;
+  }
   const link = event.target.closest('a[href]');
   if (!link || event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
   const key = link.dataset.document || (link.getAttribute('href')?.endsWith('/info.html') || link.getAttribute('href') === './info.html' ? 'info'
