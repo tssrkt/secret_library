@@ -162,9 +162,22 @@ async function refresh() {
 function renderStats() {
   stats.replaceChildren();
   const counts = data.counts || {};
-  [['users','Участники'],['invitations','Приглашения'],['acceptedInvitations','Принятые приглашения'],['shares','Активные доступы'],['admins','Администраторы'],['banned','Забаненные']].forEach(([key,title]) => {
+  [['users','Участники'],['invitations','Приглашения'],['shares','Активные доступы'],['admins','Администраторы'],['banned','Забаненные']].forEach(([key,title]) => {
     if (counts[key] == null) return;
-    const card = node('div', null, 'stat'); card.append(node('span', title), node('strong', Number(counts[key]).toLocaleString('ru-RU'))); stats.append(card);
+    const card = node('div', null, 'stat');
+    card.append(node('span', title));
+    const value = node('strong');
+    if (key === 'invitations' && counts.acceptedInvitations != null) {
+      const total = node('span', Number(counts.invitations).toLocaleString('ru-RU'));
+      total.title = 'Все приглашения';
+      const accepted = node('span', ' (' + Number(counts.acceptedInvitations).toLocaleString('ru-RU') + ')');
+      accepted.title = 'Принятые приглашения';
+      accepted.setAttribute('aria-label', 'Принятые приглашения');
+      value.append(total, accepted);
+    } else {
+      value.textContent = Number(counts[key]).toLocaleString('ru-RU');
+    }
+    card.append(value); stats.append(card);
   });
 }
 function renderTabs() {
@@ -176,30 +189,70 @@ function renderTabs() {
 }
 function renderUsers() {
   const superAdminUid = (data.admins || []).find(a => a.role === 'superadmin')?.uid;
-  const users = [...(data.users || [])].sort((a,b)=>(a.displayName||'').localeCompare(b.displayName||'','ru'));
-  const byUid = new Map(users.map(u => [u.uid,u]));
-  const children = new Map();
-  users.forEach(u => { if (u.invitedByUid && byUid.has(u.invitedByUid)) { const arr=children.get(u.invitedByUid)||[]; arr.push(u); children.set(u.invitedByUid,arr); } });
-  const rows = users.map(u => {
-    const who = userLink(u);
-    const rel = node('div', null, 'user-invitations');
-    const inviterLine = node('div', null, 'inviter-line'); inviterLine.append(document.createTextNode('Пригласитель: '), byUid.has(u.invitedByUid) ? userLink(byUid.get(u.invitedByUid)) : node('span', u.invitedByUid || '—')); rel.append(inviterLine);
-    const invited = children.get(u.uid) || [];
-    const invitedLine = node('div', null, invited.length ? 'invited-line' : 'invited-empty');
-    if (invited.length) invitedLine.append(document.createTextNode('Приглашённые: '), userLinks(invited));
-    else invitedLine.textContent = 'Приглашенных нет.';
-    rel.append(invitedLine);
-    const statusText = u.banned ? 'Забанен' : u.admin ? 'Администратор' : 'Активен';
-    const actions = node('div',null,'actions');
-    if (u.uid !== superAdminUid) {
-      if (u.banned) {
-        if (data.permissions?.banned) actions.append(button('Восстановить', async()=>{await call('restoreLibraryUser')({uid:u.uid}); await refresh();}));
-      } else actions.append(button('Заблокировать',async()=>{const reason=window.prompt('Причина блокировки (необязательно):','');if(reason===null)return;await call('banLibraryUser')({uid:u.uid,reason});await refresh();},'danger'));
-    }
-    if (data.permissions?.admins && !u.banned && !u.admin) actions.append(button('Назначить модератором',()=>{activeTab='admins';renderAdminEditor(u);}));
-    return [who,rel,statusText,actions];
-  });
-  content.append(paginatedTable(['Участник','Приглашения','Статус','Действия'],rows));
+  const allUsers = [...(data.users || [])];
+  const byUid = new Map(allUsers.map(u => [u.uid,u]));
+  const controls = node('div', null, 'actions');
+  controls.style.marginBottom = '14px';
+  const search = node('input');
+  search.type = 'search';
+  search.placeholder = 'Поиск по имени или email';
+  search.setAttribute('aria-label', 'Поиск участника по имени или email');
+  search.style.flex = '1 1 260px';
+  search.style.minWidth = '220px';
+  const sort = node('select');
+  sort.setAttribute('aria-label', 'Сортировка участников');
+  [
+    ['name','По алфавиту'],
+    ['registered','По дате регистрации (сначала новые)'],
+    ['status','По статусу (администраторы вначале)']
+  ].forEach(([value,title]) => { const option=node('option',title); option.value=value; sort.append(option); });
+  sort.value = 'name';
+  controls.append(search, sort);
+  const resultCount = node('p', null, 'muted');
+  const list = node('div');
+  content.append(controls, resultCount, list);
+  const renderList = () => {
+    const query = search.value.trim().toLocaleLowerCase('ru');
+    const users = allUsers.filter(u => !query || [u.displayName,u.email].some(value => String(value || '').toLocaleLowerCase('ru').includes(query)));
+    const registrationTime = u => {
+      const value = u.createdAt || u.registeredAt || u.registrationDate;
+      const date = value?.toDate ? value.toDate() : value ? new Date(value) : null;
+      return date && !Number.isNaN(date.getTime()) ? date.getTime() : 0;
+    };
+    users.sort((a,b) => {
+      if (sort.value === 'registered') return registrationTime(b) - registrationTime(a) || (a.displayName||'').localeCompare(b.displayName||'','ru');
+      if (sort.value === 'status') return Number(Boolean(b.admin)) - Number(Boolean(a.admin))
+        || Number(Boolean(a.banned)) - Number(Boolean(b.banned))
+        || (a.displayName||'').localeCompare(b.displayName||'','ru');
+      return (a.displayName||'').localeCompare(b.displayName||'','ru') || String(a.email||'').localeCompare(String(b.email||''),'ru');
+    });
+    const children = new Map();
+    users.forEach(u => { if (u.invitedByUid && byUid.has(u.invitedByUid)) { const arr=children.get(u.invitedByUid)||[]; arr.push(u); children.set(u.invitedByUid,arr); } });
+    const rows = users.map(u => {
+      const who = userLink(u);
+      const rel = node('div', null, 'user-invitations');
+      const inviterLine = node('div', null, 'inviter-line'); inviterLine.append(document.createTextNode('Пригласитель: '), byUid.has(u.invitedByUid) ? userLink(byUid.get(u.invitedByUid)) : node('span', u.invitedByUid || '—')); rel.append(inviterLine);
+      const invited = children.get(u.uid) || [];
+      const invitedLine = node('div', null, invited.length ? 'invited-line' : 'invited-empty');
+      if (invited.length) invitedLine.append(document.createTextNode('Приглашённые: '), userLinks(invited));
+      else invitedLine.textContent = 'Приглашенных нет.';
+      rel.append(invitedLine);
+      const statusText = u.banned ? 'Забанен' : u.admin ? 'Администратор' : 'Активен';
+      const actions = node('div',null,'actions');
+      if (u.uid !== superAdminUid) {
+        if (u.banned) {
+          if (data.permissions?.banned) actions.append(button('Восстановить', async()=>{await call('restoreLibraryUser')({uid:u.uid}); await refresh();}));
+        } else actions.append(button('Заблокировать',async()=>{const reason=window.prompt('Причина блокировки (необязательно):','');if(reason===null)return;await call('banLibraryUser')({uid:u.uid,reason});await refresh();},'danger'));
+      }
+      if (data.permissions?.admins && !u.banned && !u.admin) actions.append(button('Назначить модератором',()=>{activeTab='admins';renderAdminEditor(u);}));
+      return [who, u.email || '—', dateLabel(u.createdAt || u.registeredAt || u.registrationDate), rel, statusText, actions];
+    });
+    resultCount.textContent = 'Участников: ' + users.length + (query ? ' · найдено по запросу «' + search.value.trim() + '»' : '');
+    list.replaceChildren(paginatedTable(['Участник','Email','Дата регистрации','Приглашения','Статус','Действия'],rows));
+  };
+  search.addEventListener('input', renderList);
+  sort.addEventListener('change', renderList);
+  renderList();
 }
 function renderRelations() {
   const byUid = new Map((data.users||[]).map(u=>[u.uid,u]));
