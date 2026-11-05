@@ -1,6 +1,6 @@
 import { startFirebaseSession, endFirebaseSession } from './firebase-session.js';
 import { createSocialStore } from './social-store.js';
-import { createSharedLibraryStore } from './shared-library.js?v=20261105-shared-catalog-publish';
+import { createSharedLibraryStore } from './shared-library.js?v=20261105-excluded-nested-folders';
 import { sendInvitationEmail, getInvitationStatuses as fetchInvitationStatuses } from './invitation-mailer.js';
 
 export function socialError(error) {
