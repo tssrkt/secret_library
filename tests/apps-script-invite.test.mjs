@@ -529,13 +529,14 @@ test('non-user moderators do not receive email addresses from admin or ban recor
   const app = adminHarness({ permissions: { relationships: true, admins: true, banned: true } });
   app.records.set('adminUsers/target-uid', { uid: 'target-uid', role: 'moderator', email: 'private-admin@example.com' });
   app.records.set('bannedUsers/target-uid', { uid: 'target-uid', reason: 'private reason', email: 'private-ban@example.com' });
-  app.context.fsQueryGroupByField = () => [];
+  app.context.fsQueryGroupByField = (collection, field, value) => collection === 'libraryShares' ? [{ id: 'share-1', ownerUid: 'target-uid', viewerUid: 'friend-uid', ownerEmail: 'share-owner@example.com', active: true }] : [];
   app.context.fsQueryFilteredPage = () => ({ items: [] });
   const card = app.context.getAdminUserCardApi({ uid: 'mod-uid', admin: { role: 'moderator', permissions: { relationships: true, admins: true, banned: true } } }, { uid: 'target-uid' });
   assert.equal(card.admin.role, 'moderator');
   assert.equal(card.admin.email, '');
   assert.equal(card.banned.reason, 'private reason');
   assert.equal(card.banned.email, '');
+  assert.equal(card.outgoing[0].ownerEmail, '');
 });
 test('relationship-only APIs redact legacy profile email fields', () => {
   const permissions = { relationships: true };
@@ -551,6 +552,38 @@ test('relationship-only APIs redact legacy profile email fields', () => {
   assert.equal(card.invited[0].email, '');
   assert.equal(app.context.getAdminRelationshipRootsApi(actor, {}).items[0].email, '');
   assert.equal(app.context.getAdminBranchApi(actor, { uid: 'target-uid' }).items[0].email, '');
+});
+test('dashboard and collection pages redact emails outside the users permission', () => {
+  const permissions = { relationships: true, shares: true, admins: true, banned: true, events: true };
+  const app = adminHarness({ permissions });
+  app.context.fsList = collection => ({
+    users: [{ id: 'target-uid', displayName: 'Target', email: 'legacy-profile@example.com' }],
+    bannedUsers: [{ id: 'banned-uid', email: 'private-ban@example.com', reason: 'reason' }],
+    adminUsers: [{ id: 'admin-uid', email: 'private-admin@example.com', role: 'moderator' }],
+    libraryShares: [{ id: 'share-1', ownerUid: 'owner-uid', viewerUid: 'target-uid', ownerEmail: 'private-share@example.com', active: true }],
+  }[collection] || []);
+  app.context.fsListPage = () => [{ id: 'event-1', details: { email: 'private-event@example.com' } }];
+  app.context.fsListInviteShares = () => [];
+  const actor = { uid: 'mod-uid', admin: { role: 'moderator', permissions } };
+  const dashboard = app.context.getAdminDashboardApi(actor);
+  assert.equal(dashboard.users[0].email, '');
+  assert.equal(dashboard.shares[0].ownerEmail, '');
+  assert.equal(dashboard.admins[0].email, '');
+  assert.equal(dashboard.banned[0].email, '');
+  assert.equal(dashboard.events[0].details.email, '');
+
+  const pageItems = {
+    libraryShares: [{ id: 'share-1', ownerEmail: 'private-share@example.com' }],
+    adminUsers: [{ id: 'admin-uid', email: 'private-admin@example.com' }],
+    bannedUsers: [{ id: 'banned-uid', email: 'private-ban@example.com' }],
+    adminEvents: [{ id: 'event-1', details: { email: 'private-event@example.com' } }],
+  };
+  app.context.fsQueryFilteredPage = path => ({ items: pageItems[path] || [], hasMore: false, nextCursor: null });
+  for (const [section, field] of [['shares', 'ownerEmail'], ['admins', 'email'], ['banned', 'email'], ['events', 'details']]) {
+    const page = app.context.getAdminCollectionPageApi(actor, { section });
+    if (field === 'details') assert.equal(page.items[0].details.email, '');
+    else assert.equal(page.items[0][field], '');
+  }
 });
 test('admin API rejects a banned moderator before any administrative operation', () => {
   const app = adminHarness({ permissions: { users: true }, banned: true });

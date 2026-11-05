@@ -404,6 +404,10 @@ function getAdminDashboardApi(actor) {
   const emailByUid = new Map(directory.filter(item => item.uid && item.id).map(item => [item.uid, item.id]));
   const events = p.events ? fsListPage('adminEvents', 100, 'createdAt desc') : [];
   const userRows = users.map(u => ({ ...u, uid: u.id, email: emailByUid.get(u.id) || '', banned: banned.some(b => b.id === u.id), admin: admins.some(a => a.id === u.id) }));
+  const visibleShares = redactPrivateEmails(actor, shares);
+  const visibleAdmins = redactPrivateEmails(actor, admins);
+  const visibleBanned = redactPrivateEmails(actor, banned);
+  const visibleEvents = redactPrivateEmails(actor, events);
   return {
     permissions: p,
     counts: {
@@ -416,10 +420,10 @@ function getAdminDashboardApi(actor) {
     },
     users: p.users || p.relationships ? userRows : [],
     invitations: p.invites ? invites : [],
-    shares: p.shares || p.relationships ? shares : [],
-    admins: p.admins ? admins : [],
-    banned: p.banned ? banned : [],
-    events: p.events ? events : [],
+    shares: p.shares || p.relationships ? visibleShares : [],
+    admins: p.admins ? visibleAdmins : [],
+    banned: p.banned ? visibleBanned : [],
+    events: p.events ? visibleEvents : [],
     invitationEmailTemplate: p.texts ? getInvitationEmailTemplate() : null,
     invitationLimit: p.invites ? getInvitationLimit() : null
   };
@@ -480,6 +484,7 @@ function getAdminCollectionPageApi(actor, data) {
   else if ((section === 'shares' || section === 'admins') && ['active', 'inactive'].includes(data.filter)) {
     page = fsQueryFilteredPage(config[section][1], 'active', data.filter === 'active', 25, data.cursor || '');
   } else page = fsQueryPage(config[section][1], 25, data.cursor || '');
+  if (['shares', 'admins', 'banned', 'events'].includes(section)) page.items = redactPrivateEmails(actor, page.items);
   if (section === 'users') {
     const flags = fsGetAdminUserFlags(page.items.map(user => user.id));
     page.items = page.items.map(user => ({ ...user, uid: user.id, banned: flags.banned.has(user.id), admin: flags.admins.has(user.id) }));
@@ -503,14 +508,22 @@ function fsQueryDocumentIds(collectionId, ids) {
   if (response.code !== 200) throw new Error('Не удалось получить статусы участников.');
   return JSON.parse(response.text).filter(row => row && row.document).map(row => row.document.name.split('/').pop());
 }
-function redactUserEmails(actor, items) {
+function redactPrivateEmails(actor, items) {
   const canReadEmails = actor.admin.role === 'superadmin' || actor.admin.permissions?.users === true;
-  return canReadEmails ? items : items.map(user => ({ ...user, email: '' }));
+  if (canReadEmails) return items;
+  const redact = value => {
+    if (Array.isArray(value)) return value.map(redact);
+    if (!value || typeof value !== 'object') return value;
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [
+      key, ['email', 'ownerEmail', 'viewerEmail', 'inviteeEmail'].includes(key) ? '' : redact(item)
+    ]));
+  };
+  return items.map(redact);
 }
 function getAdminRelationshipRootsApi(actor, data) {
   requireAdminApi(actor.uid, 'relationships');
   const page = fsQueryFilteredPage('users', 'invitedByUid', null, 25, data.cursor || '');
-  page.items = redactUserEmails(actor, page.items);
+  page.items = redactPrivateEmails(actor, page.items);
   return page;
 }
 function getAdminBranchApi(actor, data) {
@@ -518,7 +531,7 @@ function getAdminBranchApi(actor, data) {
   const uid = String(data.uid || '');
   if (!uid || uid.length > 128) throw new Error('Некорректный UID участника.');
   const page = fsQueryFilteredPage('users', 'invitedByUid', uid, 25, data.cursor || '');
-  page.items = redactUserEmails(actor, page.items);
+  page.items = redactPrivateEmails(actor, page.items);
   return page;
 }
 
@@ -543,12 +556,12 @@ function getAdminUserCardApi(actor, data) {
   const bannedRecord = canReadBanDetails ? fsGet('bannedUsers/' + encodeURIComponent(uid)) : null;
   return {
     user: { ...profile, uid, email: directory?.id ? decodeURIComponent(directory.id) : '' },
-    inviter: inviter ? { ...inviter, uid: profile.invitedByUid, email: canReadEmails ? (inviter.email || '') : '' } : null,
-    invited: invited.map(user => ({ ...user, uid: user.id, email: canReadEmails ? (user.email || '') : '' })),
-    admin: adminRecord ? { ...adminRecord, email: canReadEmails ? (adminRecord.email || '') : '' } : null,
-    banned: bannedRecord ? { ...bannedRecord, email: canReadEmails ? (bannedRecord.email || '') : '' } : null,
-    outgoing: outgoing.filter(share => share.active === true),
-    incoming: incoming.filter(share => share.active === true)
+    inviter: inviter ? redactPrivateEmails(actor, [{ ...inviter, uid: profile.invitedByUid }])[0] : null,
+    invited: redactPrivateEmails(actor, invited.map(user => ({ ...user, uid: user.id }))),
+    admin: adminRecord ? redactPrivateEmails(actor, [adminRecord])[0] : null,
+    banned: bannedRecord ? redactPrivateEmails(actor, [bannedRecord])[0] : null,
+    outgoing: redactPrivateEmails(actor, outgoing.filter(share => share.active === true)),
+    incoming: redactPrivateEmails(actor, incoming.filter(share => share.active === true))
   };
 }
 function getAdminUserHistoryApi(actor, data) {
