@@ -173,7 +173,7 @@ function renderUserCard(uid) {
 async function loadAdminPage(key, cursor = '', shouldRender = true) {
   if (!data?.permissions?.[key]) return;
   let result;
-  if (key === 'relationships') result = await call('getAdminRelationshipRoots')({ cursor });
+  if (key === 'relationships') result = await call('getAdminRelationshipRoots')({ cursor, includeShares: !Array.isArray(data.shares) });
   else result = await call('getAdminCollectionPage')({ section: key, cursor });
   if (result.userProfiles && typeof result.userProfiles === 'object') {
     data.userProfiles = { ...(data.userProfiles || {}), ...result.userProfiles };

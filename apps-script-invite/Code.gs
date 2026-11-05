@@ -754,9 +754,11 @@ function getAdminRelationshipRootsApi(actor, data) {
   requireAdminApi(actor.uid, 'relationships');
   const page = fsQueryPage('users', 25, data.cursor || '');
   page.items = page.items.map(user => visibleUserProfile(actor, user, user.id));
-  page.shares = redactPrivateEmails(actor, fsQueryPage('libraryShares', 100, '').items, 'shares');
+  if (data.includeShares === true) {
+    page.shares = redactPrivateEmails(actor, fsQueryPage('libraryShares', 100, '').items, 'shares');
+  }
   const uids = new Set(adminRelatedUserUids('users', page.items));
-  page.shares.forEach(share => { if (isValidUid(share.ownerUid)) uids.add(share.ownerUid); if (isValidUid(share.viewerUid)) uids.add(share.viewerUid); });
+  (page.shares || []).forEach(share => { if (isValidUid(share.ownerUid)) uids.add(share.ownerUid); if (isValidUid(share.viewerUid)) uids.add(share.viewerUid); });
   page.userProfiles = fsQueryUserProfiles([...uids]);
   return page;
 }

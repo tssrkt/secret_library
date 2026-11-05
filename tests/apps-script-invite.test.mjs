@@ -131,6 +131,26 @@ test('admin startup uses bounded summary and paginated collection APIs, not the 
   assert.doesNotMatch(adminClientSource, /call\('getAdminDashboard'\)/);
 });
 
+test('relationship pages fetch shared-library records only on the initial request', () => {
+  const app = harness();
+  let shareReads = 0;
+  app.context.requireAdminApi = () => ({ uid: 'root', admin: { role: 'superadmin' } });
+  app.context.fsQueryPage = (collectionId) => {
+    if (collectionId === 'libraryShares') {
+      shareReads++;
+      return { items: [{ id: 'share-1', ownerUid: 'owner-uid', viewerUid: 'viewer-uid', active: true }] };
+    }
+    return { items: [{ id: 'user-1', displayName: 'Reader' }], nextCursor: '', hasMore: false };
+  };
+  app.context.fsQueryUserProfiles = () => ({});
+  const actor = { uid: 'root', admin: { role: 'superadmin' } };
+  const first = app.context.getAdminRelationshipRootsApi(actor, { includeShares: true });
+  const next = app.context.getAdminRelationshipRootsApi(actor, { cursor: 'next', includeShares: false });
+  assert.equal(shareReads, 1);
+  assert.equal(first.shares.length, 1);
+  assert.equal(Object.hasOwn(next, 'shares'), false);
+});
+
 test('admin iframe accepts only matching request IDs from allowlisted Apps Script origins', () => {
   assert.match(adminClientSource, /event\.origin === 'https:\/\/script\.google\.com'/);
   assert.match(adminClientSource, /\[a-z0-9-\]\+-script\\\.googleusercontent\\\.com/);
@@ -648,7 +668,7 @@ test('relationship admin page lists all users and resolves names for access-shar
     return { 'owner-uid': { uid: 'owner-uid', displayName: 'Owner' } };
   };
   const actor = { uid: 'mod-uid', admin: { role: 'moderator', permissions: { relationships: true } } };
-  const page = app.context.getAdminRelationshipRootsApi(actor, {});
+  const page = app.context.getAdminRelationshipRootsApi(actor, { includeShares: true });
   assert.equal(page.items[0].uid, 'invitee-uid');
   assert.equal(page.items[0].invitedByUid, 'owner-uid');
   assert.equal(page.shares[0].ownerUid, 'owner-uid');
