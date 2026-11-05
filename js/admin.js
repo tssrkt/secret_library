@@ -53,7 +53,8 @@ function gasRequest(action, payload) {
     const onMessage = event => {
       // Apps Script may post from its nested sandbox frame rather than the outer form iframe.
       // The allowlisted origin and unpredictable requestId authenticate the response.
-      if (event.origin !== 'https://script.google.com' && event.origin !== 'https://script.googleusercontent.com') return;
+      const allowedOrigin = event.origin === 'https://script.google.com' || /^https:\/\/[a-z0-9-]+-script\.googleusercontent\.com$/.test(event.origin);
+      if (!allowedOrigin) return;
       if (event.data?.type !== 'secret-library-admin-result' || event.data?.requestId !== requestId) return;
       cleanup();
       if (event.data.ok) resolve(event.data.result);
