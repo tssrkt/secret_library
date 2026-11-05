@@ -193,11 +193,21 @@ function verifyFirebaseUser(idToken) {
   cache.put(cacheKey, JSON.stringify(cachedUser), 300);
   return cachedUser;
   } finally {
-    if (locked) lock.releaseLock();
+    if (locked) {
+      try { lock.releaseLock(); } catch (_) {}
+    }
   }
 }
 
 function readOwnerDisplayName(idToken, uid) {
+  // Keep the cache scoped to both the UID and the caller's token digest.
+  const cache = CacheService.getScriptCache();
+  const digest = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, idToken, Utilities.Charset.UTF_8);
+  const tokenHash = digest.map(function (chr) { return (chr < 0 ? chr + 256 : chr).toString(16).padStart(2, '0'); }).join('');
+  const cacheKey = 'owner_name_' + tokenHash + '_' + uid;
+  const cachedName = cache.get(cacheKey);
+  if (cachedName) return cachedName;
+
   const path = '/projects/' + FIREBASE_PROJECT_ID +
     '/databases/(default)/documents/users/' + encodeURIComponent(uid);
   const response = UrlFetchApp.fetch('https://firestore.googleapis.com/v1' + path, {
@@ -213,7 +223,9 @@ function readOwnerDisplayName(idToken, uid) {
   if (typeof name !== 'string' || !name.trim()) {
     throw new Error('Сначала завершите регистрацию в Тайной Библиотеке.');
   }
-  return name.trim().slice(0, 160);
+  const result = name.trim().slice(0, 160);
+  cache.put(cacheKey, result, 300);
+  return result;
 }
 
 function readPendingInvitation(idToken, email, uid) {
