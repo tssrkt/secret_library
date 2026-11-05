@@ -1158,7 +1158,17 @@ function fsRequest(method, path, body) {
 function fsFetch(url, method, body) {
   const options = { method: method, headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() }, muteHttpExceptions: true };
   if (body !== undefined) { options.contentType = 'application/json'; options.payload = JSON.stringify(body); }
-  const response = UrlFetchApp.fetch(url, options);
+  const retryableRead = String(method || 'get').toLowerCase() === 'get';
+  const maxAttempts = retryableRead ? 4 : 1;
+  let response;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    response = UrlFetchApp.fetch(url, options);
+    const code = response.getResponseCode();
+    if (!retryableRead || (code !== 429 && code !== 503) || attempt === maxAttempts - 1) break;
+    // Firestore can briefly throttle bursts of document reads. Retry reads only,
+    // with exponential backoff; never automatically replay writes.
+    Utilities.sleep(250 * Math.pow(2, attempt));
+  }
   return { code: response.getResponseCode(), text: response.getContentText() };
 }
 function fsDecodeFields(fields) {
