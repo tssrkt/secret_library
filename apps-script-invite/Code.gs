@@ -95,7 +95,8 @@ function doPost(e) {
     }
     console.error('Invitation mailer failed', {
       stage: stage,
-      name: error && error.name ? String(error.name) : 'UnknownError'
+      name: error && error.name ? String(error.name) : 'UnknownError',
+      message: error && error.message ? String(error.message).slice(0, 500) : 'No error message'
     });
     return adminRequest
       ? adminResponsePage(requestId, false, publicAdminError(error), null)
