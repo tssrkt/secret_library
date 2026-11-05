@@ -435,9 +435,12 @@ function handleAdminRequest(input) {
   if (action === 'bootstrapAdmin') {
     const bootstrapEmail = getBootstrapAdminEmail();
     if (!bootstrapEmail || normalizeEmail(user.email) !== bootstrapEmail) throw new Error('Первоначальная настройка доступна только владельцу проекта.');
-    if (fsGet('bannedUsers/' + user.localId)) throw new Error('Доступ к Тайной Библиотеке заблокирован.');
+    const current = getAdminRecordCached(user.localId);
+    if (current?.role === 'superadmin' && current.active === true) {
+      fsSet('users/' + user.localId, { isAdmin: true });
+      return { ok: true, alreadyAdmin: true };
+    }
     const admins = fsList('adminUsers');
-    const current = fsGet('adminUsers/' + user.localId);
     // Do not mistake the presence of moderators for an existing superadmin.
     // This lets the configured bootstrap account recover if the superadmin record
     // was lost, while still refusing to create a second superadmin.
@@ -480,7 +483,7 @@ function handleAdminRequest(input) {
 
 function requireAdminApi(uid, permission) {
   // Admin access is determined by the admin record, not the user ban list.
-  const admin = fsGet('adminUsers/' + uid);
+  const admin = getAdminRecordCached(uid);
   if (!admin || admin.active !== true) throw new Error('Нет прав администратора.');
   if (admin.role !== 'superadmin' && permission && admin.permissions?.[permission] !== true) {
     throw new Error('Недостаточно прав для этого действия.');
@@ -1082,6 +1085,24 @@ function fsGet(path) {
   const response = fsRequest('get', path);
   return response ? { ...fsDecodeFields(response.fields || {}), id: response.name.split('/').pop() } : null;
 }
+function getAdminRecordCached(uid) {
+  const cache = CacheService.getScriptCache();
+  const key = 'admin_record_' + uid;
+  const cached = cache.get(key);
+  if (cached) return JSON.parse(cached);
+  // Coalesce simultaneous admin requests so they don't all read the same record.
+  const lock = LockService.getScriptLock();
+  lock.waitLock(5000);
+  try {
+    const cachedAfterLock = cache.get(key);
+    if (cachedAfterLock) return JSON.parse(cachedAfterLock);
+    const admin = fsGet('adminUsers/' + uid);
+    if (admin) cache.put(key, JSON.stringify(admin), 10);
+    return admin;
+  } finally {
+    lock.releaseLock();
+  }
+}
 function fsList(path) {
   const out = [];
   let token = '';
@@ -1129,10 +1150,12 @@ function fsSet(path, values) {
   const mask = Object.keys(fields).map(key => 'updateMask.fieldPaths=' + encodeURIComponent(key)).join('&');
   const response = fsFetch(FIRESTORE_REST_ROOT + path + '?' + mask, 'patch', { fields: fields });
   if (response.code < 200 || response.code >= 300) throw new Error('Не удалось сохранить данные Firebase (HTTP ' + response.code + ').' + (response.code === 403 ? ' Проверьте роль Cloud Datastore User (roles/datastore.user) у аккаунта, который развёртывает Apps Script.' : ''));
+  if (String(path).indexOf('adminUsers/') === 0) CacheService.getScriptCache().remove('admin_record_' + String(path).slice('adminUsers/'.length));
 }
 function fsDelete(path) {
   const response = fsFetch(FIRESTORE_REST_ROOT + path, 'delete');
   if (response.code !== 200 && response.code !== 204 && response.code !== 404) throw new Error('Не удалось удалить запись Firebase.');
+  if (String(path).indexOf('adminUsers/') === 0) CacheService.getScriptCache().remove('admin_record_' + String(path).slice('adminUsers/'.length));
 }
 function fsAddEvent(actorUid, action, targetUid, details) {
   const id = Utilities.getUuid();
