@@ -31,7 +31,7 @@ export function createSocialStore({ db, sdk, user }) {
       }
       const safe = { displayName: (user.displayName || 'Пользователь').slice(0, 160), photoURL: (user.photoURL || '').slice(0, 2048) };
       if (!own) tx.set(profileRef, { ...safe, createdAt: serverTimestamp(), invitedByUid: uid === founderUid ? null : first.firstOwnerUid });
-      else tx.update(profileRef, safe);
+      else tx.set(profileRef, { ...safe, createdAt: own.createdAt, invitedByUid: own.invitedByUid, ...(typeof own.isAdmin === 'boolean' ? { isAdmin: own.isAdmin } : {}) });
       if (!existing) tx.set(directory, { uid });
     });
     // The founder UID is fixed in the security model; no email-directory lookup is needed.

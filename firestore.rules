@@ -87,7 +87,12 @@ service cloud.firestore {
             && request.resource.data.invitedByUid is string
             && request.resource.data.invitedByUid == get(/databases/$(database)/documents/pendingInvites/$(email())).data.firstOwnerUid));
       allow update: if own(uid) && shape()
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['displayName', 'photoURL']);
+        && (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['displayName', 'photoURL'])
+          || (request.resource.data.createdAt == resource.data.createdAt
+            && request.resource.data.invitedByUid == resource.data.invitedByUid
+            && (('isAdmin' in resource.data && 'isAdmin' in request.resource.data
+                && request.resource.data.isAdmin == resource.data.isAdmin)
+              || (!('isAdmin' in resource.data) && !('isAdmin' in request.resource.data)))));
       match /knownContacts/{otherUid} {
         allow read, delete: if own(uid);
         allow create, update: if own(uid) && request.resource.data.keys().hasOnly(['email'])

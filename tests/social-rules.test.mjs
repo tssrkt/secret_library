@@ -172,6 +172,24 @@ test('legacy profiles containing private fields cannot be read by other particip
     'the account owner retains access to their own profile');
 });
 
+test('legacy profile owner can safely remove private fields so friends regain profile access', async () => {
+  const anna = client('legacy-reader'); const boris = client('legacy-profile');
+  await register(anna); await register(boris);
+  await env.withSecurityRulesDisabled(async (context) => {
+    await sdk.setDoc(sdk.doc(context.firestore(), 'users/legacy-profile'), {
+      displayName: 'Boris', photoURL: '', createdAt: sdk.Timestamp.fromMillis(1000),
+      invitedByUid: FOUNDER_UID, isAdmin: false, email: 'private@example.com', legacySecret: 'must be removed',
+    });
+  });
+  await assertFails(sdk.getDoc(sdk.doc(anna.db, 'users/legacy-profile')));
+  await boris.store.register();
+  const safe = await get(anna.db, 'users/legacy-profile');
+  assert.equal(safe.displayName, boris.user.displayName);
+  assert.equal(safe.invitedByUid, FOUNDER_UID);
+  assert.equal(safe.isAdmin, false);
+  assert.equal('email' in safe, false);
+  assert.equal('legacySecret' in safe, false);
+});
 test('only the fixed founder may create a profile without an invitation', async () => {
   const founder = client(FOUNDER_UID, FOUNDER_EMAIL);
   await founder.store.register();

@@ -542,7 +542,38 @@ function getAdminCollectionPageApi(actor, data) {
     const emailByUid = new Map(fsQueryEmailDirectory(uids).map(item => [item.uid, item.id]));
     page.items = page.items.map(user => ({ ...sanitizeRelationshipProfile(user), uid: user.id, email: emailByUid.get(user.id) || '', banned: flags.banned.has(user.id), admin: flags.admins.has(user.id) }));
   }
+  page.userProfiles = fsQueryUserProfiles(adminRelatedUserUids(section, page.items));
   return page;
+}
+function adminRelatedUserUids(section, items) {
+  const uids = new Set();
+  const add = value => { if (isValidUid(value)) uids.add(value); };
+  items.forEach(item => {
+    if (section === 'users') { add(item.uid || item.id); add(item.invitedByUid); }
+    else if (section === 'invites') { add(item.ownerUid); add(item.claimedUid); }
+    else if (section === 'shares') { add(item.ownerUid); add(item.viewerUid); }
+    else if (section === 'events') { add(item.actorUid); add(item.targetUid); }
+    else if (section === 'banned') { add(item.uid || item.id); add(item.bannedBy); }
+    else if (section === 'admins') { add(item.uid || item.id); add(item.createdBy); add(item.updatedBy); }
+  });
+  return [...uids];
+}
+function fsQueryUserProfiles(uids) {
+  const result = {};
+  const unique = [...new Set((uids || []).filter(isValidUid))].slice(0, 150);
+  for (let offset = 0; offset < unique.length; offset += 30) {
+    const batch = unique.slice(offset, offset + 30);
+    const values = batch.map(uid => ({ referenceValue: 'projects/' + FIREBASE_PROJECT_ID + '/databases/(default)/documents/users/' + uid }));
+    const response = fsFetch(FIRESTORE_REST_ROOT.slice(0, -1) + ':runQuery', 'post', {
+      structuredQuery: { from: [{ collectionId: 'users' }], where: { fieldFilter: { field: { fieldPath: '__name__' }, op: 'IN', value: { arrayValue: { values } } } }, limit: values.length }
+    });
+    if (response.code !== 200) throw new Error('Не удалось получить имена участников Firebase (HTTP ' + response.code + ').' + (response.code === 403 ? ' Проверьте роль Cloud Datastore User (roles/datastore.user) у аккаунта, который развёртывает Apps Script.' : ''));
+    JSON.parse(response.text).filter(row => row && row.document).forEach(row => {
+      const uid = row.document.name.split('/').pop();
+      result[uid] = { ...sanitizeRelationshipProfile(fsDecodeFields(row.document.fields || {})), uid };
+    });
+  }
+  return result;
 }
 
 function fsGetAdminUserFlags(uids) {
@@ -658,8 +689,12 @@ function redactPrivateEmails(actor, items, section) {
 }
 function getAdminRelationshipRootsApi(actor, data) {
   requireAdminApi(actor.uid, 'relationships');
-  const page = fsQueryFilteredPage('users', 'invitedByUid', null, 25, data.cursor || '');
+  const page = fsQueryPage('users', 25, data.cursor || '');
   page.items = page.items.map(user => visibleUserProfile(actor, user, user.id));
+  page.shares = redactPrivateEmails(actor, fsQueryPage('libraryShares', 100, '').items, 'shares');
+  const uids = new Set(adminRelatedUserUids('users', page.items));
+  page.shares.forEach(share => { if (isValidUid(share.ownerUid)) uids.add(share.ownerUid); if (isValidUid(share.viewerUid)) uids.add(share.viewerUid); });
+  page.userProfiles = fsQueryUserProfiles([...uids]);
   return page;
 }
 function getAdminBranchApi(actor, data) {
@@ -1044,7 +1079,7 @@ function fsSet(path, values) {
   const fields = fsEncodeFields(values);
   const mask = Object.keys(fields).map(key => 'updateMask.fieldPaths=' + encodeURIComponent(key)).join('&');
   const response = fsFetch(FIRESTORE_REST_ROOT + path + '?' + mask, 'patch', { fields: fields });
-  if (response.code < 200 || response.code >= 300) throw new Error('Не удалось сохранить данные Firebase (' + response.code + ').');
+  if (response.code < 200 || response.code >= 300) throw new Error('Не удалось сохранить данные Firebase (HTTP ' + response.code + ').' + (response.code === 403 ? ' Проверьте роль Cloud Datastore User (roles/datastore.user) у аккаунта, который развёртывает Apps Script.' : ''));
 }
 function fsDelete(path) {
   const response = fsFetch(FIRESTORE_REST_ROOT + path, 'delete');
@@ -1099,7 +1134,7 @@ function fsEncodeValue(value) {
 }
 function publicAdminError(error) {
   const message = error && error.message ? String(error.message) : '';
-  if (/^(Сеанс Google|Для отправки приглашений|Нет прав администратора|Доступ к Тайной Библиотеке|Главный администратор|Первоначальная настройка|Учётная запись администратора|Недостаточно прав|Не назначены права|Некорректные права|Нельзя менять права|Нельзя назначить администратора|Участник не найден|Нельзя заблокировать|Главного администратора|Не указан участник|Приглашение не найдено|Приглашение уже принято|Некорректное приглашение|Некорректный доступ|Связь доступа не найдена)/.test(message)) return message;
+  if (/^(Сеанс Google|Для отправки приглашений|Нет прав администратора|Доступ к Тайной Библиотеке|Главный администратор|Первоначальная настройка|Учётная запись администратора|Недостаточно прав|Не назначены права|Некорректные права|Нельзя менять права|Нельзя назначить администратора|Участник не найден|Нельзя заблокировать|Главного администратора|Не указан участник|Приглашение не найдено|Приглашение уже принято|Некорректное приглашение|Некорректный доступ|Связь доступа не найдена|Не удалось сохранить данные Firebase|Не удалось получить имена участников Firebase)/i.test(message)) return message;
   return 'Административная операция не выполнена. Проверьте разрешения Apps Script и доступ к Firebase.';
 }
 
