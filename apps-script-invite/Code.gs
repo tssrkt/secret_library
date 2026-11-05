@@ -1220,9 +1220,13 @@ function setAdminPermissionsApi(actor, data) {
       Object.keys(permissions).some(k => !ADMIN_SECTIONS_API.includes(k) || typeof permissions[k] !== 'boolean')) {
     throw new Error('Некорректные права администратора.');
   }
-  if (fsGet('bannedUsers/' + uid)) throw new Error('Нельзя назначить администратора заблокированному участнику.');
-  if (!fsGet('users/' + uid)) throw new Error('Участник не найден.');
-  const old = fsGet('adminUsers/' + uid);
+  const [banned, profile, old] = fsGetMany([
+    'bannedUsers/' + uid,
+    'users/' + uid,
+    'adminUsers/' + uid
+  ]);
+  if (banned) throw new Error('Нельзя назначить администратора заблокированному участнику.');
+  if (!profile) throw new Error('Участник не найден.');
   if (old?.role === 'superadmin') throw new Error('Нельзя менять права главного администратора.');
   const active = data.active !== false;
   fsSet('adminUsers/' + uid, {

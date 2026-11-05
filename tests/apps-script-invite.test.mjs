@@ -792,6 +792,7 @@ function adminHarness({ permissions = {}, active = true, banned = false, role = 
   ]);
   if (banned) records.set('bannedUsers/mod-uid', { uid: 'mod-uid' });
   app.context.fsGet = (path) => records.get(path) || null;
+  app.context.fsGetMany = paths => paths.map(path => app.context.fsGet(path));
   app.context.fsSet = (path, value) => { writes.push({ path, value }); records.set(path, { ...(records.get(path) || {}), ...value }); };
   app.context.fsDelete = (path) => { writes.push({ path, delete: true }); records.delete(path); };
   app.context.fsAddEvent = (...args) => writes.push({ event: args });
