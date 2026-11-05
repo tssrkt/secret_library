@@ -892,19 +892,20 @@ function getAdminUserCardApi(actor, data) {
     ? relatedPaths.push('adminUsers/' + encodeURIComponent(uid)) - 1 : -1;
   const bannedPathIndex = canReadBanDetails
     ? relatedPaths.push('bannedUsers/' + encodeURIComponent(uid)) - 1 : -1;
-  const relatedRecords = fsGetMany(relatedPaths);
-  const inviter = inviterPathIndex >= 0 ? relatedRecords[inviterPathIndex] : null;
-  const adminRecord = adminPathIndex >= 0 ? relatedRecords[adminPathIndex] : null;
-  const bannedRecord = bannedPathIndex >= 0 ? relatedRecords[bannedPathIndex] : null;
   const groupSpecs = [];
   if (canReadEmails) groupSpecs.push({ collectionId: 'userDirectory', field: 'uid', value: uid, limit: 1 });
   const outgoingIndex = groupSpecs.push({ collectionId: 'libraryShares', field: 'ownerUid', value: uid, limit: 100 }) - 1;
   const incomingIndex = groupSpecs.push({ collectionId: 'libraryShares', field: 'viewerUid', value: uid, limit: 100 }) - 1;
+  const invitedIndex = groupSpecs.push({ collectionId: 'users', field: 'invitedByUid', value: uid, limit: 100, allDescendants: false }) - 1;
+  const relatedRecords = fsGetMany(relatedPaths);
   const groupRows = fsQueryGroupByFieldMany(groupSpecs);
+  const inviter = inviterPathIndex >= 0 ? relatedRecords[inviterPathIndex] : null;
+  const adminRecord = adminPathIndex >= 0 ? relatedRecords[adminPathIndex] : null;
+  const bannedRecord = bannedPathIndex >= 0 ? relatedRecords[bannedPathIndex] : null;
   const directory = canReadEmails ? groupRows[0][0] : null;
   const outgoing = groupRows[outgoingIndex];
   const incoming = groupRows[incomingIndex];
-  const invited = fsQueryFilteredPage('users', 'invitedByUid', uid, 100, '').items;
+  const invited = groupRows[invitedIndex];
   return {
     user: { ...visibleUserProfile(current, profile, uid), email: directory?.id ? decodeURIComponent(directory.id) : '' },
     inviter: inviter ? visibleUserProfile(current, inviter, profile.invitedByUid) : null,
@@ -1068,13 +1069,15 @@ function fsQueryGroupByField(collectionId, field, value, limit, nestedOnly) {
 function fsQueryGroupByFieldMany(specs) {
   if (!Array.isArray(specs) || !specs.length) return [];
   if (specs.length === 1 || typeof UrlFetchApp.fetchAll !== 'function') {
-    return specs.map(spec => fsQueryGroupByField(spec.collectionId, spec.field, spec.value, spec.limit, spec.nestedOnly));
+    return specs.map(spec => spec.allDescendants === false
+      ? fsQueryFilteredPage(spec.collectionId, spec.field, spec.value, spec.limit, '').items
+      : fsQueryGroupByField(spec.collectionId, spec.field, spec.value, spec.limit, spec.nestedOnly));
   }
   const url = FIRESTORE_REST_ROOT.slice(0, -1) + ':runQuery';
   const requests = specs.map(spec => ({
     url, method: 'post', headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() }, muteHttpExceptions: true, contentType: 'application/json',
     payload: JSON.stringify({ structuredQuery: {
-      from: [{ collectionId: spec.collectionId, allDescendants: true }],
+      from: [{ collectionId: spec.collectionId, ...(spec.allDescendants === false ? {} : { allDescendants: true }) }],
       where: { fieldFilter: { field: { fieldPath: spec.field }, op: 'EQUAL', value: { stringValue: String(spec.value) } } },
       limit: Math.min(100, Number(spec.limit) || 100)
     } })
