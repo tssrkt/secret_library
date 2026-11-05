@@ -28,7 +28,8 @@ function harness({ authUser, pendingFields, pendingStatus = 200, profileStatus =
     HtmlService: {
       XFrameOptionsMode: { ALLOWALL: 'ALLOWALL' },
       createHtmlOutput(content) {
-        return { content, setXFrameOptionsMode() { return this; } };
+        const renderedContent = content.replace(/\\u([0-9a-f]{4})/gi, (_match, hex) => String.fromCharCode(parseInt(hex, 16)));
+        return { content: renderedContent, setXFrameOptionsMode() { return this; } };
       }
     },
     UrlFetchApp: {
@@ -70,6 +71,8 @@ function harness({ authUser, pendingFields, pendingStatus = 200, profileStatus =
   vm.createContext(context);
   vm.runInContext(source, context);
   context.fsGet = () => null;
+  context.realFsListInviteShares = context.fsListInviteShares;
+  context.fsListInviteShares = () => [];
   const payload = {
     requestId: 'request_1234567890',
     email: 'friend@gmail.com',
@@ -108,6 +111,7 @@ test('admin event history uses a bounded server-side Firestore page', () => {
 
 test('invitation dashboard reads nested shares with one collection-group query', () => {
   const app = harness();
+  app.context.fsListInviteShares = app.context.realFsListInviteShares;
   let request;
   app.context.fsFetch = (url, method, body) => {
     request = { url, method, body };
@@ -319,13 +323,14 @@ test('admin cursor rejects a cursor belonging to another collection', () => {
 });
 test('sends only after Firebase identity and owner-scoped Firestore reads are valid', () => {
   const app = harness();
+  app.context.fsListInviteShares = () => [{ ownerUid: 'owner-uid' }];
   const result = app.invoke();
   assert.equal(app.sent.length, 1);
   assert.equal(app.sent[0].to, 'friend@gmail.com');
   assert.equal(app.sent[0].subject, 'Приглашение в «Тайную Библиотеку»');
   assert.match(app.sent[0].body, /Ада приглашает/);
   assert.match(result.content, /secret-library-invite-result/);
-  assert.match(result.content, /Запрос обработан/);
+  assert.match(result.content, /Приглашение отправлено \(1 из 20\)/);
   assert(app.calls.some((call) => call.url.includes('accounts:lookup')));
   assert(app.calls.some((call) => call.options.headers?.Authorization === 'Bearer ' + app.payload.idToken));
   assert.equal(app.calls.length, 3, 'Firebase account, owner profile and owner-scoped invitation are checked; directory lookup stays server-side');
@@ -375,13 +380,14 @@ test('repeated delivery is blocked for one hour instead of sending a duplicate',
 
 test('resends the same pending invitation after one hour', () => {
   const app = harness();
+  app.context.fsListInviteShares = () => [{ ownerUid: 'owner-uid' }];
   app.invoke();
   const key = [...app.properties.keys()].find((name) => name.startsWith('invite:'));
   const oldTime = Date.now() - 60 * 60 * 1000 - 1000;
   app.properties.set(key, JSON.stringify({ status: 'sent', at: oldTime, lastSentAt: oldTime }));
   const result = app.invoke();
   assert.equal(app.sent.length, 2);
-  assert.match(result.content, /Запрос обработан/);
+  assert.match(result.content, /Приглашение отправлено \(1 из 20\)/);
 });
 
 test('invitation status endpoint returns the persisted cooldown timestamp for the owner only', () => {
@@ -538,4 +544,50 @@ test('superadmin bootstrap provisions only the configured public project email',
 
   const wrong = harness({ authUser: { ...adminUser, email: 'other@gmail.com' } });
   assert.throws(() => wrong.context.handleAdminRequest({ idToken: 'firebase-id-token-'.padEnd(500, 'x'), action: 'bootstrapAdmin' }), /Первоначальная настройка доступна только владельцу проекта/);
+});
+
+
+test('unique invitation limit defaults to 20 and permits an existing recipient at the limit', () => {
+  const app = harness();
+  assert.equal(app.context.getInvitationLimit(), 20);
+  app.context.fsGet = () => null;
+  app.context.fsListInviteShares = () => Array.from({ length: 20 }, (_, i) => ({ ownerUid: 'owner-uid', email: `friend-${i}@gmail.com` }));
+  assert.doesNotThrow(() => app.context.enforceUniqueInvitationLimit('owner-uid', 'friend-0@gmail.com', {}));
+});
+
+test('unique invitation limit blocks a new recipient beyond the limit', () => {
+  const app = harness();
+  app.context.fsGet = () => null;
+  app.context.fsListInviteShares = () => Array.from({ length: 21 }, (_, i) => ({ ownerUid: 'owner-uid', email: `friend-${i}@gmail.com` }));
+  assert.throws(() => app.context.enforceUniqueInvitationLimit('owner-uid', 'friend-20@gmail.com', {}), /Ваш лимит на приглашения исчерпан/);
+});
+
+test('repeated invitation to a previously sent recipient remains allowed beyond the limit', () => {
+  const app = harness();
+  app.context.fsGet = () => null;
+  app.context.fsListInviteShares = () => Array.from({ length: 21 }, (_, i) => ({ ownerUid: 'owner-uid', email: `friend-${i}@gmail.com` }));
+  assert.doesNotThrow(() => app.context.enforceUniqueInvitationLimit('owner-uid', 'friend-0@gmail.com', {
+    emailStatus: 'sent'
+  }));
+});
+
+test('active administrators are exempt from the unique invitation limit', () => {
+  const app = harness();
+  app.context.fsGet = (path) => path === 'adminUsers/owner-uid' ? { active: true, role: 'admin' } : null;
+  app.context.fsListInviteShares = () => Array.from({ length: 100 }, (_, i) => ({ ownerUid: 'owner-uid', email: `friend-${i}@gmail.com` }));
+  assert.doesNotThrow(() => app.context.enforceUniqueInvitationLimit('owner-uid', 'friend-100@gmail.com', {}));
+});
+
+test('invitation limit setting validates and persists an integer', () => {
+  const app = harness();
+  const writes = [];
+  app.context.requireAdminApi = () => ({ uid: 'admin-uid', admin: { active: true } });
+  app.context.fsSet = (path, values) => writes.push({ path, values });
+  app.context.fsAddEvent = () => {};
+  assert.equal(app.context.setInvitationLimitApi({ uid: 'admin-uid' }, { limit: 35 }).limit, 35);
+  assert.equal(writes[0].path, 'systemSettings/invitationLimit');
+  assert.equal(writes[0].values.limit, 35);
+  assert.throws(() => app.context.setInvitationLimitApi({ uid: 'admin-uid' }, { limit: 1.5 }), /целым числом/);
+  assert.throws(() => app.context.setInvitationLimitApi({ uid: 'admin-uid' }, { limit: -1 }), /целым числом/);
+  assert.throws(() => app.context.setInvitationLimitApi({ uid: 'admin-uid' }, { limit: '' }), /целым числом/);
 });

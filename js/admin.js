@@ -303,6 +303,28 @@ function renderRelations() {
   content.append(paginatedTable(['Владелец библиотеки','Пользователь','Доступ'],shareRows,25,[],shareRowClasses));
 }
 function renderInvites() {
+  const settings = node('section', null, 'panel');
+  settings.append(node('h2', 'Лимит приглашений'));
+  settings.append(node('p', 'Максимальное число разных людей, которых может пригласить один участник. Повторные приглашения одному человеку не учитываются. На администраторов лимит не распространяется. Значение 0 запрещает приглашать новых людей.'));
+  const fieldLabel = node('label', 'Количество получателей');
+  fieldLabel.style.display = 'block';
+  const field = node('input');
+  field.type = 'number'; field.min = '0'; field.max = '100000'; field.step = '1'; field.required = true;
+  field.value = String(Number.isInteger(data.invitationLimit) ? data.invitationLimit : 20);
+  field.style.maxWidth = '180px'; field.style.display = 'block'; field.style.marginTop = '6px';
+  fieldLabel.append(field);
+  settings.append(fieldLabel);
+  settings.append(button('Сохранить лимит', async () => {
+    const limit = Number(field.value);
+    if (!field.value.trim() || !Number.isInteger(limit) || limit < 0 || limit > 100000) { say('Укажите целое число от 0 до 100000.', true); return; }
+    try {
+      const result = await call('setInvitationLimit')({ limit });
+      data.invitationLimit = result.limit;
+      field.value = String(result.limit);
+      say('Лимит приглашений сохранён.');
+    } catch (error) { say(error?.message || 'Не удалось сохранить лимит.', true); }
+  }, 'primary'));
+  content.append(settings);
   const invitations = data.invitations || [];
   const rows = invitations.map(i=>[
     i.email,userLink((data.users||[]).find(u=>u.uid===i.ownerUid)||{uid:i.ownerUid},i.ownerUid),i.claimedUid ? userLink((data.users||[]).find(u=>u.uid===i.claimedUid)||{uid:i.claimedUid},i.claimedUid) : 'Не принято',invitationEmailStatus(i),dateLabel(i.createdAt),

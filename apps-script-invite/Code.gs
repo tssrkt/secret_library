@@ -55,6 +55,8 @@ function doPost(e) {
     if (invitation.claimedUid) {
       return responsePage(requestId, true, 'Запрос обработан. Если получателю нужно приглашение, письмо отправлено.');
     }
+    stage = 'check-unique-invitation-limit';
+    enforceUniqueInvitationLimit(user.localId, email, invitation);
     stage = 'reserve-send';
     reservation = reserveSend(user.localId, email, invitation.emailSentAt || (invitation.emailStatus === 'sent' ? invitation.createdAt : null));
     if (reservation.status === 'cooldown' || reservation.status === 'sending') {
@@ -75,7 +77,7 @@ function doPost(e) {
     stage = 'mark-sent';
     finishSend(user.localId, email, true, reservation.reservationId);
     reservation = null;
-    return responsePage(requestId, true, 'Запрос обработан. Если получателю нужно приглашение, письмо отправлено.');
+    return responsePage(requestId, true, invitationSuccessMessage(user.localId));
   } catch (error) {
     if (reservation && reservation.status === 'reserved' && !emailSent) {
       try { finishSend(reservation.uid, reservation.email, false, reservation.reservationId); } catch (_) {}
@@ -198,6 +200,28 @@ function reservationKey(uid, email) {
   }).join('');
 }
 
+function invitationSuccessMessage(uid) {
+  const admin = fsGet('adminUsers/' + uid);
+  if (admin && admin.active === true) return 'Приглашение отправлено.';
+  const count = fsListInviteShares().filter(item => item.ownerUid === uid).length;
+  return 'Приглашение отправлено (' + count + ' из ' + getInvitationLimit() + ').';
+}
+
+function enforceUniqueInvitationLimit(uid, email, invitation) {
+  const admin = fsGet('adminUsers/' + uid);
+  if (admin && admin.active === true) return;
+
+  const limit = getInvitationLimit();
+  const count = fsListInviteShares().filter(item => item.ownerUid === uid).length;
+  const current = JSON.parse(PropertiesService.getScriptProperties().getProperty(reservationKey(uid, email)) || 'null');
+  const previouslySent = Boolean(invitation.emailSentAt || invitation.emailStatus === 'sent' || current?.status === 'sent');
+  // The pending share is created before this endpoint is called, so the current
+  // recipient is included in the count. Previously sent recipients remain eligible for retries.
+  if (count > limit && !previouslySent) {
+    throw new Error('Ваш лимит на приглашения исчерпан.');
+  }
+}
+
 function reserveSend(uid, email, firestoreSentAt) {
   const lock = LockService.getScriptLock();
   lock.waitLock(10000);
@@ -275,7 +299,8 @@ function finishSend(uid, email, success, reservationId) {
 
 function publicError(error) {
   const message = error && error.message ? String(error.message) : '';
-  if (message.indexOf('Достигнут бесплатный дневной лимит') === 0 ||
+  if (message.indexOf('Ваш лимит на приглашения исчерпан') === 0 ||
+      message.indexOf('Достигнут бесплатный дневной лимит') === 0 ||
       message.indexOf('Достигнут дневной лимит') === 0 ||
       message.indexOf('Сеанс Google') === 0 ||
       message.indexOf('Для отправки приглашений') === 0 ||
@@ -294,7 +319,9 @@ function responsePage(requestId, ok, message, data) {
     ok: ok,
     message: message,
     data: data === undefined ? null : data
-  }).replace(/</g, '\\u003c');
+  }).replace(/</g, '\\u003c').replace(/[^\x00-\x7F]/g, function (character) {
+    return '\\u' + character.charCodeAt(0).toString(16).padStart(4, '0');
+  });
   const html = '<!doctype html><html><head><meta charset="utf-8"></head><body>' +
     '<p>Операция завершена. Вернитесь в Тайную Библиотеку.</p>' +
     '<script>window.top.postMessage(' + result + ', ' + JSON.stringify(SITE_ORIGIN) + ');</script>' +
@@ -343,6 +370,7 @@ function handleAdminRequest(input) {
     case 'getAdminUserHistory': return getAdminUserHistoryApi(actor, data);
     case 'getAdminUserCard': return getAdminUserCardApi(actor, data);
     case 'setInvitationEmailTemplate': return setInvitationEmailTemplateApi(actor, data);
+    case 'setInvitationLimit': return setInvitationLimitApi(actor, data);
     case 'setAdminPermissions': return setAdminPermissionsApi(actor, data);
     case 'banLibraryUser': return banLibraryUserApi(actor, data);
     case 'restoreLibraryUser': return restoreLibraryUserApi(actor, data);
@@ -391,7 +419,8 @@ function getAdminDashboardApi(actor) {
     admins: p.admins ? admins : [],
     banned: p.banned ? banned : [],
     events: p.events ? events : [],
-    invitationEmailTemplate: p.texts ? getInvitationEmailTemplate() : null
+    invitationEmailTemplate: p.texts ? getInvitationEmailTemplate() : null,
+    invitationLimit: p.invites ? getInvitationLimit() : null
   };
 }
 
@@ -408,7 +437,7 @@ function getAdminDashboardSummaryApi(actor) {
     banned: p.banned ? fsCount('bannedUsers') : null
   };
   const superadminUid = fsFindSuperAdminUid();
-  return { permissions: p, counts, superAdminUid: superadminUid, invitationEmailTemplate: p.texts ? getInvitationEmailTemplate() : null };
+  return { permissions: p, counts, superAdminUid: superadminUid, invitationEmailTemplate: p.texts ? getInvitationEmailTemplate() : null, invitationLimit: p.invites ? getInvitationLimit() : null };
 }
 
 function fsFindSuperAdminUid() {
@@ -673,6 +702,24 @@ function getInvitationEmailTemplate() {
 
 function renderInvitationEmailTemplate(inviterName) {
   return getInvitationEmailTemplate().replace(/\{\{\s*inviterName\s*\}\}/g, inviterName);
+}
+
+function getInvitationLimit() {
+  const settings = fsGet('systemSettings/invitationLimit');
+  const value = Number(settings?.limit);
+  return Number.isInteger(value) && value >= 0 && value <= 100000 ? value : 20;
+}
+
+function setInvitationLimitApi(actor, data) {
+  requireAdminApi(actor.uid, 'invites');
+  const rawLimit = data.limit;
+  const value = typeof rawLimit === 'number' ? rawLimit : Number(String(rawLimit ?? '').trim());
+  if ((typeof rawLimit !== 'number' && String(rawLimit ?? '').trim() === '') || !Number.isInteger(value) || value < 0 || value > 100000) {
+    throw new Error('Лимит должен быть целым числом от 0 до 100000.');
+  }
+  fsSet('systemSettings/invitationLimit', { limit: value, updatedAt: new Date(), updatedBy: actor.uid });
+  fsAddEvent(actor.uid, 'update-invitation-limit', null, { limit: value });
+  return { ok: true, limit: value };
 }
 
 function setInvitationEmailTemplateApi(actor, data) {
