@@ -174,6 +174,32 @@ test('admin page requests reuse profiles already loaded by the client', () => {
   assert.equal(profiles['viewer-uid'].displayName, 'Reader');
 });
 
+test('admin related profiles fetch multiple Firestore batches concurrently', () => {
+  const app = harness();
+  let requests = [];
+  app.context.ScriptApp = { getOAuthToken: () => 'test-token' };
+  app.context.UrlFetchApp.fetchAll = batch => {
+    requests = batch;
+    return batch.map(request => {
+      const payload = JSON.parse(request.payload);
+      const refs = payload.structuredQuery.where.fieldFilter.value.arrayValue.values;
+      return {
+        getResponseCode: () => 200,
+        getContentText: () => JSON.stringify(refs.map(ref => ({ document: {
+          name: ref.referenceValue,
+          fields: { displayName: { stringValue: ref.referenceValue.split('/').pop() } }
+        } })))
+      };
+    });
+  };
+  const uids = Array.from({ length: 61 }, (_, index) => `profile-${index}`);
+  const profiles = app.context.fsQueryUserProfiles(uids);
+  assert.equal(requests.length, 3);
+  assert.ok(requests.every(request => request.method === 'post' && request.headers.Authorization === 'Bearer test-token'));
+  assert.equal(Object.keys(profiles).length, 61);
+  assert.equal(profiles['profile-60'].displayName, 'profile-60');
+});
+
 test('relationship pages fetch shared-library records only on the initial request', () => {
   const app = harness();
   let shareReads = 0;

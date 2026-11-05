@@ -657,18 +657,32 @@ function fsQueryUserProfiles(uids, knownUids) {
   const result = {};
   const known = new Set((Array.isArray(knownUids) ? knownUids : []).filter(isValidUid).slice(0, 300));
   const unique = [...new Set((uids || []).filter(isValidUid))].filter(uid => !known.has(uid)).slice(0, 150);
+  const batches = [];
   for (let offset = 0; offset < unique.length; offset += 30) {
     const batch = unique.slice(offset, offset + 30);
     const values = batch.map(uid => ({ referenceValue: 'projects/' + FIREBASE_PROJECT_ID + '/databases/(default)/documents/users/' + uid }));
-    const response = fsFetch(FIRESTORE_REST_ROOT.slice(0, -1) + ':runQuery', 'post', {
+    batches.push({
       structuredQuery: { from: [{ collectionId: 'users' }], where: { fieldFilter: { field: { fieldPath: '__name__' }, op: 'IN', value: { arrayValue: { values } } } }, limit: values.length }
     });
+  }
+  const url = FIRESTORE_REST_ROOT.slice(0, -1) + ':runQuery';
+  const responses = batches.length > 1 && typeof UrlFetchApp.fetchAll === 'function'
+    ? UrlFetchApp.fetchAll(batches.map(body => ({
+        url,
+        method: 'post',
+        headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() },
+        muteHttpExceptions: true,
+        contentType: 'application/json',
+        payload: JSON.stringify(body)
+      }))).map(response => ({ code: response.getResponseCode(), text: response.getContentText() }))
+    : batches.map(body => fsFetch(url, 'post', body));
+  responses.forEach(response => {
     if (response.code !== 200) throw new Error('Не удалось получить имена участников Firebase (HTTP ' + response.code + ').' + (response.code === 403 ? ' Проверьте роль Cloud Datastore User (roles/datastore.user) у аккаунта, который развёртывает Apps Script.' : ''));
     JSON.parse(response.text).filter(row => row && row.document).forEach(row => {
       const uid = row.document.name.split('/').pop();
       result[uid] = { ...sanitizeRelationshipProfile(fsDecodeFields(row.document.fields || {})), uid };
     });
-  }
+  });
   return result;
 }
 
