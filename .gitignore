@@ -7,3 +7,9 @@ node_modules/
 *-debug.log
 .firebase/
 .tmp.driveupload/
+
+# Keep local environment files and secrets out of Git.
+.env
+.env.*
+!.env.example
+!.env.*.example
