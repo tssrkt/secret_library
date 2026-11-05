@@ -1,4 +1,4 @@
-﻿import { downloadAppDataBlob } from './drive.js';
+import { downloadAppDataBlob } from './drive.js';
 
 // A read-only projection; the owner's complete Drive index remains authoritative.
 export function sharedLibraryIndex(index, settings) {
@@ -154,6 +154,10 @@ export function createSharedLibraryStore({ db, sdk, user, downloadCover = downlo
           await batch.commit();
         }
         ensureCurrent();
+        await sdk.setDoc(manifest(user.uid), {
+          revision, signature: payload.signature, chunkCount: payload.chunks.length,
+          coversSignature: coverSync.signature, pendingRevision: revision, pendingChunkCount: payload.chunks.length,
+        });
         await deleteStaleCovers(coverSync.staleIds);
         await sdk.setDoc(manifest(user.uid), { revision, signature: payload.signature, chunkCount: payload.chunks.length, coversSignature: coverSync.signature });
         if (before.exists()) {
