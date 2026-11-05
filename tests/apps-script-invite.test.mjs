@@ -108,6 +108,12 @@ function response(status, body) {
   };
 }
 
+test('admin startup uses bounded summary and paginated collection APIs, not the unbounded dashboard', () => {
+  assert.match(adminClientSource, /call\('getAdminDashboardSummary'\)/);
+  assert.match(adminClientSource, /call\('getAdminCollectionPage'\)/);
+  assert.doesNotMatch(adminClientSource, /call\('getAdminDashboard'\)/);
+});
+
 test('admin iframe accepts a response only from its own request window', () => {
   assert.match(adminClientSource, /event\.source !== iframe\.contentWindow/);
   assert.match(adminClientSource, /event\.origin !== 'https:\/\/script\.googleusercontent\.com'/);
