@@ -601,7 +601,7 @@ function getAdminCollectionPageApi(actor, data) {
     const emailByUid = new Map(fsQueryEmailDirectory(uids).map(item => [item.uid, item.id]));
     page.items = page.items.map(user => ({ ...sanitizeRelationshipProfile(user), uid: user.id, email: emailByUid.get(user.id) || '', banned: flags.banned.has(user.id), admin: flags.admins.has(user.id) }));
   }
-  page.userProfiles = fsQueryUserProfiles(adminRelatedUserUids(section, page.items));
+  page.userProfiles = fsQueryUserProfiles(adminRelatedUserUids(section, page.items), data.knownProfileUids);
   return page;
 }
 function adminRelatedUserUids(section, items) {
@@ -621,9 +621,10 @@ function adminRelatedUserUids(section, items) {
   });
   return [...uids];
 }
-function fsQueryUserProfiles(uids) {
+function fsQueryUserProfiles(uids, knownUids) {
   const result = {};
-  const unique = [...new Set((uids || []).filter(isValidUid))].slice(0, 150);
+  const known = new Set((Array.isArray(knownUids) ? knownUids : []).filter(isValidUid).slice(0, 300));
+  const unique = [...new Set((uids || []).filter(isValidUid))].filter(uid => !known.has(uid)).slice(0, 150);
   for (let offset = 0; offset < unique.length; offset += 30) {
     const batch = unique.slice(offset, offset + 30);
     const values = batch.map(uid => ({ referenceValue: 'projects/' + FIREBASE_PROJECT_ID + '/databases/(default)/documents/users/' + uid }));
@@ -759,7 +760,7 @@ function getAdminRelationshipRootsApi(actor, data) {
   }
   const uids = new Set(adminRelatedUserUids('users', page.items));
   (page.shares || []).forEach(share => { if (isValidUid(share.ownerUid)) uids.add(share.ownerUid); if (isValidUid(share.viewerUid)) uids.add(share.viewerUid); });
-  page.userProfiles = fsQueryUserProfiles([...uids]);
+  page.userProfiles = fsQueryUserProfiles([...uids], data.knownProfileUids);
   return page;
 }
 function getAdminBranchApi(actor, data) {

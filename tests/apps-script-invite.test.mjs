@@ -131,6 +131,26 @@ test('admin startup uses bounded summary and paginated collection APIs, not the 
   assert.doesNotMatch(adminClientSource, /call\('getAdminDashboard'\)/);
 });
 
+test('admin page requests reuse profiles already loaded by the client', () => {
+  assert.match(adminClientSource, /knownProfileUids = Object\.keys\(data\.userProfiles \|\| \{\}\)\.slice\(-300\)/);
+  assert.match(adminClientSource, /getAdminCollectionPage'\)\(\{ section: key, cursor, knownProfileUids \}\)/);
+  const app = harness();
+  let request;
+  app.context.fsFetch = (url, method, body) => {
+    request = { url, method, body };
+    return { code: 200, text: JSON.stringify([{ document: {
+      name: 'projects/project/databases/(default)/documents/users/viewer-uid',
+      fields: { displayName: { stringValue: 'Reader' } }
+    } }]) };
+  };
+  const profiles = app.context.fsQueryUserProfiles(['owner-uid', 'viewer-uid'], ['owner-uid']);
+  const values = request.body.structuredQuery.where.fieldFilter.value.arrayValue.values;
+  assert.equal(values.length, 1);
+  assert.equal(values[0].referenceValue, 'projects/project-071ee00e-4a4a-4a3d-95d/databases/(default)/documents/users/viewer-uid');
+  assert.equal(Object.hasOwn(profiles, 'owner-uid'), false);
+  assert.equal(profiles['viewer-uid'].displayName, 'Reader');
+});
+
 test('relationship pages fetch shared-library records only on the initial request', () => {
   const app = harness();
   let shareReads = 0;
