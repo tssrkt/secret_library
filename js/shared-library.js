@@ -62,18 +62,17 @@ export function createSharedLibraryStore({ db, sdk, user, downloadCover = downlo
   const chunks = (owner, revision) => sdk.collection(db, 'sharedLibraries', owner, 'versions', revision, 'chunks');
   const covers = (owner) => sdk.collection(db, 'sharedLibraries', owner, 'covers');
   const coverRef = (owner, bookId) => sdk.doc(db, 'sharedLibraries', owner, 'covers', bookId);
-  async function syncCovers(index, projection, oldSignature) {
+  async function syncCovers(index, projection) {
     const visibleIds = new Set(projection.books.map((book) => book.id));
     const books = index.books.filter((book) => visibleIds.has(book.id) && book.coverFileId);
     const sources = await Promise.all(books.map(async (book) => ({ book, sourceKey: await coverSourceKey(book) })));
     const digestInput = sources.map(({ book, sourceKey }) => `${book.id}:${sourceKey}`).sort().join('|');
     const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(digestInput));
     const signature = [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
-    if (signature === oldSignature || (!sources.length && !oldSignature)) return signature;
     const existingSnapshot = await sdk.getDocsFromServer(covers(user.uid));
     const existing = new Map(existingSnapshot.docs.map((doc) => [doc.id, doc.data()]));
     const currentIds = new Set(sources.map(({ book }) => book.id));
-    for (const id of existing.keys()) if (!currentIds.has(id)) await sdk.deleteDoc(coverRef(user.uid, id));
+    const staleIds = [...existing.keys()].filter((id) => !currentIds.has(id));
     let cursor = 0;
     const worker = async () => {
       while (cursor < sources.length) {
@@ -88,11 +87,17 @@ export function createSharedLibraryStore({ db, sdk, user, downloadCover = downlo
       }
     };
     await Promise.all(Array.from({ length: Math.min(4, sources.length) }, worker));
-    return signature;
+    return { signature, staleIds };
+  }
+  async function deleteStaleCovers(ids) {
+    for (const id of ids) {
+      ensureCurrent();
+      await sdk.deleteDoc(coverRef(user.uid, id));
+    }
   }
   let queue = Promise.resolve();
   let disposed = false;
-  const ensureCurrent = () => { if (disposed) throw new Error('╨б╨╡╨░╨╜╤Б ╨╖╨░╨▓╨╡╤А╤И╤С╨╜.'); };
+  const ensureCurrent = () => { if (disposed) throw new Error('Сеанс завершён.'); };
   return {
     dispose() { disposed = true; },
     unpublish() {
@@ -127,12 +132,13 @@ export function createSharedLibraryStore({ db, sdk, user, downloadCover = downlo
             ...(previous.coversSignature ? { coversSignature: previous.coversSignature } : {}),
             pendingRevision: previous.revision, pendingChunkCount: previous.chunkCount,
           });
-          const coversSignature = await syncCovers(index, projection, previous.coversSignature || '');
+          const coverSync = await syncCovers(index, projection);
           ensureCurrent();
           await sdk.setDoc(manifest(user.uid), {
             revision: previous.revision, signature: previous.signature, chunkCount: previous.chunkCount,
-            coversSignature,
+            coversSignature: coverSync.signature,
           });
+          await deleteStaleCovers(coverSync.staleIds);
           return;
         }
         const revision = crypto.randomUUID();
@@ -141,14 +147,15 @@ export function createSharedLibraryStore({ db, sdk, user, downloadCover = downlo
           ...(previous.coversSignature ? { coversSignature: previous.coversSignature } : {}),
           pendingRevision: revision, pendingChunkCount: payload.chunks.length,
         });
-        const coversSignature = await syncCovers(index, projection, previous.coversSignature || '');
+        const coverSync = await syncCovers(index, projection);
         for (let start = 0; start < payload.chunks.length; start += 10) {
           const batch = sdk.writeBatch(db);
           payload.chunks.slice(start, start + 10).forEach((json, offset) => batch.set(sdk.doc(chunks(user.uid, revision), String(start + offset)), { position: start + offset, json }));
           await batch.commit();
         }
         ensureCurrent();
-        await sdk.setDoc(manifest(user.uid), { revision, signature: payload.signature, chunkCount: payload.chunks.length, coversSignature });
+        await sdk.setDoc(manifest(user.uid), { revision, signature: payload.signature, chunkCount: payload.chunks.length, coversSignature: coverSync.signature });
+        await deleteStaleCovers(coverSync.staleIds);
         if (before.exists()) {
           const old = await sdk.getDocsFromServer(chunks(user.uid, before.data().revision));
           for (let start = 0; start < old.docs.length; start += 100) {
@@ -174,14 +181,14 @@ export function createSharedLibraryStore({ db, sdk, user, downloadCover = downlo
       const before = await sdk.getDocFromServer(manifest(owner));
       if (!before.exists()) throw new Error('Библиотека недоступна.');
       const header = before.data();
-      if (expected && header.revision !== expected) throw new Error('╨С╨╕╨▒╨╗╨╕╨╛╤В╨╡╨║╨░ ╨╛╨▒╨╜╨╛╨▓╨╗╤П╨╡╤В╤Б╤П. ╨Т╤Л╨▒╨╡╤А╨╕╤В╨╡ ╨╡╤С ╨╡╤Й╤С ╤А╨░╨╖.');
+      if (expected && header.revision !== expected) throw new Error('Библиотека обновляется. Выберите её ещё раз.');
       const snapshot = await sdk.getDocsFromServer(chunks(owner, header.revision));
       const parts = snapshot.docs.map((doc) => doc.data()).sort((a, b) => a.position - b.position);
-      if (parts.length !== header.chunkCount || parts.some((part, i) => part.position !== i)) throw new Error('╨Ъ╨░╤В╨░╨╗╨╛╨│ ╨╡╤Й╤С ╨╜╨╡ ╨│╨╛╤В╨╛╨▓.');
+      if (parts.length !== header.chunkCount || parts.some((part, i) => part.position !== i)) throw new Error('Каталог ещё не готов.');
       const after = await sdk.getDocFromServer(manifest(owner));
-      if (!after.exists() || after.data().revision !== header.revision) throw new Error('╨С╨╕╨▒╨╗╨╕╨╛╤В╨╡╨║╨░ ╨╛╨▒╨╜╨╛╨▓╨╗╤П╨╡╤В╤Б╤П. ╨Т╤Л╨▒╨╡╤А╨╕╤В╨╡ ╨╡╤С ╨╡╤Й╤С ╤А╨░╨╖.');
+      if (!after.exists() || after.data().revision !== header.revision) throw new Error('Библиотека обновляется. Выберите её ещё раз.');
       const index = JSON.parse(parts.map((part) => part.json).join(''));
-      if (!Array.isArray(index.books) || !Array.isArray(index.folders) || !index.rootFolderId) throw new Error('╨Э╨╡╨║╨╛╤А╤А╨╡╨║╤В╨╜╤Л╨╣ ╨║╨░╤В╨░╨╗╨╛╨│.');
+      if (!Array.isArray(index.books) || !Array.isArray(index.folders) || !index.rootFolderId) throw new Error('Некорректный каталог.');
       return index;
     },
   };

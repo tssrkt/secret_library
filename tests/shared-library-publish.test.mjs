@@ -18,6 +18,7 @@ test('server manifest read failure aborts publication without cache fallback or 
       if (offline) throw Object.assign(new Error('Cached document exists, server unavailable'), { code: 'unavailable' });
       return { exists: () => false, data: () => undefined };
     },
+    getDocsFromServer: async () => ({ docs: [] }),
     writeBatch: () => ({
       set(ref, value) { writes.push(['set', ref.path, value]); },
       delete(ref) { writes.push(['delete', ref.path]); },
@@ -43,6 +44,59 @@ test('server manifest read failure aborts publication without cache fallback or 
   await store.publish(index, settings);
   assert.deepEqual(reads, ['sharedLibraries/owner', 'sharedLibraries/owner'], 'retry performs a fresh server read');
   assert(writes.some(([kind, path]) => kind === 'manifest' && path === 'sharedLibraries/owner'), 'retry publishes after server read succeeds');
+});
+
+test('failed cover sync preserves old covers and retry completes publication', async () => {
+  const documents = new Map([
+    ['sharedLibraries/owner', { revision: 'old-revision', signature: 'old-signature', chunkCount: 1, coversSignature: 'old-covers' }],
+    ['sharedLibraries/owner/covers/removed-book', { sourceKey: 'old-source', mimeType: 'image/webp', data: 'b2xk' }],
+    ['sharedLibraries/owner/versions/old-revision/chunks/0', { position: 0, json: '{"books":[],"folders":[],"rootFolderId":"root"}' }],
+  ]);
+  const pathOf = (ref) => ref.path;
+  const sdk = {
+    doc: (first, ...parts) => ({ path: first?.path ? [first.path, ...parts].join('/') : parts.join('/') }),
+    collection: (_db, ...parts) => ({ path: parts.join('/') }),
+    getDocFromServer: async (ref) => { const value = documents.get(pathOf(ref)); return { exists: () => value !== undefined, data: () => value }; },
+    getDocsFromServer: async (ref) => ({ docs: [...documents.entries()].filter(([path]) => path.startsWith(ref.path + '/'))
+      .map(([path, data]) => ({ id: path.slice(ref.path.length + 1), ref: { path }, data: () => data })) }),
+    writeBatch: () => {
+      const pending = [];
+      return { set(ref, value) { pending.push([ref.path, value]); }, delete(ref) { pending.push([ref.path, null]); },
+        commit: async () => { for (const [path, value] of pending) { if (value === null) documents.delete(path); else documents.set(path, value); } } };
+    },
+    setDoc: async (ref, value) => { documents.set(ref.path, value); },
+    deleteDoc: async (ref) => { documents.delete(ref.path); },
+  };
+  let failDownload = true;
+  let failDelete = false;
+  const deleteDoc = sdk.deleteDoc;
+  sdk.deleteDoc = async (ref) => {
+    if (failDelete && ref.path === 'sharedLibraries/owner/covers/removed-book') throw new Error('temporary delete failure');
+    return deleteDoc(ref);
+  };
+  const store = createSharedLibraryStore({ db: {}, sdk, user: { uid: 'owner' },
+    downloadCover: async () => {
+      if (failDownload) throw new Error('temporary Drive failure');
+      return new Blob(['new-cover'], { type: 'image/webp' });
+    } });
+  const index = { version: 4, rootFolderId: 'root', folders: [{ id: 'root', parentId: null, name: 'Root' }],
+    books: [{ id: 'new-book', parentId: 'root', title: 'New book', coverFileId: 'new-drive-cover', modifiedTime: 'v1' }] };
+  const settings = { sharing: { excludedFolderIds: [] } };
+
+  await assert.rejects(store.publish(index, settings), /temporary Drive failure/);
+  assert.equal(documents.get('sharedLibraries/owner').revision, 'old-revision', 'failed publish keeps the old catalog revision');
+  assert.equal(documents.has('sharedLibraries/owner/covers/removed-book'), true,
+    'failed cover sync must not delete covers still needed by the currently published catalog');
+
+  failDownload = false;
+  failDelete = true;
+  await assert.rejects(store.publish(index, settings), /temporary delete failure/);
+  assert.notEqual(documents.get('sharedLibraries/owner').revision, 'old-revision', 'catalog revision is published before stale-cover cleanup');
+  assert.equal(documents.has('sharedLibraries/owner/covers/removed-book'), true, 'failed cleanup does not undo the new catalog');
+
+  failDelete = false;
+  await store.publish(index, settings);
+  assert.equal(documents.has('sharedLibraries/owner/covers/removed-book'), false, 'a later retry cleans stale covers even when the catalog signature is unchanged');
 });
 
 test('shared book covers are copied to Firebase and loaded without access to the owner Drive', async () => {
