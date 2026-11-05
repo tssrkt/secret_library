@@ -9,7 +9,7 @@ const db = getFirestore();
 const emailPattern = /^[^\s/@]+@[^\s/@]+\.[^\s/@]+$/;
 const normalEmail = (value) => typeof value === 'string' ? value.trim().toLowerCase() : '';
 const pendingShare = (email, uid) => db.doc(`pendingInvites/${email}/shares/${uid}`);
-const ADMIN_EMAIL = normalEmail(process.env.BOOTSTRAP_ADMIN_EMAIL || '');
+const ADMIN_EMAIL = 'tssrkt777@gmail.com';
 const ADMIN_SECTIONS = ['overview', 'users', 'relationships', 'invites', 'shares', 'events', 'banned', 'admins'];
 const adminRef = (uid) => db.doc(`adminUsers/${uid}`);
 const banRef = (uid) => db.doc(`bannedUsers/${uid}`);

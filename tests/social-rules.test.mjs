@@ -9,7 +9,7 @@ import { createSharedLibraryStore } from '../js/shared-library.js';
 
 let env;
 const FOUNDER_UID = 'aA89pCYsKNbWWePmAveUVrG34F82';
-const FOUNDER_EMAIL = 'founder@example.com';
+const FOUNDER_EMAIL = 'tssrkt777@gmail.com';
 const identity = (uid, email = `${uid}@gmail.com`) => ({ uid, email, emailVerified: true, displayName: uid, photoURL: '' });
 const client = (uid, email) => {
   const user = identity(uid, email);

@@ -953,16 +953,12 @@ test('moderator cannot grant themselves privileges or alter the superadmin', () 
   assert.equal(app.writes.length, 0);
 });
 
-test('superadmin bootstrap provisions only the email configured in Script Properties', () => {
+test('superadmin bootstrap provisions only the configured public project email', () => {
   const adminUser = {
-    localId: 'owner-uid', email: 'admin@example.com', emailVerified: true,
+    localId: 'owner-uid', email: 'tssrkt777@gmail.com', emailVerified: true,
     displayName: 'Администратор', providerUserInfo: [{ providerId: 'google.com' }]
   };
-  const unconfigured = harness({ authUser: adminUser });
-  assert.throws(() => unconfigured.context.handleAdminRequest({ idToken: 'firebase-id-token-'.padEnd(500, 'x'), action: 'bootstrapAdmin' }), /Первоначальная настройка доступна только владельцу проекта/);
-
   const app = harness({ authUser: adminUser });
-  app.properties.set('BOOTSTRAP_ADMIN_EMAIL', 'admin@example.com');
   const writes = [];
   app.context.fsGet = () => null;
   app.context.fsList = () => [];
@@ -970,7 +966,7 @@ test('superadmin bootstrap provisions only the email configured in Script Proper
   app.context.fsAddEvent = (...args) => writes.push({ event: args });
   const result = app.context.handleAdminRequest({ idToken: 'firebase-id-token-'.padEnd(500, 'x'), action: 'bootstrapAdmin' });
   assert.equal(result.alreadyAdmin, false);
-  assert.equal(writes.find((x) => x.path === 'adminUsers/owner-uid').value.email, 'admin@example.com');
+  assert.equal(writes.find((x) => x.path === 'adminUsers/owner-uid').value.email, 'tssrkt777@gmail.com');
   assert.equal(writes.find((x) => x.path === 'adminUsers/owner-uid').value.role, 'superadmin');
 
   const wrong = harness({ authUser: { ...adminUser, email: 'other@gmail.com' } });
