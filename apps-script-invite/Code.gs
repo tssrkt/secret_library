@@ -1141,7 +1141,18 @@ function fsAddEvent(actorUid, action, targetUid, details) {
 function fsRequest(method, path, body) {
   const response = fsFetch(FIRESTORE_REST_ROOT + path, method, body);
   if (response.code === 404) return null;
-  if (response.code < 200 || response.code >= 300) throw new Error('Операция Firebase не выполнена (' + response.code + ').');
+  if (response.code < 200 || response.code >= 300) {
+    // Identify the failing Firestore document operation without exposing document IDs.
+    const parts = String(path || '').split('?')[0].split('/');
+    const documentIndex = parts.indexOf('documents');
+    if (documentIndex >= 0) {
+      for (let i = documentIndex + 2; i < parts.length; i += 2) {
+        if (parts[i]) parts[i] = '{id}';
+      }
+    }
+    const operation = String(method || 'get').toUpperCase() + ' ' + parts.join('/');
+    throw new Error('Операция Firebase не выполнена (' + response.code + '; ' + operation + ').');
+  }
   return response.text ? JSON.parse(response.text) : {};
 }
 function fsFetch(url, method, body) {
