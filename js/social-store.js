@@ -125,18 +125,26 @@ export function createSocialStore({ db, sdk, user }) {
   async function syncKnownContacts() {
     ensureCurrent();
     const pending = await getDocs(query(collectionGroup(db, 'shares'), where('ownerUid', '==', uid)));
-    const claimed = pending.docs.filter((snapshot) => Boolean(snapshot.data().claimedUid));
-    await forEachConcurrent(claimed, 10, (snapshot) => {
+    const contactEmails = new Map();
+    for (const snapshot of pending.docs) {
       const invite = snapshot.data();
-      return runTransaction(db, async (tx) => {
-        const contact = ref('users', uid, 'knownContacts', invite.claimedUid);
-        const existing = await tx.get(contact);
-        ensureCurrent();
-        if (!existing.exists()) tx.set(contact, { email: invite.inviteeEmail });
-      });
-    });
+      if (invite.claimedUid && invite.inviteeEmail && !contactEmails.has(invite.claimedUid)) {
+        contactEmails.set(invite.claimedUid, invite.inviteeEmail);
+      }
+    }
+    if (!contactEmails.size) return;
+    const existing = await getDocs(collection(db, 'users', uid, 'knownContacts'));
+    const known = new Set(existing.docs.map((snapshot) => snapshot.id));
+    const missing = [...contactEmails].filter(([contactUid]) => !known.has(contactUid));
+    for (let offset = 0; offset < missing.length; offset += 10) {
+      ensureCurrent();
+      const batch = writeBatch(db);
+      for (const [contactUid, contactEmail] of missing.slice(offset, offset + 10)) {
+        batch.set(ref('users', uid, 'knownContacts', contactUid), { email: contactEmail });
+      }
+      await batch.commit();
+    }
   }
-
   async function markSeen(notifications) {
     ensureCurrent();
     const displayed = notifications.slice(0, 50).filter((item) => item.unread);
