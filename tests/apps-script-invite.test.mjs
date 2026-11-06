@@ -743,6 +743,15 @@ test('invitation status endpoint returns the persisted cooldown timestamp for th
   assert.doesNotMatch(result.content, /someone-else@gmail\.com/, 'status endpoint does not reveal invitations not owned by this user');
 });
 
+test('invitation status limit counts unique normalized emails rather than duplicate inputs', () => {
+  const app = harness();
+  app.invoke();
+  const emails = Array(100).fill('owner@gmail.com').concat('friend@gmail.com');
+  const result = app.invoke({ action: 'getInvitationStatuses', emails });
+  assert.match(result.content, /friend@gmail\.com/);
+  assert.match(result.content, /\"cooldownUntil\":\d+/);
+});
+
 test('does not send when the Firebase account is disabled', () => {
   const app = harness({ authUser: {
     localId: 'owner-uid', email: 'owner@gmail.com', emailVerified: true, disabled: true,

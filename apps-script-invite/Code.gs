@@ -276,7 +276,7 @@ function decodePendingInvitationResponse(status, text, email, uid) {
 
 function handleInvitationStatuses(input) {
   const idToken = String(input.idToken || '');
-  const emails = Array.isArray(input.emails) ? [...new Set(input.emails.slice(0, 100).map(normalizeEmail))] : [];
+  const emails = Array.isArray(input.emails) ? [...new Set(input.emails.slice(0, 500).map(normalizeEmail))].slice(0, 100) : [];
   if (idToken.length < 100 || idToken.length > 5000 || !emails.length || emails.some(function (email) { return !isValidEmail(email); })) {
     throw new Error('Не удалось обновить состояние приглашений. Обновите страницу.');
   }
