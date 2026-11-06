@@ -1281,10 +1281,14 @@ function restoreLibraryUserApi(actor, data) {
   const currentActor = requireAdminApi(actor.uid, 'banned');
   const uid = String(data.uid || '');
   if (!isValidUid(uid)) throw new Error('Не указан участник.');
-  const banned = fsGet('bannedUsers/' + uid);
+  const [banned, admin] = fsGetMany([
+    'bannedUsers/' + uid,
+    'adminUsers/' + uid
+  ]);
   if (!banned) return { ok: true };
+  // Read both records before deleting the ban so a failed admin read cannot
+  // leave the participant partially restored.
   fsDelete('bannedUsers/' + uid);
-  const admin = fsGet('adminUsers/' + uid);
   const canRestoreAdmin = currentActor.admin.role === 'superadmin' ||
     currentActor.admin.permissions?.admins === true;
   const adminRestored = Boolean(admin && banned.adminWasActive === true && canRestoreAdmin);
