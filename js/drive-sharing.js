@@ -102,7 +102,10 @@ export async function discoverDriveFriends(user, configuredRootFolderId = '', ap
     } catch { /* A known configured root can still be inspected if catalog discovery fails. */ }
   }
 
-  const sharedFolders = await listSharedFolders(request);
+  let driveDiscoveryErrors = [];
+  let sharedFolders = [];
+  try { sharedFolders = await listSharedFolders(request); }
+  catch (error) { driveDiscoveryErrors.push(`Не удалось найти папки, которыми поделились с вами: ${error?.message || error}`); }
   for (const folder of sharedFolders) {
     if (folder.id === rootFolderId) continue;
     let catalogFile;
@@ -131,10 +134,11 @@ export async function discoverDriveFriends(user, configuredRootFolderId = '', ap
   }
 
   if (rootFolderId) {
-    const root = await getRootFolder(rootFolderId, request);
-    if (root?.mimeType === FOLDER_MIME_TYPE) {
-      const permissions = await listPermissions(rootFolderId, request);
-      for (const permission of permissions) {
+    try {
+      const root = await getRootFolder(rootFolderId, request);
+      if (root?.mimeType === FOLDER_MIME_TYPE) {
+        const permissions = await listPermissions(rootFolderId, request);
+        for (const permission of permissions) {
         if (permission.deleted || permission.type !== 'user') continue;
         const email = normalizeEmail(permission.emailAddress);
         if (!email || email === ownEmail || permission.role === 'owner') continue;
@@ -143,13 +147,17 @@ export async function discoverDriveFriends(user, configuredRootFolderId = '', ap
           existing.outbound = true;
           continue;
         }
-        add({ uid: '', email, displayName: permission.displayName || email, outbound: true });
+          add({ uid: '', email, displayName: permission.displayName || email, outbound: true });
+        }
       }
+    } catch (error) {
+      driveDiscoveryErrors.push(`Не удалось прочитать права своей корневой папки: ${error?.message || error}`);
     }
   }
 
   return {
     rootFolderId,
+    errors: driveDiscoveryErrors,
     friends: [...friends.values()]
       .filter((friend) => friend.inbound || friend.outbound)
       .sort((a, b) => a.displayName.localeCompare(b.displayName, 'ru') || a.uid.localeCompare(b.uid)),

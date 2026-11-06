@@ -63,11 +63,11 @@ async function refreshDriveFriends(user, currentGeneration = generation) {
     if (currentGeneration !== generation) return;
     if (result.rootFolderId) configuredRootFolderId = result.rootFolderId;
     driveFriends = result.friends;
-    emit({ friends: driveFriends, ownRootFolderId: result.rootFolderId || configuredRootFolderId });
+    emit({ friends: driveFriends, ownRootFolderId: result.rootFolderId || configuredRootFolderId, driveDiscoveryMessage: result.errors?.join(' ') || '' });
     watchCatalogs(driveFriends);
   } catch (error) {
     // Keep the last confirmed Drive-derived list when Drive is temporarily unavailable.
-    console.warn('Drive friend discovery failed; keeping the last confirmed list.', error);
+    emit({ driveDiscoveryMessage: String(error?.message || error) });
   }
 }
 

@@ -161,7 +161,8 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
     const noun = remainder100 >= 11 && remainder100 <= 14 ? 'друзей'
       : remainder10 === 1 ? 'друг'
         : remainder10 >= 2 && remainder10 <= 4 ? 'друга' : 'друзей';
-    friendsSection.querySelector('.friends-count').textContent = `У вас ${count.toLocaleString('ru-RU')} ${noun}`;
+    const countLabel = friendsSection.querySelector('.friends-count');
+    countLabel.textContent = `У вас ${count.toLocaleString('ru-RU')} ${noun}${snapshot.driveDiscoveryMessage ? `. ${snapshot.driveDiscoveryMessage}` : ''}`;
     const container = friendsSection.querySelector('.friends-table-container');
     const table = document.createElement('table');
     table.className = 'friends-table';
