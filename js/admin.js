@@ -254,6 +254,23 @@ function renderUsers() {
   const superAdminUid = data.superAdminUid || (data.admins || []).find(a => a.role === 'superadmin')?.uid;
   const allUsers = [...(data.users || [])];
   const byUid = new Map(allUsers.map(u => [u.uid,u]));
+  const registrationTimes = new Map(allUsers.map(user => {
+    const value = user.createdAt || user.registeredAt || user.registrationDate;
+    let time = 0;
+    if (value?.toDate) {
+      const date = value.toDate();
+      time = Number.isNaN(date.getTime()) ? 0 : date.getTime();
+    } else if (value && typeof value === 'object') {
+      const seconds = Number(value.seconds ?? value._seconds);
+      if (Number.isFinite(seconds)) time = seconds * 1000 + Number(value.nanoseconds ?? value._nanoseconds ?? 0) / 1e6;
+    } else if (typeof value === 'number' && Number.isFinite(value)) {
+      time = value < 1e12 ? value * 1000 : value;
+    } else {
+      const date = value ? new Date(value) : null;
+      time = date && !Number.isNaN(date.getTime()) ? date.getTime() : 0;
+    }
+    return [user.uid, time];
+  }));
   const controls = node('div', null, 'actions');
   controls.style.marginBottom = '14px';
   const search = node('input');
@@ -277,22 +294,8 @@ function renderUsers() {
   const renderList = () => {
     const query = search.value.trim().toLocaleLowerCase('ru');
     const users = allUsers.filter(u => !query || [u.displayName,u.email].some(value => String(value || '').toLocaleLowerCase('ru').includes(query)));
-    const registrationTime = u => {
-      const value = u.createdAt || u.registeredAt || u.registrationDate;
-      if (value?.toDate) {
-        const date = value.toDate();
-        return Number.isNaN(date.getTime()) ? 0 : date.getTime();
-      }
-      if (value && typeof value === 'object') {
-        const seconds = Number(value.seconds ?? value._seconds);
-        if (Number.isFinite(seconds)) return seconds * 1000 + Number(value.nanoseconds ?? value._nanoseconds ?? 0) / 1e6;
-      }
-      if (typeof value === 'number' && Number.isFinite(value)) return value < 1e12 ? value * 1000 : value;
-      const date = value ? new Date(value) : null;
-      return date && !Number.isNaN(date.getTime()) ? date.getTime() : 0;
-    };
     users.sort((a,b) => {
-      if (sort.value === 'registered') return registrationTime(b) - registrationTime(a) || (a.displayName||'').localeCompare(b.displayName||'','ru');
+      if (sort.value === 'registered') return (registrationTimes.get(b.uid) || 0) - (registrationTimes.get(a.uid) || 0) || (a.displayName||'').localeCompare(b.displayName||'','ru');
       if (sort.value === 'status') return Number(Boolean(b.admin)) - Number(Boolean(a.admin))
         || Number(Boolean(a.banned)) - Number(Boolean(b.banned))
         || (a.displayName||'').localeCompare(b.displayName||'','ru');
