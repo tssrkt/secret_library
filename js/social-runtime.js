@@ -1,6 +1,7 @@
 import { startFirebaseSession, endFirebaseSession } from './firebase-session.js';
 import { createSocialStore } from './social-store.js';
 import { createSharedLibraryStore } from './shared-library.js?v=20261106-drive-catalog';
+import { discoverDriveFriends } from './drive-sharing.js';
 import { sendInvitationEmail, getInvitationStatuses as fetchInvitationStatuses } from './invitation-mailer.js';
 
 export function socialError(error) {
@@ -22,6 +23,8 @@ let shared;
 let invitationUser = null;
 const knownContactsSyncs = new Map();
 const FRIEND_CACHE_PREFIX = 'secret-library-social-friends-v1:';
+let driveFriends = [];
+let configuredRootFolderId = '';
 function readFriendCache(uid) {
   try {
     const value = JSON.parse(localStorage.getItem(`${FRIEND_CACHE_PREFIX}${uid}`) || 'null');
@@ -35,9 +38,10 @@ function writeFriendCache(uid, friends) {
   if (!uid || !Array.isArray(friends)) return;
   try {
     const safe = friends.filter((friend) => friend && typeof friend.uid === 'string').slice(0, 500)
-      .map(({ uid: friendUid, displayName, inbound, outbound, isAdmin }) => ({
-        uid: friendUid, displayName: String(displayName || '').slice(0, 160),
-        inbound: inbound === true, outbound: outbound === true, isAdmin: isAdmin === true,
+      .map((friend) => ({
+        uid: friend.uid, displayName: String(friend.displayName || '').slice(0, 160),
+        email: String(friend.email || '').slice(0, 254),
+        inbound: friend.inbound === true, outbound: friend.outbound === true, isAdmin: friend.isAdmin === true,
       }));
     localStorage.setItem(`${FRIEND_CACHE_PREFIX}${uid}`, JSON.stringify(safe));
   } catch { /* A full or disabled local storage must not break the library. */ }
@@ -48,12 +52,25 @@ const emit = (change) => {
   listeners.forEach((listener) => listener(state));
 };
 function watchCatalogs(friends) {
-  // Friend relationships come from the social store; catalog discovery and loading use Drive only.
-  // Opening a library does not query Firestore for a manifest or catalog.
-  const libraries = friends.filter((friend) => friend.inbound)
+  // Friend relationships and access direction are determined by live Google Drive permissions.
+  const libraries = friends.filter((friend) => friend.inbound && !String(friend.uid).startsWith('email:'))
     .map((friend) => ({ uid: friend.uid, displayName: friend.displayName, revision: 'drive' }));
   emit({ libraries });
 }
+async function refreshDriveFriends(user, currentGeneration = generation) {
+  try {
+    const result = await discoverDriveFriends(user, configuredRootFolderId);
+    if (currentGeneration !== generation) return;
+    if (result.rootFolderId) configuredRootFolderId = result.rootFolderId;
+    driveFriends = result.friends;
+    emit({ friends: driveFriends, ownRootFolderId: result.rootFolderId || configuredRootFolderId });
+    watchCatalogs(driveFriends);
+  } catch (error) {
+    // Keep the last confirmed Drive-derived list when Drive is temporarily unavailable.
+    console.warn('Drive friend discovery failed; keeping the last confirmed list.', error);
+  }
+}
+
 export const social = {
   async checkAccess(token) {
     const session = await startFirebaseSession(token);
@@ -68,12 +85,13 @@ export const social = {
     }
   },
   subscribe(listener) { listeners.add(listener); listener(state); return () => listeners.delete(listener); },
-  async connect(token) {
+  async connect(token, rootFolderId = '') {
+    if (rootFolderId) configuredRootFolderId = rootFolderId;
     const current = ++generation;
     knownContactsSyncs.clear();
     stop?.(); store?.dispose(); store = null;
     shared?.dispose(); shared = null;
-    emit({ status: 'loading', message: 'Подключение социальной части…', friends: [], notifications: [], libraries: [] });
+    emit({ status: 'loading', message: 'Подключение социальной части…', friends: driveFriends, notifications: [], libraries: [], ownRootFolderId: configuredRootFolderId });
     try {
       const session = await startFirebaseSession(token);
       if (!session || current !== generation) return;
@@ -81,22 +99,25 @@ export const social = {
       shared = createSharedLibraryStore({ user: session.user });
       invitationUser = session.user;
       const cachedFriends = readFriendCache(session.user.uid);
+      driveFriends = cachedFriends || driveFriends;
       if (cachedFriends) {
-        emit({ friends: cachedFriends, libraries: cachedFriends.filter((friend) => friend.inbound)
-          .map((friend) => ({ uid: friend.uid, displayName: friend.displayName, revision: 'drive' })) });
+        emit({ friends: cachedFriends });
+        watchCatalogs(cachedFriends);
       }
+      void refreshDriveFriends(session.user, current);
       await store.register();
-      await store.syncShareEmails().catch(() => {});
       if (current !== generation) return;
       emit({ status: 'ready', message: '' });
-      stop = store.subscribe((snapshot) => { if (current === generation) { emit(snapshot); watchCatalogs(snapshot.friends); } },
+      stop = store.subscribe((snapshot) => { if (current === generation) { emit({ ...snapshot, friends: driveFriends }); watchCatalogs(driveFriends); } },
         (error) => { if (current === generation) emit({ status: 'error', message: socialError(error) }); });
     } catch (error) { if (current === generation) emit({ status: 'error', message: socialError(error) }); }
   },
   disconnect() {
     generation++; stop?.(); stop = null; store?.dispose(); store = null; invitationUser = null;
     shared?.dispose(); shared = null;
-    emit({ status: 'idle', message: 'Войдите через Google.', friends: [], notifications: [], libraries: [] });
+    driveFriends = [];
+    configuredRootFolderId = '';
+    emit({ status: 'idle', message: 'Войдите через Google.', friends: [], notifications: [], libraries: [], ownRootFolderId: null });
     void endFirebaseSession().catch(() => {});
   },
   async shareWithEmail(email) {
@@ -126,9 +147,12 @@ export const social = {
     knownContactsSyncs.set(key, pending);
     return pending;
   },
-  publishLibrary(index, settings) {
-    if (!shared || state.status !== 'ready') return Promise.reject(new Error(state.message || 'Firebase connection is not ready; the friend catalog was not synchronized.'));
-    return shared.publish(index, settings);
+  async publishLibrary(index, settings) {
+    if (!shared || state.status !== 'ready') throw new Error(state.message || 'Firebase connection is not ready; the friend catalog was not synchronized.');
+    if (index?.rootFolderId) configuredRootFolderId = index.rootFolderId;
+    const result = await shared.publish(index, settings);
+    if (invitationUser) void refreshDriveFriends(invitationUser);
+    return result;
   },
   get ready() { return state.status === 'ready'; },
   unpublishLibrary() { if (!shared || state.status !== 'ready') return Promise.reject(new Error('Для изменения доступа подключите социальную часть.')); return shared.unpublish(); },

@@ -25,7 +25,7 @@ function formatDate(value) {
 export function mountFriends(page, social, retry, openLibrary = (uid) => { window.location.href = `?library=${encodeURIComponent(uid)}`; }) {
   const shareSection = document.createElement('section');
   shareSection.className = 'social-section';
-  shareSection.innerHTML = '<h3>Поделиться библиотекой</h3><form class="social-share-form"><label><input type="email" name="email" autocomplete="off" required aria-label="Gmail" placeholder="Gmail вашего друга"></label><button class="settings-save-button" type="submit">ПОДЕЛИТЬСЯ</button></form><p role="status"></p><button class="settings-save-button" type="button" data-social-retry hidden>ПОВТОРИТЬ ПОДКЛЮЧЕНИЕ</button>';
+  shareSection.innerHTML = '<h3>Пригласить участника</h3><form class="social-share-form"><label><input type="email" name="email" autocomplete="off" required aria-label="Gmail" placeholder="Gmail нового участника"></label><button class="settings-save-button" type="submit">ОТПРАВИТЬ ПРИГЛАШЕНИЕ</button></form><p class="drive-sharing-help">Доступ к библиотеке определяется правами корневой папки в Google Drive. <a data-drive-root-link hidden target="_blank" rel="noopener">Открыть свою корневую папку в Google Drive</a></p><p role="status"></p><button class="settings-save-button" type="button" data-social-retry hidden>ПОВТОРИТЬ ПОДКЛЮЧЕНИЕ</button>';
   const friendsSection = document.createElement('section');
   friendsSection.className = 'social-section friends-section';
   friendsSection.innerHTML = '<h3>Друзья</h3><p class="friends-count" role="status"></p><div class="friends-table-container"></div>';
@@ -37,13 +37,13 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
   const submit = form.querySelector('button');
   const message = shareSection.querySelector('[role=status]');
   const retryButton = shareSection.querySelector('[data-social-retry]');
+  const driveRootLink = shareSection.querySelector('[data-drive-root-link]');
   const invitationsMessage = invitationsSection.querySelector('.sent-invitations-message');
   retryButton.addEventListener('click', retry);
   let snapshot = { friends: [], invitations: [], status: 'idle' };
   let pageNumber = 1;
   let sending = false;
   let closed = false;
-  let lastSyncSignature = null;
   let invitationStatusSignature = null;
   let statusRefreshRevision = 0;
   let invitationStatuses = {};
@@ -165,7 +165,7 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
     const container = friendsSection.querySelector('.friends-table-container');
     const table = document.createElement('table');
     table.className = 'friends-table';
-    table.innerHTML = '<thead><tr><th scope="col">Пользователь</th><th scope="col">Делится с вами</th><th scope="col">Вы делитесь</th><th scope="col">Действие</th></tr></thead><tbody></tbody>';
+    table.innerHTML = '<thead><tr><th scope="col">Пользователь</th><th scope="col">Делится с вами</th><th scope="col">Вы делитесь</th></tr></thead><tbody></tbody>';
     for (const friend of paged.items) {
       const row = document.createElement('tr');
       const name = document.createElement('td');
@@ -173,7 +173,9 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
       openButton.type = 'button'; openButton.className = 'friend-library-button';
       openButton.textContent = friend.displayName;
       if (friend.isAdmin || friend.email) { const detail = document.createElement('small'); detail.textContent = friend.isAdmin ? 'Администратор' : friend.email; openButton.append(detail); }
-      openButton.addEventListener('click', () => openLibrary(friend.uid));
+      openButton.disabled = !friend.inbound || String(friend.uid).startsWith('email:');
+      openButton.title = openButton.disabled ? 'Эта библиотека не открыта вам в Google Drive' : 'Открыть библиотеку друга';
+      openButton.addEventListener('click', () => { if (!openButton.disabled) openLibrary(friend.uid); });
       name.append(openButton);
       row.append(name);
       for (const value of [friend.inbound, friend.outbound]) {
@@ -185,19 +187,7 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
         mark.setAttribute('aria-label', value ? 'Да' : 'Нет');
         cell.append(mark); row.append(cell);
       }
-      const action = document.createElement('td');
-      const button = document.createElement('button');
-      button.type = 'button'; button.className = 'settings-save-button';
-      button.textContent = friend.outbound ? 'ЗАКРЫТЬ ДОСТУП' : 'ПОДЕЛИТЬСЯ';
-      button.disabled = busy.has(friend.uid) || snapshot.status !== 'ready';
-      button.addEventListener('click', async () => {
-        if (busy.has(friend.uid)) return;
-        busy.add(friend.uid); button.disabled = true; message.textContent = '';
-        try { await social.setSharing(friend.uid, !friend.outbound); }
-        catch (error) { if (!closed) message.textContent = socialError(error); }
-        finally { busy.delete(friend.uid); if (!closed) render(); }
-      });
-      action.append(button); row.append(action); table.querySelector('tbody').append(row);
+      table.querySelector('tbody').append(row);
     }
     const paginator = createPaginator({ ...paged, onPageChange: (next) => { pageNumber = next; render(); } });
     paginator?.setAttribute('aria-label', 'Страницы друзей');
@@ -205,6 +195,10 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
     renderInvitations();
   };
   const unsubscribe = social.subscribe((next) => {
+    if (next.ownRootFolderId) {
+      driveRootLink.href = `https://drive.google.com/drive/folders/${encodeURIComponent(next.ownRootFolderId)}`;
+      driveRootLink.hidden = false;
+    } else driveRootLink.hidden = true;
     const actualInvitations = next.invitations || [];
     const actualEmails = new Set(actualInvitations.map((invite) => String(invite.inviteeEmail || '').trim().toLowerCase()));
     const friendEmails = new Set((next.friends || []).map((friend) => String(friend.email || '').trim().toLowerCase()).filter(Boolean));
@@ -226,13 +220,7 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
     if (next.message || message.textContent === serviceMessage) message.textContent = next.message || '';
     serviceMessage = next.message || '';
     render();
-    if (next.status === 'ready') {
-      const signature = next.friends.map((friend) => `${friend.uid}:${friend.inbound ? 1 : 0}:${friend.outbound ? 1 : 0}`).sort().join('|');
-      if (signature !== lastSyncSignature) {
-        lastSyncSignature = signature;
-        void social.syncKnownContacts(signature).catch((error) => { lastSyncSignature = ''; if (!closed) message.textContent = socialError(error); });
-      }
-    }
+    // Friend discovery comes from Google Drive permissions; no Firestore contact sync is needed.
   });
   form.addEventListener('submit', async (event) => {
     event.preventDefault();

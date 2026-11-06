@@ -189,7 +189,8 @@ export function createSocialStore({ db, sdk, user }) {
       const current = ++revision;
       try {
         const shares = [...collections.outgoing, ...collections.incoming];
-        const ids = new Set(shares.filter((item) => item.active).flatMap((item) => [item.ownerUid, item.viewerUid]));
+        // The friends table is Drive-derived now. Only load profiles needed to label incoming notifications.
+        const ids = new Set(collections.incoming.filter((item) => item.active).map((item) => item.ownerUid));
         await Promise.all([...ids].map(async (id) => {
           const profile = await loadProfile(id);
           const safeProfile = profile || { uid: id, displayName: 'Пользователь' };
@@ -221,7 +222,6 @@ export function createSocialStore({ db, sdk, user }) {
       watch(query(collection(db, 'libraryShares'), where('ownerUid', '==', uid)), 'outgoing'),
       watch(query(collection(db, 'libraryShares'), where('viewerUid', '==', uid)), 'incoming'),
       watch(query(collectionGroup(db, 'shares'), where('ownerUid', '==', uid)), 'invitations'),
-      watch(collection(db, 'users', uid, 'knownContacts'), 'contacts', true),
       watch(collection(db, 'users', uid, 'incomingShareReads'), 'reads', true),
     ];
     return () => { stopped = true; stops.forEach((stop) => stop()); };
