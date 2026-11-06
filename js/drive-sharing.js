@@ -39,6 +39,18 @@ async function getRootCatalog(rootFolderId, request = driveFetch) {
   return (result.files || []).find((file) => file.mimeType === 'application/json') || null;
 }
 
+async function listSharedCatalogFiles(request = driveFetch) {
+  const params = new URLSearchParams({
+    q: `name = '${escapeDriveQuery(SHARED_CATALOG_FILE_NAME)}' and trashed = false`,
+    fields: 'nextPageToken,files(id,name,mimeType,parents)',
+    pageSize: '100',
+    spaces: 'drive',
+    supportsAllDrives: 'true',
+    includeItemsFromAllDrives: 'true',
+  });
+  return listPages('/files', params, request);
+}
+
 async function listSharedFolders(request = driveFetch) {
   const params = new URLSearchParams({
     q: `sharedWithMe = true and mimeType = '${FOLDER_MIME_TYPE}' and trashed = false`,
@@ -129,7 +141,6 @@ export async function discoverDriveFriends(user, configuredRootFolderId = '', ap
   }
 
   let driveDiscoveryErrors = [];
-  const foldersWithoutCatalog = [];
   let sharedFolders = [];
   try { sharedFolders = await listSharedFolders(request); }
   catch (error) { driveDiscoveryErrors.push(`Не удалось найти папки, которыми поделились с вами: ${error?.message || error}`); }
@@ -138,23 +149,14 @@ export async function discoverDriveFriends(user, configuredRootFolderId = '', ap
     let catalogFile;
     try { catalogFile = await getRootCatalog(folder.id, request); }
     catch (error) {
-      if (error?.status === 403 || error?.status === 404) {
-        foldersWithoutCatalog.push(folder.name || 'Папка без названия');
-        continue;
-      }
+      if (error?.status === 403 || error?.status === 404) continue;
       throw error;
     }
-    if (!catalogFile) {
-      foldersWithoutCatalog.push(folder.name || 'Папка без названия');
-      continue;
-    }
+    if (!catalogFile) continue;
     let catalog;
     try { catalog = await download(catalogFile.id); }
     catch (error) {
-      if (error?.status === 403 || error?.status === 404) {
-        foldersWithoutCatalog.push(folder.name || 'Папка без названия');
-        continue;
-      }
+      if (error?.status === 403 || error?.status === 404) continue;
       throw error;
     }
     if (!catalog || typeof catalog.ownerUid !== 'string' || !catalog.ownerUid
@@ -167,6 +169,42 @@ export async function discoverDriveFriends(user, configuredRootFolderId = '', ap
       isAdmin: catalog.ownerUid === 'aA89pCYsKNbWWePmAveUVrG34F82',
       inbound: true,
     });
+  }
+
+  // Do not rely solely on sharedWithMe: Drive can omit an accessible shared root
+  // from that listing. Find published catalogs directly, then validate their owner
+  // and root folder from the catalog payload and Drive metadata.
+  try {
+    const catalogFiles = await listSharedCatalogFiles(request);
+    for (const file of catalogFiles) {
+      if (file.mimeType !== 'application/json') continue;
+      let catalog;
+      try { catalog = await download(file.id); }
+      catch (error) {
+        if (error?.status === 403 || error?.status === 404) continue;
+        throw error;
+      }
+      if (!catalog || typeof catalog.ownerUid !== 'string' || !catalog.ownerUid
+          || catalog.ownerUid === user.uid || !catalog.rootFolderId
+          || !(file.parents || []).includes(catalog.rootFolderId)) continue;
+      let root;
+      try { root = await getRootFolder(catalog.rootFolderId, request); }
+      catch (error) {
+        if (error?.status === 403 || error?.status === 404) continue;
+        throw error;
+      }
+      if (root?.mimeType !== FOLDER_MIME_TYPE) continue;
+      const owner = (root.owners || []).find((item) => normalizeEmail(item.emailAddress)) || root.owners?.[0] || {};
+      add({
+        uid: catalog.ownerUid,
+        email: owner.emailAddress || '',
+        displayName: owner.displayName || root.name || 'Участник',
+        isAdmin: catalog.ownerUid === 'aA89pCYsKNbWWePmAveUVrG34F82',
+        inbound: true,
+      });
+    }
+  } catch (error) {
+    driveDiscoveryErrors.push(`Не удалось найти опубликованные каталоги друзей: ${error?.message || error}`);
   }
 
   if (rootFolderId) {
@@ -191,16 +229,11 @@ export async function discoverDriveFriends(user, configuredRootFolderId = '', ap
     }
   }
 
-  if (!sharedFolders.length && !driveDiscoveryErrors.some((error) => error.startsWith('Не удалось найти папки'))) {
+  if (!sharedFolders.length && ![...friends.values()].some((friend) => friend.inbound)
+      && !driveDiscoveryErrors.some((error) => error.startsWith('Не удалось найти папки'))) {
     driveDiscoveryErrors.push('Google Drive не обнаружил папок, которыми поделились с текущим аккаунтом. Проверьте, что друзья предоставили доступ именно тому Google-аккаунту, под которым вы вошли на сайт.');
   }
 
-  if (foldersWithoutCatalog.length) {
-    const names = [...new Set(foldersWithoutCatalog)];
-    const shown = names.slice(0, 5).join('», «');
-    const remainder = names.length > 5 ? ` и ещё ${names.length - 5}` : '';
-    driveDiscoveryErrors.push(`Google Drive предоставил доступ к папкам «${shown}»${remainder}, но в них не найден опубликованный каталог. Владельцам нужно открыть свою библиотеку на обновлённом сайте и дождаться синхронизации.`);
-  }
 
   return {
     rootFolderId,

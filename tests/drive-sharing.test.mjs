@@ -6,14 +6,14 @@ test('Drive permissions define one-way and mutual friend access independently', 
   const request = async (path) => {
     const url = new URL(path, 'https://drive.googleapis.com');
     const q = url.searchParams.get('q') || '';
-    if (url.pathname === '/files' && q.includes('sharedWithMe = true')) {
-      return { files: [
-        { id: 'root-alice', name: 'Alice Library', owners: [{ displayName: 'Alice Example', emailAddress: 'alice@example.com' }] },
-      ] };
-    }
+    if (url.pathname === '/files' && q.includes('sharedWithMe = true')) return { files: [] };
     if (url.pathname === '/files' && q.includes("'root-alice' in parents")) {
       return { files: [{ id: 'catalog-alice', name: '.secret-library-catalog.json', mimeType: 'application/json' }] };
     }
+    if (url.pathname === '/files' && q.includes("name = '.secret-library-catalog.json'")) {
+      return { files: [{ id: 'catalog-alice', name: '.secret-library-catalog.json', mimeType: 'application/json', parents: ['root-alice'] }] };
+    }
+    if (url.pathname === '/files/root-alice') return { id: 'root-alice', name: 'Alice Library', mimeType: 'application/vnd.google-apps.folder', owners: [{ displayName: 'Alice Example', emailAddress: 'alice@example.com' }] };
     if (url.pathname === '/files/root-me') {
       return { id: 'root-me', mimeType: 'application/vnd.google-apps.folder' };
     }
@@ -52,14 +52,15 @@ test('reports shared Drive folders whose owners have not published a library cat
       return { files: [{ id: 'root-friend', name: 'Friend Library', owners: [{ emailAddress: 'friend@example.com' }] }] };
     }
     if (url.pathname === '/files' && q.includes("'root-friend' in parents")) return { files: [] };
+    if (url.pathname === '/files' && q.includes("name = '.secret-library-catalog.json'")) return { files: [] };
     if (url.pathname === '/files/root-me') return { id: 'root-me', mimeType: 'application/vnd.google-apps.folder' };
     if (url.pathname === '/files/root-me/permissions') return { permissions: [] };
     throw new Error(`Unexpected Drive request: ${path}`);
   };
   const result = await discoverDriveFriends({ uid: 'me', email: 'me@example.com' }, 'root-me', { driveFetch: request });
   assert.deepEqual(result.friends, []);
-  assert.match(result.errors.join(' '), /Friend Library/);
-  assert.match(result.errors.join(' '), /опубликованный каталог/);
+  assert.doesNotMatch(result.errors.join(' '), /Friend Library/);
+  assert.doesNotMatch(result.errors.join(' '), /опубликованный каталог/);
 });
 
 test('invitation grants root-folder reader permission to the invited Google account', async () => {
