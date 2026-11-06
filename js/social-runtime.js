@@ -1,7 +1,7 @@
 import { startFirebaseSession, endFirebaseSession } from './firebase-session.js';
 import { createSocialStore } from './social-store.js';
 import { createSharedLibraryStore } from './shared-library.js?v=20261106-drive-catalog';
-import { discoverDriveFriends, grantRootFolderAccess, revokeRootFolderAccess } from './drive-sharing.js';
+import { discoverDriveFriends, grantRootFolderAccess } from './drive-sharing.js';
 import { sendInvitationEmail, getInvitationStatuses as fetchInvitationStatuses } from './invitation-mailer.js';
 
 export function socialError(error) {
@@ -123,17 +123,10 @@ export const social = {
   async shareWithEmail(email) {
     if (!store || !invitationUser || state.status !== 'ready') throw new Error(state.message);
     if (!configuredRootFolderId) throw new Error('Сначала выберите корневую папку своей библиотеки.');
-    // A Firestore invitation alone does not grant access to the actual Drive files.
-    // Grant folder access first, then persist/send the invitation. Roll back only a
-    // newly created permission if persisting the invitation fails.
-    const permission = await grantRootFolderAccess(configuredRootFolderId, email);
-    let result;
-    try {
-      result = await store.shareWithEmail(email);
-    } catch (error) {
-      await revokeRootFolderAccess(configuredRootFolderId, permission).catch(() => {});
-      throw error;
-    }
+    // Drive permissions are the source of truth for library access. Never revoke
+    // a successful Drive grant just because Firestore is unavailable.
+    await grantRootFolderAccess(configuredRootFolderId, email);
+    const result = await store.shareWithEmail(email);
     if (!isPendingInvitationResult(result)) return result;
     const idToken = await invitationUser.getIdToken();
     return sendInvitationEmail({ email, idToken });
