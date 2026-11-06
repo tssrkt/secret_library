@@ -38,12 +38,14 @@ export function searchBooks(books, conditions = {}) {
   const normalizeLanguage = languageNormalizer();
   const language = normalizeLanguage(conditions.language).key;
   return (Array.isArray(books) ? books : []).filter((book) => {
+    const titleValue = normalizeSearchText(book.title);
+    const seriesValue = normalizeSearchText(book.series);
     const authors = Array.isArray(book.authors) ? book.authors.map(normalizeSearchText) : [];
-    const values = [book.title, book.series, book.annotation, book.fileName].map(normalizeSearchText).concat(authors);
+    const values = [titleValue, seriesValue, normalizeSearchText(book.annotation), normalizeSearchText(book.fileName), ...authors];
     return words.every((word) => values.some((value) => value.includes(word)))
-      && (!title || normalizeSearchText(book.title).includes(title))
+      && (!title || titleValue.includes(title))
       && (!author || authors.some((value) => value.includes(author)))
-      && (!series || normalizeSearchText(book.series).includes(series))
+      && (!series || seriesValue.includes(series))
       && (!conditions.genre || (Array.isArray(book.genres) && book.genres.includes(conditions.genre)))
       && (!language || normalizeLanguage(book.language).key === language);
   });
