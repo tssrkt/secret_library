@@ -27,6 +27,7 @@ export async function scanLibrary(rootFolderId, onProgress = () => {}, {
   const folders = [];
   const books = [];
   const queue = [];
+  let queueHead = 0;
   const running = new Set();
   const seenFolders = new Set([rootFolderId]);
   const seenBooks = new Set();
@@ -101,12 +102,18 @@ export async function scanLibrary(rootFolderId, onProgress = () => {}, {
       ...(root.resourceKey ? { resourceKey: root.resourceKey } : {}) };
     folderPaths.set(root.id, root.name);
     folders.push(rootFolder); queue.push(rootFolder); readingRoot = false;
-    while (queue.length || running.size) {
+    while (queueHead < queue.length || running.size) {
       scanSignal.throwIfAborted();
-      while (queue.length && running.size < SCAN_CONCURRENCY && !failure) {
-        const folder = queue.shift();
+      while (queueHead < queue.length && running.size < SCAN_CONCURRENCY && !failure) {
+        const folder = queue[queueHead++];
         const task = readFolder(folder).finally(() => { running.delete(task); emit(); });
         running.add(task);
+      }
+      // Keep the FIFO queue efficient for libraries with many folders without
+      // retaining every already-processed folder object until the scan ends.
+      if (queueHead > 1024 && queueHead * 2 >= queue.length) {
+        queue.splice(0, queueHead);
+        queueHead = 0;
       }
       emit();
       await Promise.race(running);
