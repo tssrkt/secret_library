@@ -3,11 +3,19 @@ import { downloadAppDataBlob } from './drive.js';
 // A read-only projection; the owner's complete Drive index remains authoritative.
 export function sharedLibraryIndex(index, settings) {
   const excluded = new Set(settings.sharing.excludedFolderIds);
-  const allowed = new Set(index.folders.filter((folder) => folder.parentId === index.rootFolderId && !excluded.has(folder.id)).map((folder) => folder.id));
-  let changed = true;
-  while (changed) {
-    changed = false;
-    for (const folder of index.folders) if (!excluded.has(folder.id) && !allowed.has(folder.id) && allowed.has(folder.parentId)) { allowed.add(folder.id); changed = true; }
+  const childrenByParent = new Map();
+  for (const folder of index.folders) {
+    if (!childrenByParent.has(folder.parentId)) childrenByParent.set(folder.parentId, []);
+    childrenByParent.get(folder.parentId).push(folder);
+  }
+  const allowed = new Set();
+  const queue = [];
+  for (const folder of childrenByParent.get(index.rootFolderId) || []) queue.push(folder);
+  for (let head = 0; head < queue.length; head++) {
+    const folder = queue[head];
+    if (excluded.has(folder.id) || allowed.has(folder.id)) continue;
+    allowed.add(folder.id);
+    for (const child of childrenByParent.get(folder.id) || []) queue.push(child);
   }
   const fields = ['id', 'parentId', 'fileName', 'extension', 'sourceType', 'size', 'modifiedTime', 'metadataStatus',
     'metadataVersion', 'title', 'authors', 'genres', 'series', 'seriesNumber', 'annotation', 'preview', 'language', 'resourceKey'];

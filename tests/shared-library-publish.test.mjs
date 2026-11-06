@@ -31,6 +31,26 @@ test('excluded nested folders and all their descendants stay out of the shared c
   assert.deepEqual(projection.folderNotes, { public: 'public note' });
 });
 
+test('shared catalog traversal includes deep folders regardless of index order', () => {
+  const index = {
+    version: 4, rootFolderId: 'root', folders: [
+      { id: 'deep', parentId: 'middle', name: 'Deep' },
+      { id: 'hidden-child', parentId: 'hidden', name: 'Hidden child' },
+      { id: 'middle', parentId: 'public', name: 'Middle' },
+      { id: 'hidden', parentId: 'root', name: 'Hidden' },
+      { id: 'public', parentId: 'root', name: 'Public' },
+      { id: 'root', parentId: null, name: 'Root' },
+    ],
+    books: [
+      { id: 'deep-book', parentId: 'deep', title: 'Deep book' },
+      { id: 'hidden-book', parentId: 'hidden-child', title: 'Hidden book' },
+    ],
+  };
+  const projection = sharedLibraryIndex(index, { sharing: { excludedFolderIds: ['hidden'] } });
+  assert.deepEqual(projection.folders.map(({ id }) => id), ['deep', 'middle', 'public', 'root']);
+  assert.deepEqual(projection.books.map(({ id }) => id), ['deep-book']);
+});
+
 test('server manifest read failure aborts publication without cache fallback or writes and can be retried', async () => {
   let offline = true;
   const reads = [];
