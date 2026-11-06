@@ -313,6 +313,29 @@ test('admin user flags fetch banned and admin records concurrently', () => {
   assert.equal(flags.banned.has('user-2'), false);
 });
 
+test('admin user flags and related profiles share one concurrent Firestore batch', () => {
+  const app = harness();
+  let requests = [];
+  app.context.ScriptApp = { getOAuthToken: () => 'test-token' };
+  app.context.UrlFetchApp.fetchAll = batch => {
+    requests = batch;
+    return batch.map(request => {
+      const query = JSON.parse(request.payload).structuredQuery;
+      const collectionId = query.from[0].collectionId;
+      const documentId = collectionId === 'users' ? 'inviter-1' : collectionId === 'userDirectory' ? 'reader@example.com' : 'user-1';
+      const fields = collectionId === 'users' ? { displayName: { stringValue: 'Inviter' } } : collectionId === 'userDirectory' ? { uid: { stringValue: 'user-1' } } : {};
+      return { getResponseCode: () => 200, getContentText: () => JSON.stringify([{ document: {
+        name: `projects/project/databases/(default)/documents/${collectionId}/${documentId}`, fields
+      } }]) };
+    });
+  };
+  const result = app.context.fsGetAdminUserFlags(['user-1'], ['inviter-1'], []);
+  assert.equal(requests.length, 4);
+  assert.equal(JSON.stringify(requests.map(request => JSON.parse(request.payload).structuredQuery.from[0].collectionId)), JSON.stringify(['bannedUsers', 'adminUsers', 'userDirectory', 'users']));
+  assert.equal(result.emailByUid.get('user-1'), 'reader@example.com');
+  assert.equal(result.profiles['inviter-1'].displayName, 'Inviter');
+});
+
 test('admin related profiles fetch multiple Firestore batches concurrently', () => {
   const app = harness();
   let requests = [];

@@ -672,10 +672,13 @@ function getAdminCollectionPageApi(actor, data) {
   if (section === 'invites') page.items = sanitizeInvitationRecords(actor, page.items);
   if (section === 'users') {
     const uids = page.items.map(user => user.id);
-    const flags = fsGetAdminUserFlags(uids);
+    const relatedUids = adminRelatedUserUids(section, page.items);
+    const flags = fsGetAdminUserFlags(uids, relatedUids, data.knownProfileUids);
     page.items = page.items.map(user => ({ ...sanitizeRelationshipProfile(user), uid: user.id, email: flags.emailByUid.get(user.id) || '', banned: flags.banned.has(user.id), admin: flags.admins.has(user.id) }));
+    page.userProfiles = flags.profiles;
+  } else {
+    page.userProfiles = fsQueryUserProfiles(adminRelatedUserUids(section, page.items), data.knownProfileUids);
   }
-  page.userProfiles = fsQueryUserProfiles(adminRelatedUserUids(section, page.items), data.knownProfileUids);
   return page;
 }
 function adminRelatedUserUids(section, items) {
@@ -728,30 +731,42 @@ function fsQueryUserProfiles(uids, knownUids) {
   return result;
 }
 
-function fsGetAdminUserFlags(uids) {
-  const result = { banned: new Set(), admins: new Set(), emailByUid: new Map() };
+function fsGetAdminUserFlags(uids, profileUids, knownProfileUids) {
+  const result = { banned: new Set(), admins: new Set(), emailByUid: new Map(), profiles: {} };
   const unique = [...new Set((uids || []).filter(isValidUid))].slice(0, 30);
-  if (!unique.length) return result;
+  const known = new Set((Array.isArray(knownProfileUids) ? knownProfileUids : []).filter(isValidUid).slice(0, 300));
+  const profiles = [...new Set((profileUids || []).filter(isValidUid))].filter(uid => !known.has(uid)).slice(0, 150);
+  if (!unique.length && !profiles.length) return result;
   const url = FIRESTORE_REST_ROOT.slice(0, -1) + ':runQuery';
-  const referenceValues = collectionId => unique.map(uid => ({ referenceValue: 'projects/' + FIREBASE_PROJECT_ID + '/databases/(default)/documents/' + collectionId + '/' + uid }));
-  const bodies = [
+  const referenceValues = (collectionId, ids = unique) => ids.map(uid => ({ referenceValue: 'projects/' + FIREBASE_PROJECT_ID + '/databases/(default)/documents/' + collectionId + '/' + uid }));
+  const bodies = [];
+  if (unique.length) bodies.push(
     { structuredQuery: { from: [{ collectionId: 'bannedUsers' }], where: { fieldFilter: { field: { fieldPath: '__name__' }, op: 'IN', value: { arrayValue: { values: referenceValues('bannedUsers') } } } }, limit: unique.length } },
     { structuredQuery: { from: [{ collectionId: 'adminUsers' }], where: { fieldFilter: { field: { fieldPath: '__name__' }, op: 'IN', value: { arrayValue: { values: referenceValues('adminUsers') } } } }, limit: unique.length } },
     { structuredQuery: { from: [{ collectionId: 'userDirectory' }], where: { fieldFilter: { field: { fieldPath: 'uid' }, op: 'IN', value: { arrayValue: { values: unique.map(uid => ({ stringValue: uid })) } } } }, limit: unique.length } }
-  ];
+  );
+  for (let offset = 0; offset < profiles.length; offset += 30) {
+    const batch = profiles.slice(offset, offset + 30);
+    bodies.push({ structuredQuery: { from: [{ collectionId: 'users' }], where: { fieldFilter: { field: { fieldPath: '__name__' }, op: 'IN', value: { arrayValue: { values: referenceValues('users', batch) } } } }, limit: batch.length } });
+  }
   const responses = typeof UrlFetchApp.fetchAll === 'function'
     ? UrlFetchApp.fetchAll(bodies.map(body => ({ url, method: 'post', headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() }, muteHttpExceptions: true, contentType: 'application/json', payload: JSON.stringify(body) }))).map(response => ({ code: response.getResponseCode(), text: response.getContentText() }))
     : bodies.map(body => fsFetch(url, 'post', body));
+  const flagQueryCount = unique.length ? 3 : 0;
   responses.forEach((response, index) => {
-    if (response.code !== 200) throw new Error(index === 2 ? 'Не удалось получить адреса участников.' : 'Не удалось получить статусы участников.');
+    if (response.code !== 200) throw new Error(index === 2 && flagQueryCount ? 'Не удалось получить адреса участников.' : index < flagQueryCount ? 'Не удалось получить статусы участников.' : 'Не удалось получить имена участников Firebase (HTTP ' + response.code + ').');
     JSON.parse(response.text).filter(row => row && row.document).forEach(row => {
       const document = row.document;
       const uid = document.name.split('/').pop();
-      if (index === 0 && unique.includes(uid)) result.banned.add(uid);
-      else if (index === 1 && unique.includes(uid)) result.admins.add(uid);
-      else if (index === 2) {
+      if (flagQueryCount && index === 0) {
+        if (unique.includes(uid)) result.banned.add(uid);
+      } else if (flagQueryCount && index === 1) {
+        if (unique.includes(uid)) result.admins.add(uid);
+      } else if (flagQueryCount && index === 2) {
         const item = fsDecodeFields(document.fields || {});
         if (isValidUid(item.uid) && unique.includes(item.uid)) result.emailByUid.set(item.uid, uid);
+      } else {
+        result.profiles[uid] = { ...sanitizeRelationshipProfile(fsDecodeFields(document.fields || {})), uid };
       }
     });
   });
