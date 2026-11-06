@@ -1,7 +1,7 @@
 import { startFirebaseSession, endFirebaseSession } from './firebase-session.js';
 import { createSocialStore } from './social-store.js';
 import { createSharedLibraryStore } from './shared-library.js?v=20261106-drive-catalog';
-import { discoverDriveFriends, grantRootFolderAccess } from './drive-sharing.js?v=20261106-drive-diagnostics';
+import { discoverDriveFriends, grantRootFolderAccess } from './drive-sharing.js?v=20261106-root-metadata-fallback';
 import { sendInvitationEmail, getInvitationStatuses as fetchInvitationStatuses } from './invitation-mailer.js';
 
 export function socialError(error) {
