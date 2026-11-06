@@ -42,3 +42,36 @@ test('Drive permissions define one-way and mutual friend access independently', 
     { uid: 'email:bob@example.com', email: 'bob@example.com', inbound: false, outbound: true },
   ]);
 });
+
+
+test('invitation grants root-folder reader permission to the invited Google account', async () => {
+  const calls = [];
+  const request = async (path, options = {}) => {
+    calls.push({ path, options });
+    if (path.includes('/permissions?') && options.method === 'POST') {
+      const body = JSON.parse(options.body);
+      assert.deepEqual(body, { type: 'user', role: 'reader', emailAddress: 'friend@example.com' });
+      assert.equal(new URL(path, 'https://drive.googleapis.com').searchParams.get('sendNotificationEmail'), 'false');
+      return { id: 'permission-created' };
+    }
+    if (path.endsWith('/permissions?fields=nextPageToken%2Cpermissions%28id%2Ctype%2CemailAddress%2CdisplayName%2Crole%2Cdeleted%29&pageSize=100&supportsAllDrives=true')) return { permissions: [] };
+    throw new Error(`Unexpected Drive request: ${path}`);
+  };
+  const { grantRootFolderAccess } = await import('../js/drive-sharing.js');
+  const result = await grantRootFolderAccess('my-root', ' Friend@Example.com ', { driveFetch: request });
+  assert.deepEqual(result, { permissionId: 'permission-created', created: true, email: 'friend@example.com' });
+  assert.equal(calls.length, 2);
+  assert.equal(calls[1].options.method, 'POST');
+});
+
+test('invitation does not create a duplicate Drive permission when access already exists', async () => {
+  let created = false;
+  const request = async (path, options = {}) => {
+    if (options.method === 'POST') { created = true; throw new Error('Should not create a duplicate permission'); }
+    return { permissions: [{ id: 'existing-permission', type: 'user', emailAddress: 'friend@example.com', role: 'reader' }] };
+  };
+  const { grantRootFolderAccess } = await import('../js/drive-sharing.js');
+  const result = await grantRootFolderAccess('my-root', 'friend@example.com', { driveFetch: request });
+  assert.deepEqual(result, { permissionId: 'existing-permission', created: false, email: 'friend@example.com' });
+  assert.equal(created, false);
+});

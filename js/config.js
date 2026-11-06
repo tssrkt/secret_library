@@ -15,9 +15,9 @@ export const COVER_CACHE_PREFIX = 'secret-library-cover-';
 export const COVER_MAX_WIDTH = 240;
 export const COVER_MAX_HEIGHT = 320;
 export const DRIVE_SCOPES = [
-  'https://www.googleapis.com/auth/drive.readonly',
+  // Full Drive access is required to grant/revoke permissions on an existing user-selected root folder.
+  'https://www.googleapis.com/auth/drive',
   'https://www.googleapis.com/auth/drive.appdata',
-  'https://www.googleapis.com/auth/drive.file',
 ].join(' ');
 
 export const FOLDER_MIME_TYPE = 'application/vnd.google-apps.folder';

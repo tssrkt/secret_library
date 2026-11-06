@@ -106,6 +106,8 @@ export async function driveFetch(path, options = {}, retry = 0, apiRoot = API_RO
   }
 
   const apiMessage = errorBody?.error?.message || '';
+  const missingDriveScope = response.status === 403
+    && /insufficient authentication scopes|insufficientpermissions|insufficient permissions/i.test(apiMessage);
   const messages = {
     401: 'Сеанс Google истек. Войдите снова.',
     403: retryable ? 'Google Drive временно ограничил число запросов. Повторите позже.' : 'Нет доступа к запрошенным данным Google Drive.',
@@ -113,9 +115,11 @@ export async function driveFetch(path, options = {}, retry = 0, apiRoot = API_RO
     416: 'Запрошенный диапазон находится за пределами доступного файла (Range Not Satisfiable).',
     429: 'Google Drive временно ограничил число запросов. Повторите позже.',
   };
-  const error = new DriveError(messages[response.status] || apiMessage || 'Google Drive вернул ошибку.', {
+  const error = new DriveError(missingDriveScope
+    ? 'Чтобы выдавать доступ к папке, нужно обновить разрешения Google Drive. Выйдите из сайта и войдите снова, подтвердив новые разрешения.'
+    : messages[response.status] || apiMessage || 'Google Drive вернул ошибку.', {
     status: response.status,
-    code: response.status === 401 ? 'unauthorized' : 'drive_error',
+    code: response.status === 401 ? 'unauthorized' : missingDriveScope ? 'insufficient_scope' : 'drive_error',
     retryable,
   });
   error.contentRange = response.headers.get('Content-Range');

@@ -60,6 +60,32 @@ async function listPermissions(folderId, request = driveFetch) {
   return listPages(`/files/${encodeURIComponent(folderId)}/permissions`, params, request);
 }
 
+// Grant access to the owner's selected root folder before sending an invitation.
+// Existing permissions are preserved; rollback only removes a permission created by this attempt.
+export async function grantRootFolderAccess(rootFolderId, email, api = {}) {
+  const request = api.driveFetch || driveFetch;
+  const address = normalizeEmail(email);
+  if (!rootFolderId) throw new Error('Сначала выберите корневую папку своей библиотеки.');
+  if (!address) throw new Error('Укажите корректный email участника.');
+  const existing = (await listPermissions(rootFolderId, request)).find((permission) =>
+    !permission.deleted && permission.type === 'user' && normalizeEmail(permission.emailAddress) === address);
+  if (existing) return { permissionId: existing.id || '', created: false, email: address };
+
+  const params = new URLSearchParams({ supportsAllDrives: 'true', sendNotificationEmail: 'false' });
+  const created = await request(`/files/${encodeURIComponent(rootFolderId)}/permissions?${params}`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ type: 'user', role: 'reader', emailAddress: address }), readJson: true,
+  });
+  if (!created?.id) throw new Error('Google Drive не подтвердил выдачу доступа к корневой папке.');
+  return { permissionId: created.id, created: true, email: address };
+}
+
+export async function revokeRootFolderAccess(rootFolderId, permission) {
+  if (!rootFolderId || !permission?.created || !permission.permissionId) return;
+  const params = new URLSearchParams({ supportsAllDrives: 'true' });
+  await driveFetch(`/files/${encodeURIComponent(rootFolderId)}/permissions/${encodeURIComponent(permission.permissionId)}?${params}`, { method: 'DELETE' });
+}
+
 export async function discoverDriveFriends(user, configuredRootFolderId = '', api = {}) {
   const request = api.driveFetch || driveFetch;
   const download = api.downloadDriveJsonFile || downloadDriveJsonFile;
