@@ -30,8 +30,8 @@ export function createUserSettingsController({ container, index, onError, clearE
     page.append(section);
     section.append(status);
     container.replaceChildren(page);
-    unmount = mountSections(page);
     try {
+      unmount = mountSections(page);
       // Reopening during a write waits for its file ID, so it cannot create a duplicate.
       if (saving) await saving;
       if (!isCurrent()) return;
