@@ -1483,22 +1483,17 @@ function fsListInviteSharesByOwner(uid) {
     .map(row => ({ ...fsDecodeFields(row.document.fields || {}), id: row.document.name.split('/').pop() }));
 }
 function fsListInviteShares() {
-  const url = FIRESTORE_REST_ROOT.slice(0, -1) + ':runQuery';
-  const response = fsFetch(url, 'post', {
-    structuredQuery: { from: [{ collectionId: 'shares', allDescendants: true }] }
-  });
-  if (response.code !== 200) throw new Error('Не удалось прочитать данные Firebase.');
-  const rows = JSON.parse(response.text);
+  // Restrict reads to the invitation tree. A collection-group query over every
+  // collection named "shares" reads unrelated documents before filtering paths,
+  // which can exhaust the Firestore free read quota on each admin refresh.
+  const inviteRoots = fsList('pendingInvites');
   const out = [];
-  rows.forEach(row => {
-    const doc = row && row.document;
-    if (!doc || typeof doc.name !== 'string') return;
-    const marker = '/documents/pendingInvites/';
-    const markerIndex = doc.name.indexOf(marker);
-    if (markerIndex < 0) return;
-    const segments = doc.name.slice(markerIndex + marker.length).split('/');
-    if (segments.length !== 3 || segments[1] !== 'shares') return;
-    out.push({ ...fsDecodeFields(doc.fields || {}), id: segments[2], email: segments[0] });
+  inviteRoots.forEach(root => {
+    const email = String(root.id || '');
+    if (!email) return;
+    fsList('pendingInvites/' + encodeURIComponent(email) + '/shares').forEach(item => {
+      out.push({ ...item, email });
+    });
   });
   return out;
 }

@@ -435,31 +435,31 @@ test('admin event history uses a bounded server-side Firestore page', () => {
   assert.equal(events[0].id, 'event-1');
 });
 
-test('invitation dashboard reads nested shares with one collection-group query', () => {
+test('invitation dashboard reads only nested shares under pendingInvites', () => {
   const app = harness();
   app.context.fsListInviteShares = app.context.realFsListInviteShares;
-  let request;
+  const requests = [];
   app.context.fsFetch = (url, method, body) => {
-    request = { url, method, body };
-    return {
+    requests.push({ url, method, body });
+    if (url.includes('/pendingInvites?')) return {
       code: 200,
-      text: JSON.stringify([
-        { document: {
-          name: 'projects/project/databases/(default)/documents/pendingInvites/friend@gmail.com/shares/owner-uid',
-          fields: { ownerUid: { stringValue: 'owner-uid' }, claimedUid: { nullValue: null } }
-        } },
-        { document: {
-          name: 'projects/project/databases/(default)/documents/otherCollection/parent/shares/other-uid',
-          fields: { ownerUid: { stringValue: 'other-uid' } }
-        } },
-        { readTime: '2026-11-04T00:00:00Z' }
-      ])
+      text: JSON.stringify({ documents: [{
+        name: 'projects/project/databases/(default)/documents/pendingInvites/friend@gmail.com', fields: {}
+      }] })
     };
+    if (url.includes('/pendingInvites/friend%40gmail.com/shares?')) return {
+      code: 200,
+      text: JSON.stringify({ documents: [{
+        name: 'projects/project/databases/(default)/documents/pendingInvites/friend@gmail.com/shares/owner-uid',
+        fields: { ownerUid: { stringValue: 'owner-uid' }, claimedUid: { nullValue: null } }
+      }] })
+    };
+    throw new Error('Unexpected Firestore request: ' + url);
   };
   const invites = app.context.fsListInviteShares();
-  assert.equal(request.method, 'post');
-  assert.match(request.url, /documents:runQuery$/);
-  assert.equal(JSON.stringify(request.body.structuredQuery.from), JSON.stringify([{ collectionId: 'shares', allDescendants: true }]));
+  assert.equal(requests.length, 2);
+  assert.ok(requests.every(item => item.method === 'get'));
+  assert.ok(requests.every(item => !item.url.endsWith('documents:runQuery')));
   assert.equal(invites.length, 1);
   assert.equal(invites[0].email, 'friend@gmail.com');
   assert.equal(invites[0].id, 'owner-uid');
