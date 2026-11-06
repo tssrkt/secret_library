@@ -132,18 +132,13 @@ export function createSocialStore({ db, sdk, user }) {
         contactEmails.set(invite.claimedUid, invite.inviteeEmail);
       }
     }
-    if (!contactEmails.size) return;
-    const existing = await getDocs(collection(db, 'users', uid, 'knownContacts'));
-    const known = new Set(existing.docs.map((snapshot) => snapshot.id));
-    const missing = [...contactEmails].filter(([contactUid]) => !known.has(contactUid));
-    for (let offset = 0; offset < missing.length; offset += 10) {
+    const contacts = [...contactEmails];
+    await forEachConcurrent(contacts, 10, ([contactUid, contactEmail]) => runTransaction(db, async (tx) => {
+      const contact = ref('users', uid, 'knownContacts', contactUid);
+      const existing = await tx.get(contact);
       ensureCurrent();
-      const batch = writeBatch(db);
-      for (const [contactUid, contactEmail] of missing.slice(offset, offset + 10)) {
-        batch.set(ref('users', uid, 'knownContacts', contactUid), { email: contactEmail });
-      }
-      await batch.commit();
-    }
+      if (!existing.exists()) tx.set(contact, { email: contactEmail });
+    }));
   }
   async function markSeen(notifications) {
     ensureCurrent();
