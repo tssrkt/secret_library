@@ -183,10 +183,14 @@ export const restoreLibraryUser = onCall({ region: 'europe-west1', invoker: 'pub
   const { uid, admin: actorAdmin } = await requireAdmin(request, 'banned');
   const targetUid = String(request.data?.uid || '');
   if (!isValidUid(targetUid)) throw new HttpsError('invalid-argument', 'Не указан участник.');
-  const banned = await banRef(targetUid).get();
+  const [banned, targetAdmin] = await Promise.all([
+    banRef(targetUid).get(),
+    adminRef(targetUid).get()
+  ]);
   if (!banned.exists) return { ok: true };
+  // Read both records before deleting the ban so a failed admin read cannot
+  // leave the participant partially restored.
   await banRef(targetUid).delete();
-  const targetAdmin = await adminRef(targetUid).get();
   if (canRestoreAdminRights(actorAdmin, targetAdmin.exists, banned.data()?.adminWasActive === true)) {
     await adminRef(targetUid).update({ active: true, updatedAt: FieldValue.serverTimestamp(), updatedBy: uid });
     await db.doc(`users/${targetUid}`).set({ isAdmin: true }, { merge: true });
