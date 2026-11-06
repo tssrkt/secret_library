@@ -121,12 +121,14 @@ export const social = {
     void endFirebaseSession().catch(() => {});
   },
   async shareWithEmail(email) {
-    if (!store || !invitationUser || state.status !== 'ready') throw new Error(state.message);
+    if (!invitationUser) throw new Error(state.message || 'Сначала войдите через Google.');
     if (!configuredRootFolderId) throw new Error('Сначала выберите корневую папку своей библиотеки.');
-    // Drive permissions are the source of truth for library access. Never revoke
-    // a successful Drive grant just because Firestore is unavailable.
+    // Drive permissions define library access; Firestore is only invitation metadata.
     await grantRootFolderAccess(configuredRootFolderId, email);
-    const result = await store.shareWithEmail(email);
+    if (!store || state.status !== 'ready') return 'Доступ к папке Google Drive предоставлен. База данных недоступна: приглашение и письмо пока не оформлены.';
+    let result;
+    try { result = await store.shareWithEmail(email); }
+    catch (error) { return 'Доступ к папке Google Drive предоставлен, но приглашение не удалось сохранить в базе данных. ' + (error?.message || ''); }
     if (!isPendingInvitationResult(result)) return result;
     const idToken = await invitationUser.getIdToken();
     return sendInvitationEmail({ email, idToken });

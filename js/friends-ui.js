@@ -25,7 +25,7 @@ function formatDate(value) {
 export function mountFriends(page, social, retry, openLibrary = (uid) => { window.location.href = `?library=${encodeURIComponent(uid)}`; }) {
   const shareSection = document.createElement('section');
   shareSection.className = 'social-section';
-  shareSection.innerHTML = '<h3>Пригласить участника</h3><form class="social-share-form"><label><input type="email" name="email" autocomplete="off" required aria-label="Gmail" placeholder="Gmail нового участника"></label><button class="settings-save-button" type="submit">ОТПРАВИТЬ ПРИГЛАШЕНИЕ</button></form><p class="drive-sharing-help">Доступ к библиотеке определяется правами корневой папки в Google Drive. <a data-drive-root-link hidden target="_blank" rel="noopener">Открыть свою корневую папку в Google Drive</a></p><p role="status"></p><button class="settings-save-button" type="button" data-social-retry hidden>ПОВТОРИТЬ ПОДКЛЮЧЕНИЕ</button>';
+  shareSection.innerHTML = '<h3>Пригласить участника</h3><form class="social-share-form"><label><input type="email" name="email" autocomplete="off" required aria-label="Gmail" placeholder="Gmail нового участника"></label><button class="settings-save-button" type="submit">Поделиться</button></form><p class="drive-sharing-help">Доступ к библиотеке определяется правами корневой папки в Google Drive. <a data-drive-root-link hidden target="_blank" rel="noopener">Открыть свою корневую папку в Google Drive</a></p><p role="status"></p><button class="settings-save-button" type="button" data-social-retry hidden>ПОВТОРИТЬ ПОДКЛЮЧЕНИЕ</button>';
   const friendsSection = document.createElement('section');
   friendsSection.className = 'social-section friends-section';
   friendsSection.innerHTML = '<h3>Друзья</h3><p class="friends-count" role="status"></p><div class="friends-table-container"></div>';
@@ -44,6 +44,11 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
   let pageNumber = 1;
   let sending = false;
   let closed = false;
+  const updateShareButton = () => {
+    submit.disabled = sending || !form.elements.email.value.trim() || !form.elements.email.validity.valid;
+  };
+  form.elements.email.addEventListener('input', updateShareButton);
+  updateShareButton();
   let invitationStatusSignature = null;
   let statusRefreshRevision = 0;
   let invitationStatuses = {};
@@ -216,7 +221,7 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
       invitationStatusSignature = inviteSignature;
       void refreshInvitationStatuses();
     }
-    submit.disabled = sending || next.status !== 'ready';
+    updateShareButton();
     retryButton.hidden = next.status !== 'error';
     if (next.message || message.textContent === serviceMessage) message.textContent = next.message || '';
     serviceMessage = next.message || '';
@@ -225,8 +230,8 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
   });
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
-    if (sending || snapshot.status !== 'ready') return;
-    sending = true; submit.disabled = true; message.textContent = '';
+    if (sending || !form.elements.email.value.trim() || !form.elements.email.validity.valid) return;
+    sending = true; updateShareButton(); message.textContent = '';
     try {
       const email = form.elements.email.value;
       const result = await social.shareWithEmail(email);
@@ -252,7 +257,7 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
       }
     }
     catch (error) { if (!closed) message.textContent = socialError(error); }
-    finally { sending = false; if (!closed) submit.disabled = snapshot.status !== 'ready'; }
+    finally { sending = false; if (!closed) updateShareButton(); }
   });
   const timer = setInterval(updateCooldowns, 1000);
   return () => { closed = true; clearInterval(timer); unsubscribe(); };
