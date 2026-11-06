@@ -7,6 +7,7 @@ test('Drive permissions define one-way and mutual friend access independently', 
     const url = new URL(path, 'https://drive.googleapis.com');
     const q = url.searchParams.get('q') || '';
     if (url.pathname === '/files' && q.includes('sharedWithMe = true')) return { files: [] };
+    if (url.pathname === '/files' && q.includes("'alice@example.com' in owners")) return { files: [{ id: 'root-alice', name: 'Alice Library', mimeType: 'application/vnd.google-apps.folder', owners: [{ displayName: 'Alice Example', emailAddress: 'alice@example.com' }] }] };
     if (url.pathname === '/files' && q.includes("'root-alice' in parents")) {
       return { files: [{ id: 'catalog-alice', name: '.secret-library-catalog.json', mimeType: 'application/json' }] };
     }
@@ -59,8 +60,43 @@ test('reports shared Drive folders whose owners have not published a library cat
   };
   const result = await discoverDriveFriends({ uid: 'me', email: 'me@example.com' }, 'root-me', { driveFetch: request });
   assert.deepEqual(result.friends, []);
-  assert.doesNotMatch(result.errors.join(' '), /Friend Library/);
-  assert.doesNotMatch(result.errors.join(' '), /опубликованный каталог/);
+  assert.match(result.errors.join(' '), /Friend Library/);
+  assert.match(result.errors.join(' '), /каталог не найден/);
+});
+
+test('finds a friend library by known email without requiring reciprocal sharing', async () => {
+  const request = async (path) => {
+    const url = new URL(path, 'https://drive.googleapis.com');
+    const q = url.searchParams.get('q') || '';
+    if (url.pathname === '/files' && q.includes('sharedWithMe = true')) return { files: [] };
+    if (url.pathname === '/files' && q.includes("'olya@example.com' in owners")) {
+      return { files: [{ id: 'root-olya', name: 'Olya Library', mimeType: 'application/vnd.google-apps.folder', owners: [{ displayName: 'Olya', emailAddress: 'olya@example.com' }] }] };
+    }
+    if (url.pathname === '/files' && q.includes("'root-olya' in parents")) {
+      return { files: [{ id: 'catalog-olya', name: '.secret-library-catalog.json', mimeType: 'application/json' }] };
+    }
+    if (url.pathname === '/files' && q.includes("name = '.secret-library-catalog.json'")) {
+      return { files: [{ id: 'catalog-olya', name: '.secret-library-catalog.json', mimeType: 'application/json', parents: ['root-olya'] }] };
+    }
+    if (url.pathname === '/files/root-me') return { id: 'root-me', mimeType: 'application/vnd.google-apps.folder' };
+    if (url.pathname === '/files/root-me/permissions') return { permissions: [] };
+    if (url.pathname === '/files/root-olya') return { id: 'root-olya', name: 'Olya Library', mimeType: 'application/vnd.google-apps.folder', owners: [{ displayName: 'Olya', emailAddress: 'olya@example.com' }] };
+    throw new Error(`Unexpected Drive request: ${path}`);
+  };
+  const result = await discoverDriveFriends(
+    { uid: 'me-uid', email: 'me@example.com' },
+    'root-me',
+    {
+      driveFetch: request,
+      downloadDriveJsonFile: async (id) => {
+        assert.equal(id, 'catalog-olya');
+        return { ownerUid: 'olya-uid', rootFolderId: 'root-olya' };
+      },
+    },
+    [{ uid: 'known-olya', email: 'olya@example.com', displayName: 'Olya' }],
+  );
+  assert.ok(result.friends.some((friend) => friend.uid === 'olya-uid' && friend.inbound && friend.email === 'olya@example.com'));
+  assert.match(result.errors.join(' '), /olya@example.com: Drive вернул 1 папок/);
 });
 
 test('invitation grants root-folder reader permission to the invited Google account', async () => {

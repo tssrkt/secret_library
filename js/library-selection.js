@@ -9,13 +9,16 @@ export function createLibrarySelection({ tabs, service, show, unavailable, locat
     tabs.update(libraries, selected);
     if (!own) return;
     const target = libraries.find((library) => library.uid === selected);
-    const key = `${selected}:${target?.revision || ''}:${snapshot.status}`;
+    const key = `${selected}:${target?.revision || ''}:${snapshot.status}:${snapshot.driveDiscoveryMessage || ''}`;
     if (!force && key === renderedKey) return;
     renderedKey = key;
     const request = ++version;
     if (!selected) { show(own, { own: true, ownerIndex: own, ownerId: '' }); return; }
     if (!/^[A-Za-z0-9_-]{1,128}$/.test(selected) || !target) {
-      unavailable(snapshot.status === 'loading' ? 'Проверяем доступ к библиотеке…' : 'Библиотека недоступна или доступ к ней закрыт.', () => select(''));
+      const base = snapshot.status === 'loading' ? 'Проверяем доступ к библиотеке…' : 'Библиотека не найдена среди доступных каталогов друзей.';
+      const diagnostic = typeof snapshot.driveDiscoveryMessage === 'string' && snapshot.driveDiscoveryMessage.trim()
+        ? ` Диагностика поиска: ${snapshot.driveDiscoveryMessage}` : ' Диагностика поиска пока отсутствует: проверьте сообщение в разделе «Друзья» настроек.';
+      unavailable(`${base}${diagnostic}`, () => select(''));
       return;
     }
     unavailable('Загружаем библиотеку…', () => select(''));

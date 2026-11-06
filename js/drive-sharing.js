@@ -51,9 +51,13 @@ async function listSharedCatalogFiles(request = driveFetch) {
   return listPages('/files', params, request);
 }
 
-async function listSharedFolders(request = driveFetch) {
+async function listSharedFolders(request = driveFetch, ownerEmail = '') {
+  const ownerFilter = normalizeEmail(ownerEmail);
+  const clauses = [`mimeType = '${FOLDER_MIME_TYPE}'`, 'trashed = false'];
+  if (ownerFilter) clauses.push(`'${escapeDriveQuery(ownerFilter)}' in owners`);
+  else clauses.push('sharedWithMe = true');
   const params = new URLSearchParams({
-    q: `sharedWithMe = true and mimeType = '${FOLDER_MIME_TYPE}' and trashed = false`,
+    q: clauses.join(' and '),
     fields: 'nextPageToken,files(id,name,owners(displayName,emailAddress))',
     pageSize: '1000',
     spaces: 'drive',
@@ -98,17 +102,27 @@ export async function revokeRootFolderAccess(rootFolderId, permission) {
   await driveFetch(`/files/${encodeURIComponent(rootFolderId)}/permissions/${encodeURIComponent(permission.permissionId)}?${params}`, { method: 'DELETE' });
 }
 
-export async function discoverDriveFriends(user, configuredRootFolderId = '', api = {}) {
+export async function discoverDriveFriends(user, configuredRootFolderId = '', api = {}, knownFriends = []) {
   const request = api.driveFetch || driveFetch;
   const download = api.downloadDriveJsonFile || downloadDriveJsonFile;
   const findCatalog = api.findDriveCatalogFile || findDriveCatalogFile;
   const ownEmail = normalizeEmail(user?.email);
+  const diagnostics = [];
+  const note = (stage, detail) => {
+    if (diagnostics.length < 30) diagnostics.push(`[${stage}] ${String(detail || '').slice(0, 240)}`);
+  };
   const friends = new Map();
   const byEmail = new Map();
   const add = (friend) => {
     if (!friend || (!friend.uid && !friend.email)) return;
     const email = normalizeEmail(friend.email);
-    const key = friend.uid || `email:${email}`;
+    const existingByEmail = email ? byEmail.get(email) : null;
+    if (friend.uid && existingByEmail && String(existingByEmail.uid).startsWith('email:')) {
+      friends.delete(existingByEmail.uid);
+      existingByEmail.uid = friend.uid;
+      friends.set(friend.uid, existingByEmail);
+    }
+    const key = friend.uid || existingByEmail?.uid || `email:${email}`;
     const current = friends.get(key) || {
       uid: friend.uid || `email:${email}`,
       displayName: friend.displayName || email || 'Участник',
@@ -137,30 +151,82 @@ export async function discoverDriveFriends(user, configuredRootFolderId = '', ap
         const catalog = await download(ownCatalog.id);
         if (catalog?.ownerUid === user.uid && typeof catalog.rootFolderId === 'string') rootFolderId = catalog.rootFolderId;
       }
-    } catch { /* A known configured root can still be inspected if catalog discovery fails. */ }
+    } catch (error) {
+      note('own-catalog', `Не удалось определить свою корневую папку по каталогу: ${error?.message || error}`);
+    }
   }
 
   let driveDiscoveryErrors = [];
   let sharedFolders = [];
-  try { sharedFolders = await listSharedFolders(request); }
-  catch (error) { driveDiscoveryErrors.push(`Не удалось найти папки, которыми поделились с вами: ${error?.message || error}`); }
+  const knownFriendEmails = new Set((Array.isArray(knownFriends) ? knownFriends : [])
+    .map((friend) => normalizeEmail(friend?.email))
+    .filter((email) => email && email !== ownEmail));
+  for (const email of knownFriendEmails) note('known-friend-email', `Ищу доступные папки владельца по email из уже имеющегося списка друзей: ${email}.`);
+  // Also collect emails from permissions on our own root. All discovery below
+  // uses Google Drive only; knownFriends is an in-memory/local-cache input.
+  if (rootFolderId) {
+    try {
+      const ownRoot = await getRootFolder(rootFolderId, request);
+      if (ownRoot?.mimeType === FOLDER_MIME_TYPE) {
+        const permissions = await listPermissions(rootFolderId, request);
+        for (const permission of permissions) {
+          if (permission.deleted || permission.type !== 'user' || permission.role === 'owner') continue;
+          const email = normalizeEmail(permission.emailAddress);
+          if (!email || email === ownEmail) continue;
+          knownFriendEmails.add(email);
+          add({ uid: '', email, displayName: permission.displayName || email, outbound: true });
+        }
+      }
+    } catch (error) {
+      driveDiscoveryErrors.push(`Не удалось прочитать список email друзей из прав своей корневой папки: ${error?.message || error}`);
+      note('friend-email-source-error', `HTTP ${error?.status || '?'}; ${error?.message || error}`);
+    }
+  }
+  try {
+    sharedFolders = await listSharedFolders(request);
+    const byId = new Map(sharedFolders.filter((folder) => folder?.id).map((folder) => [folder.id, folder]));
+    for (const email of knownFriendEmails) {
+      try {
+        const ownedFolders = await listSharedFolders(request, email);
+        note('friend-email-folder-search', `${email}: Drive вернул ${ownedFolders.length} папок владельца по email-фильтру.`);
+        for (const folder of ownedFolders) byId.set(folder.id, folder);
+      } catch (error) {
+        note('friend-email-folder-search-error', `${email}: HTTP ${error?.status || '?'}; ${error?.message || error}`);
+      }
+    }
+    sharedFolders = [...byId.values()];
+    note('shared-folders', `Google Drive вернул ${sharedFolders.length} доступных папок после поиска по sharedWithMe и email ${[...knownFriendEmails].join(', ') || '(email друзей не найден)'}; текущий email: ${ownEmail || 'не получен'}.`);
+  } catch (error) {
+    driveDiscoveryErrors.push(`Не удалось найти папки, которыми поделились с вами: ${error?.message || error}`);
+    note('shared-folders-error', `HTTP ${error?.status || '?'}; ${error?.message || error}`);
+  }
+  let foldersWithCatalog = 0;
+  let catalogsRejected = 0;
   for (const folder of sharedFolders) {
-    if (folder.id === rootFolderId) continue;
+    if (folder.id === rootFolderId) { note('shared-folder-skip', `Пропущена собственная корневая папка ${folder.name || folder.id}.`); continue; }
     let catalogFile;
     try { catalogFile = await getRootCatalog(folder.id, request); }
     catch (error) {
-      if (error?.status === 403 || error?.status === 404) continue;
-      throw error;
+      note('shared-folder-catalog-error', `Папка «${folder.name || folder.id}», владелец ${(folder.owners || []).map((owner) => owner.emailAddress).filter(Boolean).join(', ') || 'неизвестен'}: HTTP ${error?.status || '?'}; ${error?.message || error}`);
+      continue;
     }
-    if (!catalogFile) continue;
+    if (!catalogFile) {
+      note('shared-folder-no-catalog', `В доступной папке «${folder.name || folder.id}» каталог не найден; владелец ${(folder.owners || []).map((owner) => owner.emailAddress).filter(Boolean).join(', ') || 'неизвестен'}.`);
+      continue;
+    }
+    foldersWithCatalog++;
     let catalog;
     try { catalog = await download(catalogFile.id); }
     catch (error) {
-      if (error?.status === 403 || error?.status === 404) continue;
-      throw error;
+      note('shared-catalog-read-error', `Каталог ${catalogFile.id} в папке «${folder.name || folder.id}»: HTTP ${error?.status || '?'}; ${error?.message || error}`);
+      continue;
     }
     if (!catalog || typeof catalog.ownerUid !== 'string' || !catalog.ownerUid
-        || catalog.ownerUid === user.uid || catalog.rootFolderId !== folder.id) continue;
+        || catalog.ownerUid === user.uid || catalog.rootFolderId !== folder.id) {
+      catalogsRejected++;
+      note('shared-catalog-validation', `Каталог ${catalogFile.id} в папке «${folder.name || folder.id}» отклонён: ${!catalog ? 'пустой JSON' : !catalog.ownerUid ? 'нет ownerUid' : catalog.ownerUid === user.uid ? 'это собственный каталог' : 'rootFolderId не совпадает с папкой'}.`);
+      continue;
+    }
     const owner = (folder.owners || []).find((item) => normalizeEmail(item.emailAddress)) || folder.owners?.[0] || {};
     add({
       uid: catalog.ownerUid,
@@ -176,17 +242,21 @@ export async function discoverDriveFriends(user, configuredRootFolderId = '', ap
   // and root folder from the catalog payload and Drive metadata.
   try {
     const catalogFiles = await listSharedCatalogFiles(request);
+    note('catalog-search', `Прямой поиск по имени ${SHARED_CATALOG_FILE_NAME} вернул ${catalogFiles.length} доступных файлов; через sharedWithMe найдено каталогов: ${foldersWithCatalog}; отклонено проверкой: ${catalogsRejected}.`);
     for (const file of catalogFiles) {
-      if (file.mimeType !== 'application/json') continue;
+      if (file.mimeType !== 'application/json') { note('catalog-file-skip', `Файл ${file.id} имеет MIME ${file.mimeType || 'не указан'}, ожидался application/json.`); continue; }
       let catalog;
       try { catalog = await download(file.id); }
       catch (error) {
-        if (error?.status === 403 || error?.status === 404) continue;
-        throw error;
+        note('catalog-download-error', `Файл ${file.id}: HTTP ${error?.status || '?'}; ${error?.message || error}`);
+        continue;
       }
       if (!catalog || typeof catalog.ownerUid !== 'string' || !catalog.ownerUid
           || catalog.ownerUid === user.uid || !catalog.rootFolderId
-          || !(file.parents || []).includes(catalog.rootFolderId)) continue;
+          || !(file.parents || []).includes(catalog.rootFolderId)) {
+        note('catalog-validation', `Файл ${file.id} отклонён: ${!catalog ? 'пустой JSON' : !catalog.ownerUid ? 'нет ownerUid' : catalog.ownerUid === user.uid ? 'это собственный каталог' : !catalog.rootFolderId ? 'нет rootFolderId' : 'rootFolderId отсутствует в parents файла'}.`);
+        continue;
+      }
       let root;
       try { root = await getRootFolder(catalog.rootFolderId, request); }
       catch (error) {
@@ -233,11 +303,12 @@ export async function discoverDriveFriends(user, configuredRootFolderId = '', ap
       && !driveDiscoveryErrors.some((error) => error.startsWith('Не удалось найти папки'))) {
     driveDiscoveryErrors.push('Google Drive не обнаружил папок, которыми поделились с текущим аккаунтом. Проверьте, что друзья предоставили доступ именно тому Google-аккаунту, под которым вы вошли на сайт.');
   }
-
+  if (!friends.size) note('result', `Поиск завершён: друзей не обнаружено. ${driveDiscoveryErrors.length ? 'Есть ошибки запросов.' : 'Запросы завершились без явной ошибки; проверьте результаты этапов выше.'}`);
+  else note('result', `Поиск завершён: обнаружено ${friends.size} записей; inbound: ${[...friends.values()].filter((friend) => friend.inbound).length}, outbound: ${[...friends.values()].filter((friend) => friend.outbound).length}.`);
 
   return {
     rootFolderId,
-    errors: driveDiscoveryErrors,
+    errors: [...driveDiscoveryErrors, ...diagnostics],
     friends: [...friends.values()]
       .filter((friend) => friend.inbound || friend.outbound)
       .sort((a, b) => a.displayName.localeCompare(b.displayName, 'ru') || a.uid.localeCompare(b.uid)),

@@ -1,7 +1,7 @@
 import { startFirebaseSession, endFirebaseSession } from './firebase-session.js';
 import { createSocialStore } from './social-store.js';
 import { createSharedLibraryStore } from './shared-library.js?v=20261106-drive-catalog';
-import { discoverDriveFriends, grantRootFolderAccess } from './drive-sharing.js';
+import { discoverDriveFriends, grantRootFolderAccess } from './drive-sharing.js?v=20261106-drive-diagnostics';
 import { sendInvitationEmail, getInvitationStatuses as fetchInvitationStatuses } from './invitation-mailer.js';
 
 export function socialError(error) {
@@ -24,6 +24,7 @@ let invitationUser = null;
 const knownContactsSyncs = new Map();
 const FRIEND_CACHE_PREFIX = 'secret-library-social-friends-v1:';
 let driveFriends = [];
+let lastDriveFriendEmailSignature = '';
 let configuredRootFolderId = '';
 let connectionReadyPromise = Promise.resolve(false);
 let resolveConnectionReady = null;
@@ -63,9 +64,13 @@ function watchCatalogs(friends) {
     .map((friend) => ({ uid: friend.uid, displayName: friend.displayName, revision: 'drive' }));
   emit({ libraries });
 }
-async function refreshDriveFriends(user, currentGeneration = generation) {
+async function refreshDriveFriends(user, currentGeneration = generation, knownFriends = driveFriends) {
   try {
-    const result = await discoverDriveFriends(user, configuredRootFolderId);
+    // Use emails already present in the UI/cache snapshot as search keys only.
+    // Folder discovery, catalog reads and library availability are Google Drive-only.
+    const emailSignature = [...new Set((knownFriends || []).map((friend) => String(friend?.email || '').trim().toLowerCase()).filter(Boolean))].sort().join('|');
+    lastDriveFriendEmailSignature = emailSignature;
+    const result = await discoverDriveFriends(user, configuredRootFolderId, {}, knownFriends);
     if (currentGeneration !== generation) return;
     if (result.rootFolderId) configuredRootFolderId = result.rootFolderId;
     driveFriends = result.friends;
@@ -121,7 +126,15 @@ export const social = {
       if (current !== generation) return;
       emit({ status: 'ready', message: '' });
       settleConnectionReady(true);
-      stop = store.subscribe((snapshot) => { if (current === generation) { emit({ ...snapshot, friends: driveFriends }); watchCatalogs(driveFriends); } },
+      stop = store.subscribe((snapshot) => {
+        if (current !== generation) return;
+        const snapshotEmailSignature = [...new Set((snapshot.friends || []).map((friend) => String(friend?.email || '').trim().toLowerCase()).filter(Boolean))].sort().join('|');
+        if (snapshotEmailSignature && snapshotEmailSignature !== lastDriveFriendEmailSignature) {
+          void refreshDriveFriends(session.user, current, snapshot.friends);
+        }
+        emit({ ...snapshot, friends: driveFriends });
+        watchCatalogs(driveFriends);
+      },
         (error) => { if (current === generation) emit({ status: 'error', message: socialError(error) }); });
     } catch (error) {
       if (current === generation) {
