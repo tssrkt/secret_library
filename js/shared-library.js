@@ -19,14 +19,18 @@ export function sharedLibraryIndex(index, settings) {
   }
   const fields = ['id', 'parentId', 'fileName', 'extension', 'sourceType', 'size', 'modifiedTime', 'metadataStatus',
     'metadataVersion', 'title', 'authors', 'genres', 'series', 'seriesNumber', 'annotation', 'preview', 'language', 'resourceKey'];
+  const projectBook = (book) => {
+    const projected = {};
+    for (const field of fields) if (book[field] !== undefined) projected[field] = book[field];
+    return projected;
+  };
   const folderNotes = Object.fromEntries(Object.entries(settings.folderNotes || {})
     .filter(([folderId, note]) => allowed.has(folderId) && typeof note === 'string' && note.trim())
     .map(([folderId, note]) => [folderId, note.trim()]));
   return { version: index.version, rootFolderId: index.rootFolderId, updatedAt: index.updatedAt || '', folderNotes,
     folders: index.folders.filter((folder) => folder.id === index.rootFolderId || allowed.has(folder.id))
       .map(({ id, parentId, name }) => ({ id, parentId, name })),
-    books: index.books.filter((book) => book.parentId === index.rootFolderId || allowed.has(book.parentId))
-      .map((book) => Object.fromEntries(fields.filter((field) => book[field] !== undefined).map((field) => [field, book[field]]))) };
+    books: index.books.filter((book) => book.parentId === index.rootFolderId || allowed.has(book.parentId)).map(projectBook) };
 }
 
 export async function sharedLibraryPayload(index, settings) {
