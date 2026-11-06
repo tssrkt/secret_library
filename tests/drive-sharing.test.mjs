@@ -131,3 +131,40 @@ test('invitation does not create a duplicate Drive permission when access alread
   assert.deepEqual(result, { permissionId: 'existing-permission', created: false, email: 'friend@example.com' });
   assert.equal(created, false);
 });
+
+test('matches a published catalog to the known friend email when Drive omits root owner details', async () => {
+  const request = async (path) => {
+    const url = new URL(path, 'https://drive.googleapis.com');
+    const q = url.searchParams.get('q') || '';
+    if (url.pathname === '/files' && q.includes('sharedWithMe = true')) return { files: [] };
+    if (url.pathname === '/files' && q.includes("'olya@example.com' in owners")) {
+      return { files: [{ id: 'root-olya', name: 'Secret_Library', mimeType: 'application/vnd.google-apps.folder' }] };
+    }
+    if (url.pathname === '/files' && q.includes("'root-olya' in parents")) {
+      return { files: [{ id: 'catalog-olya', name: '.secret-library-catalog.json', mimeType: 'application/json' }] };
+    }
+    if (url.pathname === '/files' && q.includes("name = '.secret-library-catalog.json'")) {
+      return { files: [{ id: 'catalog-olya', name: '.secret-library-catalog.json', mimeType: 'application/json', parents: ['root-olya'] }] };
+    }
+    if (url.pathname === '/files/root-me') return { id: 'root-me', mimeType: 'application/vnd.google-apps.folder' };
+    if (url.pathname === '/files/root-me/permissions') return { permissions: [] };
+    if (url.pathname === '/files/root-olya') return { id: 'root-olya', name: 'Secret_Library', mimeType: 'application/vnd.google-apps.folder' };
+    throw new Error(`Unexpected Drive request: ${path}`);
+  };
+  const result = await discoverDriveFriends(
+    { uid: 'me-uid', email: 'me@example.com' },
+    'root-me',
+    {
+      driveFetch: request,
+      downloadDriveJsonFile: async (id) => {
+        assert.equal(id, 'catalog-olya');
+        return { ownerUid: 'olya-uid', rootFolderId: 'root-olya', signature: 'test', books: [], folders: [] };
+      },
+    },
+    [{ uid: 'unmatched-firebase-uid', email: 'olya@example.com', displayName: 'Olya' }],
+  );
+  const friend = result.friends.find((item) => item.uid === 'olya-uid');
+  assert.ok(friend);
+  assert.equal(friend.email, 'olya@example.com');
+  assert.equal(friend.inbound, true);
+});

@@ -158,6 +158,7 @@ export async function discoverDriveFriends(user, configuredRootFolderId = '', ap
 
   let driveDiscoveryErrors = [];
   let sharedFolders = [];
+  const folderEmailById = new Map();
   const knownFriendEmails = new Set((Array.isArray(knownFriends) ? knownFriends : [])
     .map((friend) => normalizeEmail(friend?.email))
     .filter((email) => email && email !== ownEmail));
@@ -189,7 +190,15 @@ export async function discoverDriveFriends(user, configuredRootFolderId = '', ap
       try {
         const ownedFolders = await listSharedFolders(request, email);
         note('friend-email-folder-search', `${email}: Drive вернул ${ownedFolders.length} папок владельца по email-фильтру: ${ownedFolders.map((folder) => `${folder.name || '(без имени)'} [${folder.id}]`).join('; ') || '(пусто)'}.`);
-        for (const folder of ownedFolders) byId.set(folder.id, folder);
+        for (const folder of ownedFolders) {
+          folderEmailById.set(folder.id, email);
+          const existing = byId.get(folder.id);
+          byId.set(folder.id, {
+            ...existing,
+            ...folder,
+            owners: folder.owners?.length ? folder.owners : existing?.owners?.length ? existing.owners : [{ emailAddress: email }],
+          });
+        }
       } catch (error) {
         note('friend-email-folder-search-error', `${email}: HTTP ${error?.status || '?'}; ${error?.message || error}`);
       }
@@ -281,10 +290,12 @@ export async function discoverDriveFriends(user, configuredRootFolderId = '', ap
       }
       note('catalog-root-match', `Каталог ${file.id}: UID владельца ${catalog.ownerUid}; корень ${catalog.rootFolderId}; метаданные ${root ? 'доступны' : 'недоступны, использован известный друг'}.`);
       const owner = (root?.owners || []).find((item) => normalizeEmail(item.emailAddress)) || root?.owners?.[0] || {};
+      const ownerEmail = normalizeEmail(owner.emailAddress) || normalizeEmail(knownOwner?.email)
+        || normalizeEmail(folderEmailById.get(catalog.rootFolderId)) || '';
       add({
         uid: catalog.ownerUid,
-        email: owner.emailAddress || normalizeEmail(knownOwner?.email) || '',
-        displayName: owner.displayName || knownOwner?.displayName || root?.name || 'Участник',
+        email: ownerEmail,
+        displayName: owner.displayName || knownOwner?.displayName || root?.name || ownerEmail || 'Участник',
         isAdmin: catalog.ownerUid === 'aA89pCYsKNbWWePmAveUVrG34F82',
         inbound: true,
       });
