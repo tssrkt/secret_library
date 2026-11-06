@@ -2,6 +2,11 @@ import { SHARED_CATALOG_FILE_NAME, FOLDER_MIME_TYPE } from './config.js';
 import { driveFetch, downloadDriveJsonFile, findDriveCatalogFile } from './drive.js';
 
 const normalizeEmail = (value) => typeof value === 'string' ? value.trim().toLowerCase() : '';
+const isEmailPrefixName = (name, email) => {
+  const value = typeof name === 'string' ? name.trim().toLowerCase() : '';
+  const prefix = normalizeEmail(email).split('@')[0];
+  return Boolean(value && prefix && value === prefix);
+};
 const escapeDriveQuery = (value) => value.replaceAll('\\', '\\\\').replaceAll("'", "\\'");
 
 async function listPages(path, params, request = driveFetch) {
@@ -135,7 +140,7 @@ export async function discoverDriveFriends(user, configuredRootFolderId = '', ap
     current.outbound ||= friend.outbound === true;
     if (friend.inbound && friend.uid) current.uid = friend.uid;
     if (friend.catalogId) current.catalogId = friend.catalogId;
-    if (friend.displayName && (!current.displayName || current.displayName === current.email)) current.displayName = friend.displayName;
+    if (friend.displayName && (!current.displayName || current.displayName === current.email || isEmailPrefixName(current.displayName, current.email))) current.displayName = friend.displayName;
     if (email) {
       current.email = email;
       byEmail.set(email, current);
@@ -241,7 +246,7 @@ export async function discoverDriveFriends(user, configuredRootFolderId = '', ap
     add({
       uid: catalog.ownerUid,
       email: owner.emailAddress || '',
-      displayName: owner.displayName || folder.name || 'Участник',
+      displayName: catalog.ownerDisplayName || owner.displayName || folder.name || 'Участник',
       isAdmin: catalog.ownerUid === 'aA89pCYsKNbWWePmAveUVrG34F82',
       inbound: true,
       catalogId: catalogFile.id,
@@ -313,7 +318,7 @@ export async function discoverDriveFriends(user, configuredRootFolderId = '', ap
       add({
         uid: catalog.ownerUid,
         email: ownerEmail,
-        displayName: owner.displayName || knownOwner?.displayName || root?.name || ownerEmail || 'Участник',
+        displayName: catalog.ownerDisplayName || owner.displayName || knownOwner?.displayName || root?.name || ownerEmail || 'Участник',
         isAdmin: catalog.ownerUid === 'aA89pCYsKNbWWePmAveUVrG34F82',
         inbound: true,
         catalogId: file.id,

@@ -189,9 +189,9 @@ test('discovers a shared catalog from Drive owner metadata without Firebase UID 
   const result = await discoverDriveFriends(
     { emailAddress: 'me@example.com', displayName: 'Me' },
     '',
-    { driveFetch: request, downloadDriveJsonFile: async () => ({ ownerUid: 'friend-uid', rootFolderId: 'root-friend', signature: 'sig', books: [], folders: [] }) },
+    { driveFetch: request, downloadDriveJsonFile: async () => ({ ownerUid: 'friend-uid', ownerDisplayName: 'Olya Shustrik', rootFolderId: 'root-friend', signature: 'sig', books: [], folders: [] }) },
     [],
   );
-  assert.ok(result.friends.some((friend) => friend.uid === 'friend-uid' && friend.inbound && friend.email === 'friend@example.com'));
+  assert.ok(result.friends.some((friend) => friend.uid === 'friend-uid' && friend.inbound && friend.email === 'friend@example.com' && friend.displayName === 'Olya Shustrik'));
   assert.match(result.errors.join(' '), /владелец сопоставлен по данным Google Drive/);
 });

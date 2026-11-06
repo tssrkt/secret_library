@@ -58,8 +58,9 @@ export function createSharedLibraryStore({ user }) {
       const task = async () => {
         ensureCurrent();
         const projection = sharedLibraryIndex(index, settings);
-        const signature = await signatureOf(projection);
-        const catalog = JSON.stringify({ ...projection, ownerUid: user.uid, signature });
+        const ownerDisplayName = typeof user.displayName === 'string' ? user.displayName.trim().slice(0, 160) : '';
+        const signature = await signatureOf({ projection, ownerDisplayName });
+        const catalog = JSON.stringify({ ...projection, ownerUid: user.uid, ownerDisplayName, signature });
         let existing = await findDriveCatalogFile(user.uid);
         if (existing && !existing.parents?.includes(index.rootFolderId)) {
           await deleteDriveFile(existing.id);
@@ -67,7 +68,7 @@ export function createSharedLibraryStore({ user }) {
         }
         if (existing) {
           const current = await downloadDriveJsonFile(existing.id);
-          if (current?.signature === signature && current.rootFolderId === index.rootFolderId) {
+          if (current?.signature === signature && current.rootFolderId === index.rootFolderId && (current.ownerDisplayName || '') === ownerDisplayName) {
             catalogIds.set(user.uid, existing.id);
             return { fileId: existing.id, revision: signature };
           }
