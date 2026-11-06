@@ -5,7 +5,9 @@ export function createLibrarySelection({ tabs, service, show, unavailable, locat
   let version = 0;
   let renderedKey = null;
   const update = async (force = false) => {
-    const libraries = snapshot.status === 'ready' ? snapshot.libraries || [] : [];
+    // Friend tabs are discovered from Google Drive and remain available even if
+    // the optional Firebase social store is loading, unavailable, or over quota.
+    const libraries = Array.isArray(snapshot.libraries) ? snapshot.libraries : [];
     tabs.update(libraries, selected);
     if (!own) return;
     const target = libraries.find((library) => library.uid === selected);

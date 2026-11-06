@@ -106,7 +106,7 @@ export async function discoverDriveFriends(user, configuredRootFolderId = '', ap
   const request = api.driveFetch || driveFetch;
   const download = api.downloadDriveJsonFile || downloadDriveJsonFile;
   const findCatalog = api.findDriveCatalogFile || findDriveCatalogFile;
-  const ownEmail = normalizeEmail(user?.email);
+  const ownEmail = normalizeEmail(user?.email || user?.emailAddress);
   const diagnostics = [];
   const note = (stage, detail) => {
     if (diagnostics.length < 30) diagnostics.push(`[${stage}] ${String(detail || '').slice(0, 240)}`);
@@ -145,9 +145,9 @@ export async function discoverDriveFriends(user, configuredRootFolderId = '', ap
   };
 
   let rootFolderId = configuredRootFolderId || '';
-  if (!rootFolderId) {
+  if (!rootFolderId && user?.uid) {
     try {
-      const ownCatalog = await findCatalog(user?.uid);
+      const ownCatalog = await findCatalog(user.uid);
       if (ownCatalog) {
         const catalog = await download(ownCatalog.id);
         if (catalog?.ownerUid === user.uid && typeof catalog.rootFolderId === 'string') rootFolderId = catalog.rootFolderId;
@@ -232,7 +232,7 @@ export async function discoverDriveFriends(user, configuredRootFolderId = '', ap
       continue;
     }
     if (!catalog || typeof catalog.ownerUid !== 'string' || !catalog.ownerUid
-        || catalog.ownerUid === user.uid || catalog.rootFolderId !== folder.id) {
+        || catalog.ownerUid === user?.uid || catalog.rootFolderId === rootFolderId || catalog.rootFolderId !== folder.id) {
       catalogsRejected++;
       note('shared-catalog-validation', `Каталог ${catalogFile.id} в папке «${folder.name || folder.id}» отклонён: ${!catalog ? 'пустой JSON' : !catalog.ownerUid ? 'нет ownerUid' : catalog.ownerUid === user.uid ? 'это собственный каталог' : 'rootFolderId не совпадает с папкой'}.`);
       continue;
@@ -263,7 +263,7 @@ export async function discoverDriveFriends(user, configuredRootFolderId = '', ap
         continue;
       }
       if (!catalog || typeof catalog.ownerUid !== 'string' || !catalog.ownerUid
-          || catalog.ownerUid === user.uid || !catalog.rootFolderId
+          || catalog.ownerUid === user?.uid || catalog.rootFolderId === rootFolderId || !catalog.rootFolderId
           || !(file.parents || []).includes(catalog.rootFolderId)) {
         note('catalog-validation', `Файл ${file.id} отклонён: ${!catalog ? 'пустой JSON' : !catalog.ownerUid ? 'нет ownerUid' : catalog.ownerUid === user.uid ? 'это собственный каталог' : !catalog.rootFolderId ? 'нет rootFolderId' : 'rootFolderId отсутствует в parents файла'}.`);
         continue;

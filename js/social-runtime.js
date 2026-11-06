@@ -2,7 +2,7 @@ import { startFirebaseSession, endFirebaseSession } from './firebase-session.js'
 import { createSocialStore } from './social-store.js';
 import { createSharedLibraryStore } from './shared-library.js?v=20261106-drive-catalog';
 import { discoverDriveFriends, grantRootFolderAccess } from './drive-sharing.js?v=20261106-drive-only-share';
-import { findDriveCatalogFile, downloadDriveJsonFile } from './drive.js';
+import { findDriveCatalogFile, downloadDriveJsonFile, getCurrentDriveUser } from './drive.js';
 import { sendInvitationEmail, getInvitationStatuses as fetchInvitationStatuses } from './invitation-mailer.js';
 
 export function socialError(error) {
@@ -21,6 +21,7 @@ let store;
 let stop;
 let generation = 0;
 let shared;
+let driveReader;
 let invitationUser = null;
 const knownContactsSyncs = new Map();
 const FRIEND_CACHE_PREFIX = 'secret-library-social-friends-v1:';
@@ -69,9 +70,9 @@ async function refreshDriveFriends(user, currentGeneration = generation, knownFr
   try {
     // Use emails already present in the UI/cache snapshot as search keys only.
     // Folder discovery, catalog reads and library availability are Google Drive-only.
-    const emailSignature = [...new Set((knownFriends || []).map((friend) => String(friend?.email || '').trim().toLowerCase()).filter(Boolean))].sort().join('|');
-    lastDriveFriendEmailSignature = emailSignature;
-    const result = await discoverDriveFriends(user, configuredRootFolderId, {}, knownFriends);
+    // Friend tabs are discovered exclusively from Drive permissions and Drive catalogs.
+    // Never seed this process from Firestore snapshots or cached contact lists.
+    const result = await discoverDriveFriends(user, configuredRootFolderId, {}, []);
     if (currentGeneration !== generation) return;
     if (result.rootFolderId) configuredRootFolderId = result.rootFolderId;
     driveFriends = result.friends;
@@ -107,6 +108,15 @@ export const social = {
     shared?.dispose(); shared = null;
     emit({ status: 'loading', message: 'Подключение социальной части…', friends: driveFriends, notifications: [], libraries: [], ownRootFolderId: configuredRootFolderId });
     try {
+      // Discover and open friend libraries directly with the Google Drive token.
+      // This path runs independently of Firebase Authentication/Firestore.
+      const driveUser = await getCurrentDriveUser();
+      if (current !== generation) return;
+      driveReader?.dispose();
+      driveReader = createSharedLibraryStore({ user: { uid: '' } });
+      driveFriends = [];
+      emit({ friends: [], libraries: [], status: 'loading', message: 'Ищем библиотеки друзей в Google Drive…' });
+      void refreshDriveFriends(driveUser, current, []);
       const session = await startFirebaseSession(token);
       if (current !== generation) return;
       if (!session) { settleConnectionReady(false); return; }
@@ -116,25 +126,18 @@ export const social = {
       shared = createSharedLibraryStore({ user: session.user });
       settleConnectionReady(true);
       invitationUser = session.user;
-      const cachedFriends = readFriendCache(session.user.uid);
-      driveFriends = cachedFriends || driveFriends;
-      if (cachedFriends) {
-        emit({ friends: cachedFriends });
-        watchCatalogs(cachedFriends);
-      }
-      void refreshDriveFriends(session.user, current);
+      // Registration supports unrelated social features only; Drive discovery and
+      // friend-library loading have already started independently above.
       await store.register();
       if (current !== generation) return;
       emit({ status: 'ready', message: '' });
       settleConnectionReady(true);
       stop = store.subscribe((snapshot) => {
         if (current !== generation) return;
-        const snapshotEmailSignature = [...new Set((snapshot.friends || []).map((friend) => String(friend?.email || '').trim().toLowerCase()).filter(Boolean))].sort().join('|');
-        if (snapshotEmailSignature && snapshotEmailSignature !== lastDriveFriendEmailSignature) {
-          void refreshDriveFriends(session.user, current, snapshot.friends);
-        }
-        // Firestore's legacy snapshot can contain an empty/stale libraries array.
-        // The visible friend tabs must always come from the Drive catalog discovery.
+        // The database snapshot is used only for unrelated social features such as
+        // notifications. It must never supply friend emails, friend rows, or tabs.
+        // Folder discovery and library tabs are built exclusively from Google Drive
+        // results plus the local cache populated by earlier Drive discovery.
         emit({ ...snapshot, friends: driveFriends, libraries: driveFriends
           .filter((friend) => friend.inbound && !String(friend.uid).startsWith('email:'))
           .map((friend) => ({ uid: friend.uid, displayName: friend.displayName, revision: 'drive', catalogId: friend.catalogId || '' })) });
@@ -151,6 +154,7 @@ export const social = {
     settleConnectionReady(false);
     generation++; stop?.(); stop = null; store?.dispose(); store = null; invitationUser = null;
     shared?.dispose(); shared = null;
+    driveReader?.dispose(); driveReader = null;
     driveFriends = [];
     configuredRootFolderId = '';
     emit({ status: 'idle', message: 'Войдите через Google.', friends: [], notifications: [], libraries: [], ownRootFolderId: null });
@@ -217,8 +221,8 @@ export const social = {
     // Use the exact catalog ID already validated by Drive discovery. This avoids
     // a second ambiguous global filename search when the user opens the tab.
     const library = state.libraries?.find((item) => item.uid === uid);
-    if (!shared || !library) return Promise.reject(new Error('Библиотека недоступна.'));
-    return shared.load(uid, catalogId || library.catalogId || '');
+    if (!driveReader || !library) return Promise.reject(new Error('Библиотека недоступна.'));
+    return driveReader.load(uid, catalogId || library.catalogId || '');
   },
   loadCover(uid, book) {
     if (!shared || !state.friends.some((friend) => friend.uid === uid && friend.inbound)) return Promise.resolve(null);
