@@ -120,6 +120,7 @@ export function validateCompletedIndex(candidate, activeIndex, manifest = candid
   const builtIds = new Set();
   const oldBooks = new Map(activeIndex.books.map((book) => [book.id, book]));
   const sources = new Map((manifest?.sourceBooks || []).map((book) => [book.id, book]));
+  const manifestPreviousBooks = new Map((manifest?.previousBooks || []).map((book) => [book.id, book]));
   const selected = new Set(manifest?.selectedIds || []);
   const preservedIds = new Set((candidate.indexingErrors || []).filter((entry) => entry.previousEntryPreserved && entry.outcome === 'failed').map((entry) => entry.fileId));
   for (const book of candidate.books) {
@@ -139,7 +140,7 @@ export function validateCompletedIndex(candidate, activeIndex, manifest = candid
         && Object.hasOwn(oldBook, 'title') && Array.isArray(oldBook.authors)
         ? { ...oldBook, metadataStatus: 'ready' } : null;
     const previousReady = previousBook || (manifest?.mode === 'refresh'
-      ? (manifest.previousBooks || []).find((item) => item.id === book.id) || null : null);
+      ? manifestPreviousBooks.get(book.id) || null : null);
     const unchangedPrevious = preservedIds.has(book.id) && previousReady
       && JSON.stringify(book) === JSON.stringify(previousRecord(previousReady, fallbackBook || oldBook));
     if (preservedIds.has(book.id) && !unchangedPrevious) throw new Error('Preserved index entry differs from the previous good record.');
