@@ -56,9 +56,11 @@ export const bootstrapAdmin = onCall({ region: 'europe-west1', invoker: 'public'
   if (!isBootstrapAdminEmailMatch(ADMIN_EMAIL, request.auth.token.email)) {
     throw new HttpsError('permission-denied', 'Первоначальная настройка доступна только назначенному владельцу.');
   }
-  const existing = await db.collection('adminUsers').limit(1).get();
+  const [existing, current] = await Promise.all([
+    db.collection('adminUsers').limit(1).get(),
+    adminRef(uid).get()
+  ]);
   if (!existing.empty) {
-    const current = await adminRef(uid).get();
     if (current.exists && current.data().role === 'superadmin') {
       await db.doc(`users/${uid}`).set({ isAdmin: true }, { merge: true });
       return { ok: true, alreadyAdmin: true };
