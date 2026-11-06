@@ -146,9 +146,8 @@ export function preserveBookMetadata(currentIndex, previousIndex) {
     if (book.metadataStatus === 'processing') book.metadataStatus = 'pending';
   }
   currentIndex.createdAt = previousIndex.createdAt || currentIndex.createdAt;
-  const presentIds = new Set(currentIndex.books.map((book) => book.id));
-  currentIndex.indexingErrors = structuredClone((previousIndex.indexingErrors || []).filter((entry) => presentIds.has(entry.fileId)));
   const currentBooks = new Map(currentIndex.books.map((book) => [book.id, book]));
+  currentIndex.indexingErrors = structuredClone((previousIndex.indexingErrors || []).filter((entry) => currentBooks.has(entry.fileId)));
   for (const entry of currentIndex.indexingErrors) {
     const path = libraryFilePath(currentIndex, currentBooks.get(entry.fileId));
     if (path) entry.path = path;
