@@ -747,7 +747,7 @@ function fsGetAdminUserFlags(uids, profileUids, knownProfileUids) {
   const bodies = [];
   if (unique.length) bodies.push(
     { structuredQuery: { from: [{ collectionId: 'bannedUsers' }], where: { fieldFilter: { field: { fieldPath: '__name__' }, op: 'IN', value: { arrayValue: { values: referenceValues('bannedUsers') } } } }, limit: unique.length } },
-    { structuredQuery: { from: [{ collectionId: 'adminUsers' }], where: { fieldFilter: { field: { fieldPath: '__name__' }, op: 'IN', value: { arrayValue: { values: referenceValues('adminUsers') } } } }, limit: unique.length } },
+    { structuredQuery: { from: [{ collectionId: 'adminUsers' }], where: { fieldFilter: { field: { fieldPath: 'uid' }, op: 'IN', value: { arrayValue: { values: unique.map(uid => ({ stringValue: uid })) } } } }, limit: unique.length } },
     { structuredQuery: { from: [{ collectionId: 'userDirectory' }], where: { fieldFilter: { field: { fieldPath: 'uid' }, op: 'IN', value: { arrayValue: { values: unique.map(uid => ({ stringValue: uid })) } } } }, limit: unique.length } }
   );
   for (let offset = 0; offset < profiles.length; offset += 30) {
@@ -766,7 +766,9 @@ function fsGetAdminUserFlags(uids, profileUids, knownProfileUids) {
       if (flagQueryCount && index === 0) {
         if (unique.includes(uid)) result.banned.add(uid);
       } else if (flagQueryCount && index === 1) {
-        if (unique.includes(uid)) result.admins.add(uid);
+        const item = fsDecodeFields(document.fields || {});
+        const adminUid = isValidUid(item.uid) ? item.uid : uid;
+        if (unique.includes(adminUid)) result.admins.add(adminUid);
       } else if (flagQueryCount && index === 2) {
         const item = fsDecodeFields(document.fields || {});
         if (isValidUid(item.uid) && unique.includes(item.uid)) result.emailByUid.set(item.uid, uid);

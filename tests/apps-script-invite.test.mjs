@@ -296,8 +296,8 @@ test('admin user flags fetch banned and admin records concurrently', () => {
       const query = JSON.parse(request.payload).structuredQuery;
       const collectionId = query.from[0].collectionId;
       const document = {
-        name: `projects/project/databases/(default)/documents/${collectionId}/${collectionId === 'userDirectory' ? 'reader@example.com' : 'user-1'}`,
-        fields: collectionId === 'userDirectory' ? { uid: { stringValue: 'user-1' } } : {}
+        name: `projects/project/databases/(default)/documents/${collectionId}/${collectionId === 'userDirectory' ? 'reader@example.com' : collectionId === 'adminUsers' ? 'legacy-admin-record' : 'user-1'}`,
+        fields: collectionId === 'userDirectory' || collectionId === 'adminUsers' ? { uid: { stringValue: 'user-1' } } : {}
       };
       return {
         getResponseCode: () => 200,
@@ -307,6 +307,7 @@ test('admin user flags fetch banned and admin records concurrently', () => {
   };
   const flags = app.context.fsGetAdminUserFlags(['user-1', 'user-2']);
   assert.equal(requests.length, 3);
+  assert.equal(JSON.parse(requests[1].payload).structuredQuery.where.fieldFilter.field.fieldPath, 'uid');
   assert.equal(flags.banned.has('user-1'), true);
   assert.equal(flags.admins.has('user-1'), true);
   assert.equal(flags.emailByUid.get('user-1'), 'reader@example.com');
