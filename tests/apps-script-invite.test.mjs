@@ -736,7 +736,8 @@ test('resends the same pending invitation after one hour', () => {
 test('invitation status endpoint returns the persisted cooldown timestamp for the owner only', () => {
   const app = harness();
   app.invoke();
-  const result = app.invoke({ action: 'getInvitationStatuses', emails: ['friend@gmail.com', 'someone-else@gmail.com'] });
+  const result = app.invoke({ action: 'getInvitationStatuses', emails: ['friend@gmail.com', 'FRIEND@gmail.com', 'someone-else@gmail.com'] });
+  assert.equal(app.calls.filter(call => call.url.includes('/pendingInvites/friend%40gmail.com/shares/owner-uid')).length, 2);
   assert.match(result.content, /"lastSentAt":\d+/);
   assert.match(result.content, /"cooldownUntil":\d+/);
   assert.doesNotMatch(result.content, /someone-else@gmail\.com/, 'status endpoint does not reveal invitations not owned by this user');
