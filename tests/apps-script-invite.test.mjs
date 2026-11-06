@@ -1183,11 +1183,22 @@ test('each moderator mutation requires its own explicit permission', async (t) =
   }
 });
 
-test('new ban records preserve the email mapping for future block checks', () => {
+test('new ban records batch the email-directory lookup and preserve its email mapping', () => {
   const app = adminHarness({ permissions: { users: true } });
-  app.context.fsQueryGroupByField = collection => collection === 'userDirectory' ? [{ id: 'target@example.com', uid: 'target-uid' }] : [];
+  let batchedPaths;
+  let batchedSpecs;
+  app.context.fsGetManyAndQueryGroupByFieldMany = (paths, specs) => {
+    batchedPaths = paths;
+    batchedSpecs = specs;
+    return {
+      records: [null, app.records.get('users/target-uid')],
+      groups: [[{ id: 'target%40example.com', uid: 'target-uid' }]]
+    };
+  };
   const actor = { uid: 'mod-uid', admin: { role: 'moderator', active: true, permissions: { users: true } } };
   app.context.banLibraryUserApi(actor, { uid: 'target-uid', reason: 'abuse' });
+  assert.equal(JSON.stringify(batchedPaths), JSON.stringify(['adminUsers/target-uid', 'users/target-uid']));
+  assert.equal(JSON.stringify(batchedSpecs), JSON.stringify([{ collectionId: 'userDirectory', field: 'uid', value: 'target-uid', limit: 1 }]));
   assert.equal(app.records.get('bannedUsers/target-uid').email, 'target@example.com');
 });
 
