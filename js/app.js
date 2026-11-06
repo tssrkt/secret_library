@@ -63,7 +63,10 @@ const selection = createLibrarySelection({ tabs, service: social,
   unavailable: (message, goHome) => { if (!libraryAccessGranted) { tabsRoot.hidden = true; return; } tabsRoot.hidden = false; ui.showLibraryUnavailable(message, goHome); },
 });
 async function publishLibrary(index, settings = null) {
-  if (!social.ready || !hasMinimumBooks(index)) return;
+  // social.connect() starts before the saved index is loaded, but may still be
+  // registering the Firebase session here. Do not drop publication on that race:
+  // social.publishLibrary() waits for the connection to become ready.
+  if (!hasMinimumBooks(index)) return;
   const version = sharingVersion;
   const owner = authorizedOwner;
   const loaded = settings || (await loadUserSettings(index)).settings;
