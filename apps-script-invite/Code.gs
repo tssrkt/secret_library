@@ -1244,17 +1244,27 @@ function banLibraryUserApi(actor, data) {
   const uid = String(data.uid || '');
   const reason = typeof data.reason === 'string' ? data.reason.trim().slice(0, 500) : '';
   if (!isValidUid(uid) || uid === actor.uid) throw new Error('Нельзя заблокировать эту учётную запись.');
-  const [admin, profile] = fsGetMany([
-    'adminUsers/' + uid,
-    'users/' + uid
-  ]);
-  if (admin?.role === 'superadmin') throw new Error('Главного администратора нельзя заблокировать.');
-  if (!profile) throw new Error('Участник не найден.');
+  let admin;
+  let profile;
   let email = '';
   try {
-    const directory = fsQueryGroupByField('userDirectory', 'uid', uid, 1)[0];
+    const batch = fsGetManyAndQueryGroupByFieldMany(
+      ['adminUsers/' + uid, 'users/' + uid],
+      [{ collectionId: 'userDirectory', field: 'uid', value: uid, limit: 1 }]
+    );
+    [admin, profile] = batch.records;
+    const directory = batch.groups[0]?.[0];
     if (directory?.id) email = normalizeEmail(decodeURIComponent(directory.id));
-  } catch (_) {}
+  } catch (_) {
+    // Preserve existing semantics if the optional directory query fails.
+    [admin, profile] = fsGetMany(['adminUsers/' + uid, 'users/' + uid]);
+    try {
+      const directory = fsQueryGroupByField('userDirectory', 'uid', uid, 1)[0];
+      if (directory?.id) email = normalizeEmail(decodeURIComponent(directory.id));
+    } catch (_) {}
+  }
+  if (admin?.role === 'superadmin') throw new Error('Главного администратора нельзя заблокировать.');
+  if (!profile) throw new Error('Участник не найден.');
   fsSet('bannedUsers/' + uid, {
     uid, email, displayName: profile.displayName || '', reason, bannedBy: actor.uid,
     adminWasActive: Boolean(admin && admin.active === true), bannedAt: new Date()
