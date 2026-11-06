@@ -25,6 +25,12 @@ const knownContactsSyncs = new Map();
 const FRIEND_CACHE_PREFIX = 'secret-library-social-friends-v1:';
 let driveFriends = [];
 let configuredRootFolderId = '';
+let connectionReadyPromise = Promise.resolve(false);
+let resolveConnectionReady = null;
+function settleConnectionReady(ready) {
+  resolveConnectionReady?.(ready);
+  resolveConnectionReady = null;
+}
 function readFriendCache(uid) {
   try {
     const value = JSON.parse(localStorage.getItem(`${FRIEND_CACHE_PREFIX}${uid}`) || 'null');
@@ -86,6 +92,8 @@ export const social = {
   },
   subscribe(listener) { listeners.add(listener); listener(state); return () => listeners.delete(listener); },
   async connect(token, rootFolderId = '') {
+    settleConnectionReady(false);
+    connectionReadyPromise = new Promise((resolve) => { resolveConnectionReady = resolve; });
     if (rootFolderId) configuredRootFolderId = rootFolderId;
     const current = ++generation;
     knownContactsSyncs.clear();
@@ -94,7 +102,8 @@ export const social = {
     emit({ status: 'loading', message: 'Подключение социальной части…', friends: driveFriends, notifications: [], libraries: [], ownRootFolderId: configuredRootFolderId });
     try {
       const session = await startFirebaseSession(token);
-      if (!session || current !== generation) return;
+      if (current !== generation) return;
+      if (!session) { settleConnectionReady(false); return; }
       store = createSocialStore(session);
       shared = createSharedLibraryStore({ user: session.user });
       invitationUser = session.user;
@@ -108,11 +117,18 @@ export const social = {
       await store.register();
       if (current !== generation) return;
       emit({ status: 'ready', message: '' });
+      settleConnectionReady(true);
       stop = store.subscribe((snapshot) => { if (current === generation) { emit({ ...snapshot, friends: driveFriends }); watchCatalogs(driveFriends); } },
         (error) => { if (current === generation) emit({ status: 'error', message: socialError(error) }); });
-    } catch (error) { if (current === generation) emit({ status: 'error', message: socialError(error) }); }
+    } catch (error) {
+      if (current === generation) {
+        settleConnectionReady(false);
+        emit({ status: 'error', message: socialError(error) });
+      }
+    }
   },
   disconnect() {
+    settleConnectionReady(false);
     generation++; stop?.(); stop = null; store?.dispose(); store = null; invitationUser = null;
     shared?.dispose(); shared = null;
     driveFriends = [];
@@ -153,6 +169,9 @@ export const social = {
     return pending;
   },
   async publishLibrary(index, settings) {
+    if (!shared || state.status !== 'ready') {
+      if (state.status === 'loading') await connectionReadyPromise;
+    }
     if (!shared || state.status !== 'ready') throw new Error(state.message || 'Firebase connection is not ready; the friend catalog was not synchronized.');
     if (index?.rootFolderId) configuredRootFolderId = index.rootFolderId;
     const result = await shared.publish(index, settings);
