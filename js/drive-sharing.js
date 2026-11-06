@@ -188,7 +188,7 @@ export async function discoverDriveFriends(user, configuredRootFolderId = '', ap
     for (const email of knownFriendEmails) {
       try {
         const ownedFolders = await listSharedFolders(request, email);
-        note('friend-email-folder-search', `${email}: Drive вернул ${ownedFolders.length} папок владельца по email-фильтру.`);
+        note('friend-email-folder-search', `${email}: Drive вернул ${ownedFolders.length} папок владельца по email-фильтру: ${ownedFolders.map((folder) => `${folder.name || '(без имени)'} [${folder.id}]`).join('; ') || '(пусто)'}.`);
         for (const folder of ownedFolders) byId.set(folder.id, folder);
       } catch (error) {
         note('friend-email-folder-search-error', `${email}: HTTP ${error?.status || '?'}; ${error?.message || error}`);
@@ -242,7 +242,7 @@ export async function discoverDriveFriends(user, configuredRootFolderId = '', ap
   // and root folder from the catalog payload and Drive metadata.
   try {
     const catalogFiles = await listSharedCatalogFiles(request);
-    note('catalog-search', `Прямой поиск по имени ${SHARED_CATALOG_FILE_NAME} вернул ${catalogFiles.length} доступных файлов; через sharedWithMe найдено каталогов: ${foldersWithCatalog}; отклонено проверкой: ${catalogsRejected}.`);
+    note('catalog-search', `Прямой поиск по имени ${SHARED_CATALOG_FILE_NAME} вернул ${catalogFiles.length} доступных файлов: ${catalogFiles.map((file) => `${file.name || '(без имени)'} [${file.id}; MIME=${file.mimeType || '?'}; parents=${(file.parents || []).join(',') || '(нет)'}]`).join('; ') || '(пусто)'}; через sharedWithMe найдено каталогов: ${foldersWithCatalog}; отклонено проверкой: ${catalogsRejected}.`);
     for (const file of catalogFiles) {
       if (file.mimeType !== 'application/json') { note('catalog-file-skip', `Файл ${file.id} имеет MIME ${file.mimeType || 'не указан'}, ожидался application/json.`); continue; }
       let catalog;
@@ -272,10 +272,14 @@ export async function discoverDriveFriends(user, configuredRootFolderId = '', ap
         friend?.uid && String(friend.uid) === catalog.ownerUid);
       if (rootReadError) note('catalog-root-metadata-unavailable', `Каталог ${file.id} доступен, но метаданные корневой папки ${catalog.rootFolderId} недоступны (HTTP ${rootReadError.status}); ${knownOwner ? 'владелец сопоставлен с известным другом по UID.' : 'в списке друзей не найден UID владельца.'}`);
       if (root && root.mimeType !== FOLDER_MIME_TYPE) {
-        note('catalog-root-invalid', `Корень ${catalog.rootFolderId} каталога ${file.id} не является папкой.`);
+        note('catalog-root-invalid', `Корень ${catalog.rootFolderId} каталога ${file.id} не является папкой: MIME=${root.mimeType || 'не указан'}.`);
         continue;
       }
-      if (!root && !knownOwner) continue;
+      if (!root && !knownOwner) {
+        note('catalog-root-unmatched', `Каталог ${file.id} принадлежит UID ${catalog.ownerUid}, корень ${catalog.rootFolderId}; метаданные корня недоступны, UID не сопоставлен с известными друзьями.`);
+        continue;
+      }
+      note('catalog-root-match', `Каталог ${file.id}: UID владельца ${catalog.ownerUid}; корень ${catalog.rootFolderId}; метаданные ${root ? 'доступны' : 'недоступны, использован известный друг'}.`);
       const owner = (root?.owners || []).find((item) => normalizeEmail(item.emailAddress)) || root?.owners?.[0] || {};
       add({
         uid: catalog.ownerUid,
