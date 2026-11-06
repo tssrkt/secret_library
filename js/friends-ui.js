@@ -230,7 +230,7 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
       const signature = next.friends.map((friend) => `${friend.uid}:${friend.inbound ? 1 : 0}:${friend.outbound ? 1 : 0}`).sort().join('|');
       if (signature !== lastSyncSignature) {
         lastSyncSignature = signature;
-        void social.syncKnownContacts().catch((error) => { lastSyncSignature = ''; if (!closed) message.textContent = socialError(error); });
+        void social.syncKnownContacts(signature).catch((error) => { lastSyncSignature = ''; if (!closed) message.textContent = socialError(error); });
       }
     }
   });

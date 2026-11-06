@@ -20,6 +20,7 @@ let stop;
 let generation = 0;
 let shared;
 let invitationUser = null;
+const knownContactsSyncs = new Map();
 const catalogs = new Map();
 const catalogWatches = new Map();
 function clearCatalogs() {
@@ -58,6 +59,7 @@ export const social = {
   subscribe(listener) { listeners.add(listener); listener(state); return () => listeners.delete(listener); },
   async connect(token) {
     const current = ++generation;
+    knownContactsSyncs.clear();
     stop?.(); store?.dispose(); store = null;
     clearCatalogs(); shared?.dispose(); shared = null;
     emit({ status: 'loading', message: 'Подключение социальной части…', friends: [], notifications: [], libraries: [] });
@@ -100,7 +102,14 @@ export const social = {
   },
   setSharing(uid, active) { if (!store || state.status !== 'ready') return Promise.reject(new Error(state.message)); return store.setSharing(uid, active); },
   markSeen(items) { if (!store || state.status !== 'ready') return Promise.resolve(); return store.markSeen(items); },
-  syncKnownContacts() { if (!store || state.status !== 'ready') return Promise.resolve(); return store.syncKnownContacts(); },
+  syncKnownContacts(signature = '') {
+    if (!store || state.status !== 'ready') return Promise.resolve();
+    const key = `${invitationUser?.uid || ''}:${signature}`;
+    if (knownContactsSyncs.has(key)) return knownContactsSyncs.get(key);
+    const pending = store.syncKnownContacts().catch((error) => { knownContactsSyncs.delete(key); throw error; });
+    knownContactsSyncs.set(key, pending);
+    return pending;
+  },
   publishLibrary(index, settings) {
     if (!shared || state.status !== 'ready') return Promise.reject(new Error(state.message || 'Firebase connection is not ready; the friend catalog was not synchronized.'));
     return shared.publish(index, settings);
