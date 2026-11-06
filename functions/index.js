@@ -26,8 +26,13 @@ async function requireSignedIn(request) {
 }
 
 async function requireAdmin(request, permission = null) {
-  const uid = await requireSignedIn(request);
-  const snap = await adminRef(uid).get();
+  const uid = request.auth?.uid;
+  if (!uid || request.auth.token.email_verified !== true
+      || request.auth.token.firebase?.sign_in_provider !== 'google.com') {
+    throw new HttpsError('unauthenticated', 'Войдите через подтверждённый Google-аккаунт.');
+  }
+  const [banned, snap] = await Promise.all([banRef(uid).get(), adminRef(uid).get()]);
+  if (banned.exists) throw new HttpsError('permission-denied', 'Доступ к Тайной Библиотеке заблокирован.');
   if (!snap.exists) throw new HttpsError('permission-denied', 'Нет прав администратора.');
   const admin = snap.data();
   if (admin.active !== true) throw new HttpsError('permission-denied', 'Учётная запись администратора отключена.');
