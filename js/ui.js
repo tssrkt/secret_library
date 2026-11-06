@@ -11,7 +11,7 @@ import { filterBooksByDirectValue, russianBookCount } from './direct-filter.js';
 import { createSearchController } from './search-ui.js';
 import { createIndexingErrorsController } from './indexing-errors-ui.js';
 import { createUserSettingsController } from './user-settings-ui.js';
-import { mountFriends } from './friends-ui.js';
+import { mountFriends } from './friends-ui.js?v=20261106-clean-friend-status';
 import { createNotificationsController } from './notifications-ui.js?v=20261106-drive-notifications';
 import { social } from './social-runtime.js?v=20261106-friend-covers-fix';
 import { getAccessToken } from './auth.js';

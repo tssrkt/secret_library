@@ -167,9 +167,9 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
         : remainder10 >= 2 && remainder10 <= 4 ? 'друга' : 'друзей';
     const countLabel = friendsSection.querySelector('.friends-count');
     if (snapshot.driveDiscoveryStatus === 'loading' && count === 0) countLabel.textContent = 'Список друзей загружается…';
-    else if (snapshot.driveDiscoveryStatus === 'error' && count === 0) countLabel.textContent = `Не удалось загрузить список друзей. ${snapshot.driveDiscoveryMessage || 'Проверьте подключение к Google Drive.'}`;
+    else if (snapshot.driveDiscoveryStatus === 'error' && count === 0) countLabel.textContent = 'Не удалось загрузить список друзей. Проверьте подключение к Google Drive и попробуйте снова.';
     else if (snapshot.driveDiscoveryStatus === 'ready' && count === 0) countLabel.textContent = 'Друзей пока нет.';
-    else countLabel.textContent = `У вас ${count.toLocaleString('ru-RU')} ${noun}${snapshot.driveDiscoveryMessage ? `. ${snapshot.driveDiscoveryMessage}` : ''}`;
+    else countLabel.textContent = `У вас ${count.toLocaleString('ru-RU')} ${noun}.`;
     const container = friendsSection.querySelector('.friends-table-container');
     const table = document.createElement('table');
     table.className = 'friends-table';
