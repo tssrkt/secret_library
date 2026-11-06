@@ -227,7 +227,11 @@ async function refresh() {
     const requestedTab = activeTab;
     try {
       say('Обновляем сводку и текущую страницу…');
+      // Keep profiles accumulated from previously visited pages so the server can
+      // omit already-known UIDs instead of re-reading the same users on refresh.
+      const knownProfiles = data?.userProfiles && typeof data.userProfiles === 'object' ? data.userProfiles : {};
       data = await call('getAdminDashboardSummary')({});
+      data.userProfiles = { ...knownProfiles };
       if (!data.permissions?.[activeTab] && activeTab !== 'texts') {
         activeTab = sections.find(([key]) => data.permissions?.[key])?.[0] || 'users';
       }
