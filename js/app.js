@@ -553,8 +553,13 @@ async function restoreAuthorization() {
   }
 }
 
+ui.setBusy(true);
 try {
+  // Keep the sign-in button disabled until Google Identity Services is ready.
+  // Otherwise an early first click can race initializeAuth() and fail before
+  // the OAuth token client exists, forcing the user to click a second time.
   await initializeAuth();
+  ui.setBusy(false);
   await restoreAuthorization();
 } catch (error) {
   ui.showError(readableError(error));
