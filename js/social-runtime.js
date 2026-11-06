@@ -121,11 +121,10 @@ export const social = {
     void endFirebaseSession().catch(() => {});
   },
   async shareWithEmail(email) {
-    if (!invitationUser) throw new Error(state.message || 'Сначала войдите через Google.');
     if (!configuredRootFolderId) throw new Error('Сначала выберите корневую папку своей библиотеки.');
     // Drive permissions define library access; Firestore is only invitation metadata.
     await grantRootFolderAccess(configuredRootFolderId, email);
-    if (!store || state.status !== 'ready') return 'Доступ к папке Google Drive предоставлен. База данных недоступна: приглашение и письмо пока не оформлены.';
+    if (!store || !invitationUser || state.status !== 'ready') return 'Доступ к папке Google Drive предоставлен.';
     let result;
     try { result = await store.shareWithEmail(email); }
     catch (error) { return 'Доступ к папке Google Drive предоставлен, но приглашение не удалось сохранить в базе данных. ' + (error?.message || ''); }
