@@ -32,6 +32,7 @@ export function prepareBuildingIndex(activeIndex, { retryErrors = false, mode = 
     total += 1;
     selectedIds.push(book.id);
   }
+  const selectedIdSet = new Set(selectedIds);
   building.version = INDEX_VERSION;
   building.buildState = {
     status: 'building',
@@ -45,7 +46,7 @@ export function prepareBuildingIndex(activeIndex, { retryErrors = false, mode = 
     bookIds: building.books.map((book) => book.id),
     removedBookIds: [],
     ...(mode === 'full' ? { sourceBooks: cloneIndex(scannedIndex.books) } : {}),
-    ...(mode === 'refresh' && previousIndex ? { previousBooks: cloneIndex(previousIndex.books.filter((book) => selectedIds.includes(book.id)
+    ...(mode === 'refresh' && previousIndex ? { previousBooks: cloneIndex(previousIndex.books.filter((book) => selectedIdSet.has(book.id)
       && (book.metadataStatus === 'ready' || (book.metadataStatus === 'pending' && book.metadataVersion != null
         && Object.hasOwn(book, 'title') && Array.isArray(book.authors))))) } : {}),
     total,
