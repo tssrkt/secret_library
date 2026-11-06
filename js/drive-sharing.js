@@ -129,6 +129,7 @@ export async function discoverDriveFriends(user, configuredRootFolderId = '', ap
   }
 
   let driveDiscoveryErrors = [];
+  const foldersWithoutCatalog = [];
   let sharedFolders = [];
   try { sharedFolders = await listSharedFolders(request); }
   catch (error) { driveDiscoveryErrors.push(`Не удалось найти папки, которыми поделились с вами: ${error?.message || error}`); }
@@ -137,14 +138,23 @@ export async function discoverDriveFriends(user, configuredRootFolderId = '', ap
     let catalogFile;
     try { catalogFile = await getRootCatalog(folder.id, request); }
     catch (error) {
-      if (error?.status === 403 || error?.status === 404) continue;
+      if (error?.status === 403 || error?.status === 404) {
+        foldersWithoutCatalog.push(folder.name || 'Папка без названия');
+        continue;
+      }
       throw error;
     }
-    if (!catalogFile) continue;
+    if (!catalogFile) {
+      foldersWithoutCatalog.push(folder.name || 'Папка без названия');
+      continue;
+    }
     let catalog;
     try { catalog = await download(catalogFile.id); }
     catch (error) {
-      if (error?.status === 403 || error?.status === 404) continue;
+      if (error?.status === 403 || error?.status === 404) {
+        foldersWithoutCatalog.push(folder.name || 'Папка без названия');
+        continue;
+      }
       throw error;
     }
     if (!catalog || typeof catalog.ownerUid !== 'string' || !catalog.ownerUid
@@ -179,6 +189,13 @@ export async function discoverDriveFriends(user, configuredRootFolderId = '', ap
     } catch (error) {
       driveDiscoveryErrors.push(`Не удалось прочитать права своей корневой папки: ${error?.message || error}`);
     }
+  }
+
+  if (foldersWithoutCatalog.length) {
+    const names = [...new Set(foldersWithoutCatalog)];
+    const shown = names.slice(0, 5).join('», «');
+    const remainder = names.length > 5 ? ` и ещё ${names.length - 5}` : '';
+    driveDiscoveryErrors.push(`Google Drive предоставил доступ к папкам «${shown}»${remainder}, но в них не найден опубликованный каталог. Владельцам нужно открыть свою библиотеку на обновлённом сайте и дождаться синхронизации.`);
   }
 
   return {
