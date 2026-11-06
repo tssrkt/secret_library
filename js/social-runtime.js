@@ -133,8 +133,11 @@ export const social = {
         if (snapshotEmailSignature && snapshotEmailSignature !== lastDriveFriendEmailSignature) {
           void refreshDriveFriends(session.user, current, snapshot.friends);
         }
-        emit({ ...snapshot, friends: driveFriends });
-        watchCatalogs(driveFriends);
+        // Firestore's legacy snapshot can contain an empty/stale libraries array.
+        // The visible friend tabs must always come from the Drive catalog discovery.
+        emit({ ...snapshot, friends: driveFriends, libraries: driveFriends
+          .filter((friend) => friend.inbound && !String(friend.uid).startsWith('email:'))
+          .map((friend) => ({ uid: friend.uid, displayName: friend.displayName, revision: 'drive', catalogId: friend.catalogId || '' })) });
       },
         (error) => { if (current === generation) emit({ status: 'error', message: socialError(error) }); });
     } catch (error) {
