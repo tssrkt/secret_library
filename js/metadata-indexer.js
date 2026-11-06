@@ -47,6 +47,7 @@ export async function indexPendingBooks(index, {
     if (!previousBooks.has(book.id)) previousBooks.set(book.id, book.metadataStatus === 'ready' ? book : { ...book, metadataStatus: 'ready' });
   }
   index.indexingErrors ||= [];
+  const reportFileIds = new Set(index.indexingErrors.map((entry) => entry.fileId));
   const sources = new Map((index.buildState?.sourceBooks || []).map((book) => [book.id, book]));
 
   const processBook = async (book) => {
@@ -55,8 +56,10 @@ export async function indexPendingBooks(index, {
     const issues = new Map();
     let reportChanged = false;
     const clearReport = () => {
+      if (!reportFileIds.has(book.id)) return;
       const oldCount = index.indexingErrors.length;
       index.indexingErrors = index.indexingErrors.filter((entry) => entry.fileId !== book.id || entry.stage === 'index-write');
+      reportFileIds.delete(book.id);
       reportChanged ||= oldCount !== index.indexingErrors.length;
     };
     const onIssue = (error) => issues.set(error, errorDetails(error, { runId: index.buildState?.runId || null }));
