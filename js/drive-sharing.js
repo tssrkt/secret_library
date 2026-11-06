@@ -257,18 +257,30 @@ export async function discoverDriveFriends(user, configuredRootFolderId = '', ap
         note('catalog-validation', `Файл ${file.id} отклонён: ${!catalog ? 'пустой JSON' : !catalog.ownerUid ? 'нет ownerUid' : catalog.ownerUid === user.uid ? 'это собственный каталог' : !catalog.rootFolderId ? 'нет rootFolderId' : 'rootFolderId отсутствует в parents файла'}.`);
         continue;
       }
-      let root;
+      let root = null;
+      let rootReadError = null;
       try { root = await getRootFolder(catalog.rootFolderId, request); }
       catch (error) {
-        if (error?.status === 403 || error?.status === 404) continue;
-        throw error;
+        if (error?.status === 403 || error?.status === 404) rootReadError = error;
+        else throw error;
       }
-      if (root?.mimeType !== FOLDER_MIME_TYPE) continue;
-      const owner = (root.owners || []).find((item) => normalizeEmail(item.emailAddress)) || root.owners?.[0] || {};
+      // Drive may expose the shared catalog file while denying metadata reads on
+      // its parent folder. The catalog's parents + rootFolderId already bind it
+      // to that folder; match ownerUid against the in-memory friend list rather
+      // than dropping a valid library because a separate folder metadata read failed.
+      const knownOwner = (Array.isArray(knownFriends) ? knownFriends : []).find((friend) =>
+        friend?.uid && String(friend.uid) === catalog.ownerUid);
+      if (rootReadError) note('catalog-root-metadata-unavailable', `Каталог ${file.id} доступен, но метаданные корневой папки ${catalog.rootFolderId} недоступны (HTTP ${rootReadError.status}); ${knownOwner ? 'владелец сопоставлен с известным другом по UID.' : 'в списке друзей не найден UID владельца.'}`);
+      if (root && root.mimeType !== FOLDER_MIME_TYPE) {
+        note('catalog-root-invalid', `Корень ${catalog.rootFolderId} каталога ${file.id} не является папкой.`);
+        continue;
+      }
+      if (!root && !knownOwner) continue;
+      const owner = (root?.owners || []).find((item) => normalizeEmail(item.emailAddress)) || root?.owners?.[0] || {};
       add({
         uid: catalog.ownerUid,
-        email: owner.emailAddress || '',
-        displayName: owner.displayName || root.name || 'Участник',
+        email: owner.emailAddress || normalizeEmail(knownOwner?.email) || '',
+        displayName: owner.displayName || knownOwner?.displayName || root?.name || 'Участник',
         isAdmin: catalog.ownerUid === 'aA89pCYsKNbWWePmAveUVrG34F82',
         inbound: true,
       });

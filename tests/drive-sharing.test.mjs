@@ -80,7 +80,7 @@ test('finds a friend library by known email without requiring reciprocal sharing
     }
     if (url.pathname === '/files/root-me') return { id: 'root-me', mimeType: 'application/vnd.google-apps.folder' };
     if (url.pathname === '/files/root-me/permissions') return { permissions: [] };
-    if (url.pathname === '/files/root-olya') return { id: 'root-olya', name: 'Olya Library', mimeType: 'application/vnd.google-apps.folder', owners: [{ displayName: 'Olya', emailAddress: 'olya@example.com' }] };
+    if (url.pathname === '/files/root-olya') { const error = new Error('metadata not available'); error.status = 404; throw error; }
     throw new Error(`Unexpected Drive request: ${path}`);
   };
   const result = await discoverDriveFriends(
@@ -93,10 +93,11 @@ test('finds a friend library by known email without requiring reciprocal sharing
         return { ownerUid: 'olya-uid', rootFolderId: 'root-olya' };
       },
     },
-    [{ uid: 'known-olya', email: 'olya@example.com', displayName: 'Olya' }],
+    [{ uid: 'olya-uid', email: 'olya@example.com', displayName: 'Olya' }],
   );
   assert.ok(result.friends.some((friend) => friend.uid === 'olya-uid' && friend.inbound && friend.email === 'olya@example.com'));
   assert.match(result.errors.join(' '), /olya@example.com: Drive вернул 1 папок/);
+  assert.match(result.errors.join(' '), /метаданные корневой папки root-olya недоступны/);
 });
 
 test('invitation grants root-folder reader permission to the invited Google account', async () => {
