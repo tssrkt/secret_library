@@ -1,7 +1,7 @@
 import { startFirebaseSession, endFirebaseSession } from './firebase-session.js';
-import { createSocialStore } from './social-store.js?v=20261106-drive-notifications';
-import { createSharedLibraryStore } from './shared-library.js?v=20261106-drive-names';
-import { discoverDriveFriends, grantRootFolderAccess } from './drive-sharing.js?v=20261106-drive-names';
+import { createSocialStore } from './social-store.js?v=20261106-root-discovery';
+import { createSharedLibraryStore } from './shared-library.js?v=20261106-root-discovery';
+import { discoverDriveFriends, grantRootFolderAccess } from './drive-sharing.js?v=20261106-root-discovery';
 import { findDriveCatalogFile, downloadDriveJsonFile, getCurrentDriveUser } from './drive.js';
 import { sendInvitationEmail, getInvitationStatuses as fetchInvitationStatuses } from './invitation-mailer.js';
 
@@ -16,7 +16,7 @@ export function isPendingInvitationResult(result) {
 }
 
 const listeners = new Set();
-let state = { status: 'idle', message: 'Социальная часть ещё не подключена.', friends: [], notifications: [] };
+let state = { driveDiscoveryStatus: 'idle', status: 'idle', message: 'Социальная часть ещё не подключена.', friends: [], notifications: [] };
 let store;
 let stop;
 let generation = 0;
@@ -95,6 +95,7 @@ function watchCatalogs(friends) {
   emit({ libraries });
 }
 async function refreshDriveFriends(user, currentGeneration = generation, knownFriends = driveFriends) {
+  emit({ driveDiscoveryStatus: 'loading', driveDiscoveryMessage: '' });
   try {
     // Use emails already present in the UI/cache snapshot as search keys only.
     // Folder discovery, catalog reads and library availability are Google Drive-only.
@@ -104,11 +105,11 @@ async function refreshDriveFriends(user, currentGeneration = generation, knownFr
     if (currentGeneration !== generation) return;
     if (result.rootFolderId) configuredRootFolderId = result.rootFolderId;
     driveFriends = result.friends;
-    emit({ friends: driveFriends, notifications: buildDriveNotifications(driveFriends), ownRootFolderId: result.rootFolderId || configuredRootFolderId, driveDiscoveryMessage: result.errors?.join(' ') || '' });
+    emit({ friends: driveFriends, notifications: buildDriveNotifications(driveFriends), ownRootFolderId: result.rootFolderId || configuredRootFolderId, driveDiscoveryMessage: result.errors?.join(' ') || '', driveDiscoveryStatus: result.discoveryStatus || 'ready' });
     watchCatalogs(driveFriends);
   } catch (error) {
     // Keep the last confirmed Drive-derived list when Drive is temporarily unavailable.
-    emit({ driveDiscoveryMessage: String(error?.message || error) });
+    emit({ driveDiscoveryMessage: String(error?.message || error), driveDiscoveryStatus: 'error' });
   }
 }
 
@@ -134,7 +135,7 @@ export const social = {
     knownContactsSyncs.clear();
     stop?.(); store?.dispose(); store = null;
     shared?.dispose(); shared = null;
-    emit({ status: 'loading', message: 'Подключение социальной части…', friends: driveFriends, notifications: [], libraries: [], ownRootFolderId: configuredRootFolderId });
+    emit({ status: 'loading', driveDiscoveryStatus: 'loading', message: 'Подключение социальной части…', friends: driveFriends, notifications: [], libraries: [], ownRootFolderId: configuredRootFolderId });
     try {
       // Discover and open friend libraries directly with the Google Drive token.
       // This path runs independently of Firebase Authentication/Firestore.

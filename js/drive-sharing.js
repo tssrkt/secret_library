@@ -47,7 +47,7 @@ async function getRootCatalog(rootFolderId, request = driveFetch) {
 async function listSharedCatalogFiles(request = driveFetch) {
   const params = new URLSearchParams({
     q: `name = '${escapeDriveQuery(SHARED_CATALOG_FILE_NAME)}' and trashed = false`,
-    fields: 'nextPageToken,files(id,name,mimeType,parents)',
+    fields: 'nextPageToken,files(id,name,mimeType,parents,owners(displayName,emailAddress))',
     pageSize: '100',
     spaces: 'drive',
     supportsAllDrives: 'true',
@@ -163,95 +163,14 @@ export async function discoverDriveFriends(user, configuredRootFolderId = '', ap
   }
 
   let driveDiscoveryErrors = [];
-  let sharedFolders = [];
+  // Incoming libraries are discovered from catalog files. Avoid broad folder
+  // listings and duplicate permission reads: the own-root permissions are read once below.
+  const sharedFolders = [];
   const folderEmailById = new Map();
-  const knownFriendEmails = new Set((Array.isArray(knownFriends) ? knownFriends : [])
-    .map((friend) => normalizeEmail(friend?.email))
-    .filter((email) => email && email !== ownEmail));
-  for (const email of knownFriendEmails) note('known-friend-email', `Ищу доступные папки владельца по email из уже имеющегося списка друзей: ${email}.`);
-  // Also collect emails from permissions on our own root. All discovery below
-  // uses Google Drive only; knownFriends is an in-memory/local-cache input.
-  if (rootFolderId) {
-    try {
-      const ownRoot = await getRootFolder(rootFolderId, request);
-      if (ownRoot?.mimeType === FOLDER_MIME_TYPE) {
-        const permissions = await listPermissions(rootFolderId, request);
-        for (const permission of permissions) {
-          if (permission.deleted || permission.type !== 'user' || permission.role === 'owner') continue;
-          const email = normalizeEmail(permission.emailAddress);
-          if (!email || email === ownEmail) continue;
-          knownFriendEmails.add(email);
-          add({ uid: '', email, displayName: permission.displayName || email, outbound: true });
-        }
-      }
-    } catch (error) {
-      driveDiscoveryErrors.push(`Не удалось прочитать список email друзей из прав своей корневой папки: ${error?.message || error}`);
-      note('friend-email-source-error', `HTTP ${error?.status || '?'}; ${error?.message || error}`);
-    }
-  }
-  try {
-    sharedFolders = await listSharedFolders(request);
-    const byId = new Map(sharedFolders.filter((folder) => folder?.id).map((folder) => [folder.id, folder]));
-    for (const email of knownFriendEmails) {
-      try {
-        const ownedFolders = await listSharedFolders(request, email);
-        note('friend-email-folder-search', `${email}: Drive вернул ${ownedFolders.length} папок владельца по email-фильтру: ${ownedFolders.map((folder) => `${folder.name || '(без имени)'} [${folder.id}]`).join('; ') || '(пусто)'}.`);
-        for (const folder of ownedFolders) {
-          folderEmailById.set(folder.id, email);
-          const existing = byId.get(folder.id);
-          byId.set(folder.id, {
-            ...existing,
-            ...folder,
-            owners: folder.owners?.length ? folder.owners : existing?.owners?.length ? existing.owners : [{ emailAddress: email }],
-          });
-        }
-      } catch (error) {
-        note('friend-email-folder-search-error', `${email}: HTTP ${error?.status || '?'}; ${error?.message || error}`);
-      }
-    }
-    sharedFolders = [...byId.values()];
-    note('shared-folders', `Google Drive вернул ${sharedFolders.length} доступных папок после поиска по sharedWithMe и email ${[...knownFriendEmails].join(', ') || '(email друзей не найден)'}; текущий email: ${ownEmail || 'не получен'}.`);
-  } catch (error) {
-    driveDiscoveryErrors.push(`Не удалось найти папки, которыми поделились с вами: ${error?.message || error}`);
-    note('shared-folders-error', `HTTP ${error?.status || '?'}; ${error?.message || error}`);
-  }
+  // Discover incoming libraries from published catalog files instead of listing every shared folder or every folder owned by each friend.
+  // This avoids scanning hundreds or thousands of ordinary folders before finding a library.
   let foldersWithCatalog = 0;
   let catalogsRejected = 0;
-  for (const folder of sharedFolders) {
-    if (folder.id === rootFolderId) { note('shared-folder-skip', `Пропущена собственная корневая папка ${folder.name || folder.id}.`); continue; }
-    let catalogFile;
-    try { catalogFile = await getRootCatalog(folder.id, request); }
-    catch (error) {
-      note('shared-folder-catalog-error', `Папка «${folder.name || folder.id}», владелец ${(folder.owners || []).map((owner) => owner.emailAddress).filter(Boolean).join(', ') || 'неизвестен'}: HTTP ${error?.status || '?'}; ${error?.message || error}`);
-      continue;
-    }
-    if (!catalogFile) {
-      note('shared-folder-no-catalog', `В доступной папке «${folder.name || folder.id}» каталог не найден; владелец ${(folder.owners || []).map((owner) => owner.emailAddress).filter(Boolean).join(', ') || 'неизвестен'}.`);
-      continue;
-    }
-    foldersWithCatalog++;
-    let catalog;
-    try { catalog = await download(catalogFile.id); }
-    catch (error) {
-      note('shared-catalog-read-error', `Каталог ${catalogFile.id} в папке «${folder.name || folder.id}»: HTTP ${error?.status || '?'}; ${error?.message || error}`);
-      continue;
-    }
-    if (!catalog || typeof catalog.ownerUid !== 'string' || !catalog.ownerUid
-        || catalog.ownerUid === user?.uid || catalog.rootFolderId === rootFolderId || catalog.rootFolderId !== folder.id) {
-      catalogsRejected++;
-      note('shared-catalog-validation', `Каталог ${catalogFile.id} в папке «${folder.name || folder.id}» отклонён: ${!catalog ? 'пустой JSON' : !catalog.ownerUid ? 'нет ownerUid' : catalog.ownerUid === user.uid ? 'это собственный каталог' : 'rootFolderId не совпадает с папкой'}.`);
-      continue;
-    }
-    const owner = (folder.owners || []).find((item) => normalizeEmail(item.emailAddress)) || folder.owners?.[0] || {};
-    add({
-      uid: catalog.ownerUid,
-      email: owner.emailAddress || '',
-      displayName: catalog.ownerDisplayName || owner.displayName || folder.name || 'Участник',
-      isAdmin: catalog.ownerUid === 'aA89pCYsKNbWWePmAveUVrG34F82',
-      inbound: true,
-      catalogId: catalogFile.id,
-    });
-  }
 
   // Do not rely solely on sharedWithMe: Drive can omit an accessible shared root
   // from that listing. Find published catalogs directly, then validate their owner
@@ -291,11 +210,14 @@ export async function discoverDriveFriends(user, configuredRootFolderId = '', ap
       // shared-folder listing; never require a Firestore contact/UID match.
       const listedRoot = sharedFolders.find((folder) => folder.id === catalog.rootFolderId);
       const listedOwner = (listedRoot?.owners || []).find((item) => normalizeEmail(item.emailAddress)) || listedRoot?.owners?.[0] || {};
+      const catalogOwner = (file.owners || []).find((item) => normalizeEmail(item.emailAddress)) || file.owners?.[0] || {};
       const knownOwner = knownContact || (listedRoot ? {
         uid: catalog.ownerUid,
         email: listedOwner.emailAddress || folderEmailById.get(catalog.rootFolderId) || '',
         displayName: listedOwner.displayName || listedRoot.name || '',
-      } : null);
+      } : (catalogOwner.emailAddress || catalogOwner.displayName ? {
+        uid: catalog.ownerUid, email: catalogOwner.emailAddress || '', displayName: catalogOwner.displayName || '',
+      } : null));
       const effectiveOwnerEmail = normalizeEmail(root?.owners?.find((item) => normalizeEmail(item.emailAddress))?.emailAddress)
         || normalizeEmail(knownOwner?.email);
       if (effectiveOwnerEmail && effectiveOwnerEmail === ownEmail) {
@@ -305,10 +227,6 @@ export async function discoverDriveFriends(user, configuredRootFolderId = '', ap
       if (rootReadError) note('catalog-root-metadata-unavailable', `Каталог ${file.id} доступен, но метаданные корневой папки ${catalog.rootFolderId} недоступны (HTTP ${rootReadError.status}); ${knownOwner ? 'владелец сопоставлен по данным Google Drive.' : 'в доступных данных Google Drive нет сведений о владельце.'}`);
       if (root && root.mimeType !== FOLDER_MIME_TYPE) {
         note('catalog-root-invalid', `Корень ${catalog.rootFolderId} каталога ${file.id} не является папкой: MIME=${root.mimeType || 'не указан'}.`);
-        continue;
-      }
-      if (!root && !knownOwner) {
-        note('catalog-root-unmatched', `Каталог ${file.id} принадлежит UID ${catalog.ownerUid}, корень ${catalog.rootFolderId}; метаданные корня недоступны, UID не сопоставлен с известными друзьями.`);
         continue;
       }
       note('catalog-root-match', `Каталог ${file.id}: UID владельца ${catalog.ownerUid}; корень ${catalog.rootFolderId}; метаданные ${root ? 'доступны' : 'недоступны, использован известный друг'}.`);
@@ -350,15 +268,12 @@ export async function discoverDriveFriends(user, configuredRootFolderId = '', ap
     }
   }
 
-  if (!sharedFolders.length && ![...friends.values()].some((friend) => friend.inbound)
-      && !driveDiscoveryErrors.some((error) => error.startsWith('Не удалось найти папки'))) {
-    driveDiscoveryErrors.push('Google Drive не обнаружил папок, которыми поделились с текущим аккаунтом. Проверьте, что друзья предоставили доступ именно тому Google-аккаунту, под которым вы вошли на сайт.');
-  }
   if (!friends.size) note('result', `Поиск завершён: друзей не обнаружено. ${driveDiscoveryErrors.length ? 'Есть ошибки запросов.' : 'Запросы завершились без явной ошибки; проверьте результаты этапов выше.'}`);
   else note('result', `Поиск завершён: обнаружено ${friends.size} записей; inbound: ${[...friends.values()].filter((friend) => friend.inbound).length}, outbound: ${[...friends.values()].filter((friend) => friend.outbound).length}.`);
 
   return {
     rootFolderId,
+    discoveryStatus: driveDiscoveryErrors.length && ![...friends.values()].some((friend) => friend.inbound) ? 'error' : 'ready',
     errors: [...driveDiscoveryErrors, ...diagnostics],
     friends: [...friends.values()]
       .filter((friend) => friend.inbound || friend.outbound)

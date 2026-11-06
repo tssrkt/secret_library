@@ -150,14 +150,14 @@ export async function getCurrentDriveUser(request = driveFetch) {
   return (await response.json()).user || {};
 }
 
-export async function listFolderChildren(folderId, { signal, diagnostics = {}, resourceKey } = {}) {
+export async function listFolderChildren(folderId, { signal, diagnostics = {}, resourceKey, foldersOnly = false } = {}) {
   const files = [];
   let pageToken = '';
   const seenTokens = new Set();
   do {
     signal?.throwIfAborted();
     const params = new URLSearchParams({
-      q: `'${folderId.replaceAll("'", "\\'")}' in parents and trashed = false`,
+      q: `'${folderId.replaceAll("'", "\\'")}' in parents and trashed = false${foldersOnly ? ` and mimeType = '${FOLDER_MIME_TYPE}'` : ''}`,
       fields: 'nextPageToken,incompleteSearch,files(id,name,mimeType,size,modifiedTime,md5Checksum,resourceKey)',
       pageSize: '1000',
       spaces: 'drive',

@@ -2,7 +2,7 @@ import {
   clearAccessToken, clearPersistedAuth, createAuthAttemptGuard,
   initializeAuth, persistAuthSession, recoverAuthSession, requestAccessToken,
 } from './auth.js';
-import { downloadDriveFile, getCurrentDriveUser, getFolder, listFolderChildren } from './drive.js';
+import { downloadDriveFile, getCurrentDriveUser, getFolder, listFolderChildren } from './drive.js?v=20261106-root-discovery';
 import { removeCovers, removeOrphanCovers, storeCover } from './cover-cache.js';
 import {
   deleteBuildingIndex, IndexError, loadBuildingIndex, loadIndex, readIndexFile,
@@ -15,15 +15,15 @@ import {
   canResumeBuildingIndex, prepareBuildingIndex, updateBuildProgress, validateCompletedIndex,
 } from './index-build.js';
 import { prepareIndexingRun, createRetryEligibilityCheck } from './indexing-run.js';
-import * as ui from './ui.js?v=20261106-drive-notifications';
+import * as ui from './ui.js?v=20261106-root-discovery';
 import { errorDetails, recordIndexingError } from './indexing-errors.js';
-import { social, socialError } from './social-runtime.js?v=20261106-drive-notifications';
+import { social, socialError } from './social-runtime.js?v=20261106-root-discovery';
 import { getAccessToken } from './auth.js';
 import { checkpointKey, loadCheckpoint, saveCheckpoint, deleteCheckpoint, commitCheckpoint } from './indexing-checkpoint.js';
 import { createLibraryTabs } from './library-tabs.js';
 import { createLibrarySelection } from './library-selection.js';
 import { loadUserSettings, loadRootFolderPreference, loadRootFolderResourceKey, saveRootFolderPreference } from './user-settings.js';
-import { chooseRootFolder } from './root-folder-picker.js';
+import { chooseRootFolder } from './root-folder-picker.js?v=20261106-root-discovery';
 import { firebaseConfigured } from './firebase-config.js';
 import { hasMinimumBooks, MINIMUM_LIBRARY_BOOKS } from './library-access.js';
 
@@ -74,7 +74,23 @@ async function publishLibrary(index, settings = null) {
   await social.publishLibrary(index, loaded);
 }
 let publishingFor = null;
+const friendLibrariesStatus = document.querySelector('#friend-libraries-status');
 social.subscribe((state) => {
+  if (friendLibrariesStatus) {
+    const inboundCount = (state.libraries || []).length;
+    if (state.driveDiscoveryStatus === 'loading') {
+      friendLibrariesStatus.textContent = 'Библиотеки друзей загружаются…';
+      friendLibrariesStatus.hidden = false;
+    } else if (state.driveDiscoveryStatus === 'error') {
+      friendLibrariesStatus.textContent = 'Не удалось загрузить библиотеки друзей. ' + (state.driveDiscoveryMessage || 'Проверьте подключение к Google Drive.');
+      friendLibrariesStatus.hidden = false;
+    } else if (state.driveDiscoveryStatus === 'ready' && inboundCount === 0) {
+      friendLibrariesStatus.textContent = 'Библиотек друзей пока нет.';
+      friendLibrariesStatus.hidden = false;
+    } else {
+      friendLibrariesStatus.hidden = true;
+    }
+  }
   if (state.status !== 'ready') { publishingFor = null; return; }
   if (shareableIndex && publishingFor !== shareableIndex) {
     publishingFor = shareableIndex;
@@ -375,6 +391,14 @@ async function afterAuthorization() {
   tabsRoot.hidden = true;
   activeRootFolderId = await loadRootFolderPreference();
   activeRootFolderResourceKey = activeRootFolderId ? await loadRootFolderResourceKey() : '';
+  if (activeRootFolderId) {
+    const savedRoot = await getFolder(activeRootFolderId, { resourceKey: activeRootFolderResourceKey });
+    const driveRoot = await getFolder('root');
+    if (!Array.isArray(savedRoot.parents) || !savedRoot.parents.includes(driveRoot.id)) {
+      activeRootFolderId = null;
+      activeRootFolderResourceKey = '';
+    }
+  }
   persistAuthSession(user);
   if (!activeRootFolderId) {
     ui.setAuthorized(true);

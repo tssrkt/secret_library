@@ -45,7 +45,7 @@ test('Drive permissions define one-way and mutual friend access independently', 
 });
 
 
-test('reports shared Drive folders whose owners have not published a library catalog', async () => {
+test('does not enumerate shared folders without a published catalog', async () => {
   const request = async (path) => {
     const url = new URL(path, 'https://drive.googleapis.com');
     const q = url.searchParams.get('q') || '';
@@ -60,8 +60,8 @@ test('reports shared Drive folders whose owners have not published a library cat
   };
   const result = await discoverDriveFriends({ uid: 'me', email: 'me@example.com' }, 'root-me', { driveFetch: request });
   assert.deepEqual(result.friends, []);
-  assert.match(result.errors.join(' '), /Friend Library/);
-  assert.match(result.errors.join(' '), /каталог не найден/);
+  assert.match(result.errors.join(' '), /catalog-search/);
+  assert.equal(result.errors.join(' ').includes('shared-folder-no-catalog'), false);
 });
 
 test('finds a friend library by known email without requiring reciprocal sharing', async () => {
@@ -76,7 +76,7 @@ test('finds a friend library by known email without requiring reciprocal sharing
       return { files: [{ id: 'catalog-olya', name: '.secret-library-catalog.json', mimeType: 'application/json' }] };
     }
     if (url.pathname === '/files' && q.includes("name = '.secret-library-catalog.json'")) {
-      return { files: [{ id: 'catalog-olya', name: '.secret-library-catalog.json', mimeType: 'application/json', parents: ['root-olya'] }] };
+      return { files: [{ id: 'catalog-olya', name: '.secret-library-catalog.json', mimeType: 'application/json', parents: ['root-olya'], owners: [{ displayName: 'Olya', emailAddress: 'olya@example.com' }] }] };
     }
     if (url.pathname === '/files/root-me') return { id: 'root-me', mimeType: 'application/vnd.google-apps.folder' };
     if (url.pathname === '/files/root-me/permissions') return { permissions: [] };
@@ -96,7 +96,7 @@ test('finds a friend library by known email without requiring reciprocal sharing
     [{ uid: 'olya-uid', email: 'olya@example.com', displayName: 'Olya' }],
   );
   assert.ok(result.friends.some((friend) => friend.uid === 'olya-uid' && friend.inbound && friend.email === 'olya@example.com'));
-  assert.match(result.errors.join(' '), /olya@example.com: Drive вернул 1 папок/);
+  assert.match(result.errors.join(' '), /catalog-search/);
   assert.match(result.errors.join(' '), /метаданные корневой папки root-olya недоступны/);
 });
 
@@ -144,7 +144,7 @@ test('matches a published catalog to the known friend email when Drive omits roo
       return { files: [{ id: 'catalog-olya', name: '.secret-library-catalog.json', mimeType: 'application/json' }] };
     }
     if (url.pathname === '/files' && q.includes("name = '.secret-library-catalog.json'")) {
-      return { files: [{ id: 'catalog-olya', name: '.secret-library-catalog.json', mimeType: 'application/json', parents: ['root-olya'] }] };
+      return { files: [{ id: 'catalog-olya', name: '.secret-library-catalog.json', mimeType: 'application/json', parents: ['root-olya'], owners: [{ displayName: 'Olya', emailAddress: 'olya@example.com' }] }] };
     }
     if (url.pathname === '/files/root-me') return { id: 'root-me', mimeType: 'application/vnd.google-apps.folder' };
     if (url.pathname === '/files/root-me/permissions') return { permissions: [] };
@@ -181,7 +181,7 @@ test('discovers a shared catalog from Drive owner metadata without Firebase UID 
       return { files: [{ id: 'catalog-friend', name: '.secret-library-catalog.json', mimeType: 'application/json' }] };
     }
     if (url.pathname === '/files' && q.includes("name = '.secret-library-catalog.json'")) {
-      return { files: [{ id: 'catalog-friend', name: '.secret-library-catalog.json', mimeType: 'application/json', parents: ['root-friend'] }] };
+      return { files: [{ id: 'catalog-friend', name: '.secret-library-catalog.json', mimeType: 'application/json', parents: ['root-friend'], owners: [{ displayName: 'Friend', emailAddress: 'friend@example.com' }] }] };
     }
     if (url.pathname === '/files/root-friend') { const error = new Error('metadata unavailable'); error.status = 404; throw error; }
     throw new Error(`Unexpected Drive request: ${path}`);

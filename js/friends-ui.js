@@ -166,7 +166,10 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
       : remainder10 === 1 ? 'друг'
         : remainder10 >= 2 && remainder10 <= 4 ? 'друга' : 'друзей';
     const countLabel = friendsSection.querySelector('.friends-count');
-    countLabel.textContent = `У вас ${count.toLocaleString('ru-RU')} ${noun}${snapshot.driveDiscoveryMessage ? `. ${snapshot.driveDiscoveryMessage}` : ''}`;
+    if (snapshot.driveDiscoveryStatus === 'loading' && count === 0) countLabel.textContent = 'Список друзей загружается…';
+    else if (snapshot.driveDiscoveryStatus === 'error' && count === 0) countLabel.textContent = `Не удалось загрузить список друзей. ${snapshot.driveDiscoveryMessage || 'Проверьте подключение к Google Drive.'}`;
+    else if (snapshot.driveDiscoveryStatus === 'ready' && count === 0) countLabel.textContent = 'Друзей пока нет.';
+    else countLabel.textContent = `У вас ${count.toLocaleString('ru-RU')} ${noun}${snapshot.driveDiscoveryMessage ? `. ${snapshot.driveDiscoveryMessage}` : ''}`;
     const container = friendsSection.querySelector('.friends-table-container');
     const table = document.createElement('table');
     table.className = 'friends-table';
@@ -192,6 +195,15 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
         mark.setAttribute('aria-label', value ? 'Да' : 'Нет');
         cell.append(mark); row.append(cell);
       }
+      table.querySelector('tbody').append(row);
+    }
+    if (!paged.items.length) {
+      const row = document.createElement('tr');
+      const cell = document.createElement('td');
+      cell.colSpan = 3;
+      cell.textContent = snapshot.driveDiscoveryStatus === 'loading' ? 'Список друзей загружается…'
+        : snapshot.driveDiscoveryStatus === 'error' ? 'Не удалось загрузить список друзей.' : 'Друзей пока нет.';
+      row.append(cell);
       table.querySelector('tbody').append(row);
     }
     const paginator = createPaginator({ ...paged, onPageChange: (next) => { pageNumber = next; render(); } });
