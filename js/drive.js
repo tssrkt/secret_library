@@ -149,7 +149,7 @@ export async function listFolderChildren(folderId, { signal, diagnostics = {}, r
     signal?.throwIfAborted();
     const params = new URLSearchParams({
       q: `'${folderId.replaceAll("'", "\\'")}' in parents and trashed = false`,
-      fields: 'nextPageToken,incompleteSearch,files(id,name,mimeType,parents,size,modifiedTime,md5Checksum,resourceKey)',
+      fields: 'nextPageToken,incompleteSearch,files(id,name,mimeType,size,modifiedTime,md5Checksum,resourceKey)',
       pageSize: '1000',
       spaces: 'drive',
       supportsAllDrives: 'true',
