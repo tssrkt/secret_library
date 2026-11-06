@@ -1110,17 +1110,7 @@ function fsQueryUsersSearchPage(pageSize, cursor, search) {
 }
 function fsQueryInvitationPage(pageSize, cursor, filter) {
   const size = Math.max(1, Math.min(100, Number(pageSize) || 25));
-  const structuredQuery = {
-    from: [{ collectionId: 'shares', allDescendants: true }],
-    orderBy: [{ field: { fieldPath: '__name__' }, direction: 'ASCENDING' }],
-    limit: size + 1
-  };
-  // Legacy invitation records may lack inviteeEmail; ownerUid is part of the
-  // invitation schema and keeps unrelated shares subcollections out of this page.
-  if (filter === 'accepted') structuredQuery.where = { fieldFilter: { field: { fieldPath: 'claimedUid' }, op: 'NOT_EQUAL', value: { nullValue: null } } };
-  else if (filter === 'pending') structuredQuery.where = { fieldFilter: { field: { fieldPath: 'claimedUid' }, op: 'EQUAL', value: { nullValue: null } } };
-  else if (filter === 'revoked') structuredQuery.where = { fieldFilter: { field: { fieldPath: 'active' }, op: 'EQUAL', value: { booleanValue: false } } };
-  else structuredQuery.where = { fieldFilter: { field: { fieldPath: 'ownerUid' }, op: 'NOT_EQUAL', value: { nullValue: null } } };
+  let afterName = '';
   if (cursor) {
     let decoded;
     try { decoded = JSON.parse(Utilities.newBlob(Utilities.base64DecodeWebSafe(cursor)).getDataAsString()); }
@@ -1128,18 +1118,41 @@ function fsQueryInvitationPage(pageSize, cursor, filter) {
     if (decoded.path !== '@invites' || typeof decoded.name !== 'string' ||
         !decoded.name.startsWith('projects/' + FIREBASE_PROJECT_ID + '/databases/(default)/documents/pendingInvites/') || !decoded.name.includes('/shares/') ||
         decoded.name.split('/').pop() !== decoded.id) throw new Error('Некорректный курсор страницы.');
-    structuredQuery.startAt = { before: false, values: [{ referenceValue: decoded.name }] };
+    afterName = decoded.name;
   }
-  const response = fsFetch(FIRESTORE_REST_ROOT.slice(0, -1) + ':runQuery', 'post', { structuredQuery });
-  if (response.code !== 200) throw new Error('Не удалось загрузить приглашения Firebase (' + response.code + ').');
-  const rows = JSON.parse(response.text).filter(row => row && row.document &&
-    row.document.name.includes('/documents/pendingInvites/') && row.document.name.includes('/shares/'))
-    .map(row => ({
-      ...fsDecodeFields(row.document.fields || {}),
-      id: row.document.name.split('/').pop(),
-      email: decodeURIComponent(row.document.name.split('/documents/pendingInvites/')[1].split('/shares/')[0]),
-      _documentName: row.document.name
-    }));
+  const base = 'projects/' + FIREBASE_PROJECT_ID + '/databases/(default)/documents/';
+  const rows = [];
+  let exhausted = false;
+  // Collection-group queries also return libraryShares and other unrelated
+  // documents. Page through them instead of relying on optional legacy fields.
+  while (rows.length < size + 1 && !exhausted) {
+    const structuredQuery = {
+      from: [{ collectionId: 'shares', allDescendants: true }],
+      orderBy: [{ field: { fieldPath: '__name__' }, direction: 'ASCENDING' }],
+      limit: 100
+    };
+    if (afterName) structuredQuery.startAt = { before: false, values: [{ referenceValue: afterName }] };
+    const response = fsFetch(FIRESTORE_REST_ROOT.slice(0, -1) + ':runQuery', 'post', { structuredQuery });
+    if (response.code !== 200) throw new Error('Не удалось загрузить приглашения Firebase (' + response.code + ').');
+    const batch = JSON.parse(response.text).filter(row => row && row.document && typeof row.document.name === 'string' && row.document.name.startsWith(base));
+    if (!batch.length) { exhausted = true; break; }
+    for (const row of batch) {
+      const doc = row.document;
+      afterName = doc.name;
+      const marker = '/documents/pendingInvites/';
+      const markerIndex = doc.name.indexOf(marker);
+      if (markerIndex < 0) continue;
+      const segments = doc.name.slice(markerIndex + marker.length).split('/');
+      if (segments.length !== 3 || segments[1] !== 'shares') continue;
+      const item = { ...fsDecodeFields(doc.fields || {}), id: segments[2], email: decodeURIComponent(segments[0]), _documentName: doc.name };
+      if (filter === 'accepted' && !item.claimedUid) continue;
+      if (filter === 'pending' && item.claimedUid) continue;
+      if (filter === 'revoked' && item.active !== false) continue;
+      rows.push(item);
+      if (rows.length >= size + 1) break;
+    }
+    if (batch.length < 100) exhausted = true;
+  }
   const hasMore = rows.length > size;
   const items = rows.slice(0, size);
   const last = items[items.length - 1];

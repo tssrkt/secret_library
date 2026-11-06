@@ -582,9 +582,8 @@ test('invitation pages cursor through nested pendingInvites shares and ignore un
   const second = app.context.fsQueryInvitationPage(1, first.nextCursor);
   assert.equal(second.items[0].ownerUid, 'owner-2');
   assert.equal(requests[0].body.structuredQuery.from[0].allDescendants, true);
-  assert.equal(requests[0].body.structuredQuery.where.fieldFilter.field.fieldPath, 'ownerUid');
-  assert.equal(requests[0].body.structuredQuery.where.fieldFilter.op, 'NOT_EQUAL');
-  assert.equal(requests[0].body.structuredQuery.limit, 2);
+  assert.equal(requests[0].body.structuredQuery.where, undefined);
+  assert.equal(requests[0].body.structuredQuery.limit, 100);
   assert.equal(requests[1].body.structuredQuery.startAt.before, false);
 });
 test('admin relationship branches filter by inviter UID on Firestore before paging', () => {
@@ -611,9 +610,7 @@ test('server-side invitation and share filters are encoded as Firestore field fi
   };
   app.context.fsQueryInvitationPage(25, '', 'pending');
   app.context.fsQueryFilteredPage('libraryShares', 'active', false, 25, '');
-  assert.equal(queries[0].where.fieldFilter.field.fieldPath, 'claimedUid');
-  assert.equal(queries[0].where.fieldFilter.op, 'EQUAL');
-  assert.deepEqual(JSON.parse(JSON.stringify(queries[0].where.fieldFilter.value)), { nullValue: null });
+  assert.equal(queries[0].where, undefined); // Legacy invitations may omit claimedUid; filter after path selection.
   assert.equal(queries[1].where.fieldFilter.field.fieldPath, 'active');
   assert.deepEqual(JSON.parse(JSON.stringify(queries[1].where.fieldFilter.value)), { booleanValue: false });
 });
