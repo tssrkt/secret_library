@@ -37,7 +37,6 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
   const submit = form.querySelector('button');
   const message = shareSection.querySelector('[role=status]');
   const retryButton = shareSection.querySelector('[data-social-retry]');
-  const driveRootLink = shareSection.querySelector('[data-drive-root-link]');
   const invitationsMessage = invitationsSection.querySelector('.sent-invitations-message');
   retryButton.addEventListener('click', retry);
   let snapshot = { friends: [], invitations: [], status: 'idle' };
@@ -201,10 +200,6 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
     renderInvitations();
   };
   const unsubscribe = social.subscribe((next) => {
-    if (next.ownRootFolderId) {
-      driveRootLink.href = `https://drive.google.com/drive/folders/${encodeURIComponent(next.ownRootFolderId)}`;
-      driveRootLink.hidden = false;
-    } else driveRootLink.hidden = true;
     const actualInvitations = next.invitations || [];
     const actualEmails = new Set(actualInvitations.map((invite) => String(invite.inviteeEmail || '').trim().toLowerCase()));
     const friendEmails = new Set((next.friends || []).map((friend) => String(friend.email || '').trim().toLowerCase()).filter(Boolean));
