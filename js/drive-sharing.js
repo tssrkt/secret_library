@@ -163,21 +163,16 @@ export async function discoverDriveFriends(user, configuredRootFolderId = '', ap
   }
 
   let driveDiscoveryErrors = [];
-  // Incoming libraries are discovered from catalog files. Avoid broad folder
-  // listings and duplicate permission reads: the own-root permissions are read once below.
-  const sharedFolders = [];
-  const folderEmailById = new Map();
-  // Discover incoming libraries from published catalog files instead of listing every shared folder or every folder owned by each friend.
+  let catalogDiscoveryFailed = false;
+  // Discover incoming libraries from published catalog files instead of enumerating shared folders.
   // This avoids scanning hundreds or thousands of ordinary folders before finding a library.
-  let foldersWithCatalog = 0;
-  let catalogsRejected = 0;
 
   // Do not rely solely on sharedWithMe: Drive can omit an accessible shared root
   // from that listing. Find published catalogs directly, then validate their owner
   // and root folder from the catalog payload and Drive metadata.
   try {
     const catalogFiles = await listSharedCatalogFiles(request);
-    note('catalog-search', `Прямой поиск по имени ${SHARED_CATALOG_FILE_NAME} вернул ${catalogFiles.length} доступных файлов: ${catalogFiles.map((file) => `${file.name || '(без имени)'} [${file.id}; MIME=${file.mimeType || '?'}; parents=${(file.parents || []).join(',') || '(нет)'}]`).join('; ') || '(пусто)'}; через sharedWithMe найдено каталогов: ${foldersWithCatalog}; отклонено проверкой: ${catalogsRejected}.`);
+    note('catalog-search', `Прямой поиск по имени ${SHARED_CATALOG_FILE_NAME} вернул ${catalogFiles.length} доступных файлов: ${catalogFiles.map((file) => `${file.name || '(без имени)'} [${file.id}; MIME=${file.mimeType || '?'}; parents=${(file.parents || []).join(',') || '(нет)'}]`).join('; ') || '(пусто)'}; полный перебор папок не выполнялся.`);
     for (const file of catalogFiles) {
       if (file.mimeType !== 'application/json') { note('catalog-file-skip', `Файл ${file.id} имеет MIME ${file.mimeType || 'не указан'}, ожидался application/json.`); continue; }
       let catalog;
@@ -205,19 +200,12 @@ export async function discoverDriveFriends(user, configuredRootFolderId = '', ap
       // than dropping a valid library because a separate folder metadata read failed.
       const knownContact = (Array.isArray(knownFriends) ? knownFriends : []).find((friend) =>
         friend?.uid && String(friend.uid) === catalog.ownerUid);
-      // Drive can return a shared catalog but deny a separate read of its parent
-      // folder. In that case, use the owner metadata already returned by the
-      // shared-folder listing; never require a Firestore contact/UID match.
-      const listedRoot = sharedFolders.find((folder) => folder.id === catalog.rootFolderId);
-      const listedOwner = (listedRoot?.owners || []).find((item) => normalizeEmail(item.emailAddress)) || listedRoot?.owners?.[0] || {};
+      // When folder metadata is unavailable, use the catalog file's Drive owner metadata
+      // or a known friend UID. Do not require a broad folder listing or Firestore contact.
       const catalogOwner = (file.owners || []).find((item) => normalizeEmail(item.emailAddress)) || file.owners?.[0] || {};
-      const knownOwner = knownContact || (listedRoot ? {
-        uid: catalog.ownerUid,
-        email: listedOwner.emailAddress || folderEmailById.get(catalog.rootFolderId) || '',
-        displayName: listedOwner.displayName || listedRoot.name || '',
-      } : (catalogOwner.emailAddress || catalogOwner.displayName ? {
+      const knownOwner = knownContact || (catalogOwner.emailAddress || catalogOwner.displayName ? {
         uid: catalog.ownerUid, email: catalogOwner.emailAddress || '', displayName: catalogOwner.displayName || '',
-      } : null));
+      } : null);
       const effectiveOwnerEmail = normalizeEmail(root?.owners?.find((item) => normalizeEmail(item.emailAddress))?.emailAddress)
         || normalizeEmail(knownOwner?.email);
       if (effectiveOwnerEmail && effectiveOwnerEmail === ownEmail) {
@@ -231,8 +219,7 @@ export async function discoverDriveFriends(user, configuredRootFolderId = '', ap
       }
       note('catalog-root-match', `Каталог ${file.id}: UID владельца ${catalog.ownerUid}; корень ${catalog.rootFolderId}; метаданные ${root ? 'доступны' : 'недоступны, использован известный друг'}.`);
       const owner = (root?.owners || []).find((item) => normalizeEmail(item.emailAddress)) || root?.owners?.[0] || {};
-      const ownerEmail = normalizeEmail(owner.emailAddress) || normalizeEmail(knownOwner?.email)
-        || normalizeEmail(folderEmailById.get(catalog.rootFolderId)) || '';
+      const ownerEmail = normalizeEmail(owner.emailAddress) || normalizeEmail(knownOwner?.email) || '';
       add({
         uid: catalog.ownerUid,
         email: ownerEmail,
@@ -243,6 +230,7 @@ export async function discoverDriveFriends(user, configuredRootFolderId = '', ap
       });
     }
   } catch (error) {
+    catalogDiscoveryFailed = true;
     driveDiscoveryErrors.push(`Не удалось найти опубликованные каталоги друзей: ${error?.message || error}`);
   }
 
@@ -273,7 +261,7 @@ export async function discoverDriveFriends(user, configuredRootFolderId = '', ap
 
   return {
     rootFolderId,
-    discoveryStatus: driveDiscoveryErrors.length && ![...friends.values()].some((friend) => friend.inbound) ? 'error' : 'ready',
+    discoveryStatus: catalogDiscoveryFailed ? 'error' : 'ready',
     errors: [...driveDiscoveryErrors, ...diagnostics],
     friends: [...friends.values()]
       .filter((friend) => friend.inbound || friend.outbound)

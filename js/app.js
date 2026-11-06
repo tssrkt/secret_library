@@ -2,7 +2,7 @@ import {
   clearAccessToken, clearPersistedAuth, createAuthAttemptGuard,
   initializeAuth, persistAuthSession, recoverAuthSession, requestAccessToken,
 } from './auth.js';
-import { downloadDriveFile, getCurrentDriveUser, getFolder, listFolderChildren } from './drive.js?v=20261106-root-discovery';
+import { downloadDriveFile, getCurrentDriveUser, getFolder, listFolderChildren } from './drive.js';
 import { removeCovers, removeOrphanCovers, storeCover } from './cover-cache.js';
 import {
   deleteBuildingIndex, IndexError, loadBuildingIndex, loadIndex, readIndexFile,
