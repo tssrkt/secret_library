@@ -20,6 +20,7 @@ export async function prepareIndexingRun(active, { mode, building = null, scan =
 
 export function createRetryEligibilityCheck(index, { getFile = getLibraryFile, signal } = {}) {
   const folders = new Map();
+  const folderRecords = new Map((index.folders || []).map((item) => [item.id, item]));
   const folderKeys = new Map((index.folders || []).map((item) => [item.id, item.resourceKey]));
   const parentsOf = (item, id) => {
     if (!Array.isArray(item?.parents) || item.parents.some((parent) => typeof parent !== 'string' || !parent.trim())) {
@@ -75,8 +76,12 @@ export function createRetryEligibilityCheck(index, { getFile = getLibraryFile, s
       if (parent !== index.rootFolderId) throw Object.assign(new Error('Google Drive did not confirm the path to the configured library root.'),
         { code: 'incomplete_parent_metadata', stage: 'metadata', fileId: book.id });
       for (const item of ancestors) {
-        const existing = index.folders.find((value) => value.id === item.id);
-        if (existing) Object.assign(existing, item); else index.folders.push(item);
+        const existing = folderRecords.get(item.id);
+        if (existing) Object.assign(existing, item);
+        else {
+          index.folders.push(item);
+          folderRecords.set(item.id, item);
+        }
       }
       Object.assign(book, { parentId: file.parents[0], fileName: file.name, size: file.size == null ? null : Number(file.size),
         modifiedTime: file.modifiedTime || null, md5Checksum: file.md5Checksum || null,
