@@ -1,5 +1,5 @@
 import { startFirebaseSession, endFirebaseSession } from './firebase-session.js';
-import { createSocialStore } from './social-store.js';
+import { createSocialStore } from './social-store.js?v=20261106-drive-notifications';
 import { createSharedLibraryStore } from './shared-library.js?v=20261106-drive-names';
 import { discoverDriveFriends, grantRootFolderAccess } from './drive-sharing.js?v=20261106-drive-names';
 import { findDriveCatalogFile, downloadDriveJsonFile, getCurrentDriveUser } from './drive.js';
@@ -55,6 +55,34 @@ function writeFriendCache(uid, friends) {
     localStorage.setItem(`${FRIEND_CACHE_PREFIX}${uid}`, JSON.stringify(safe));
   } catch { /* A full or disabled local storage must not break the library. */ }
 }
+const NOTIFICATION_SEEN_PREFIX = 'secret-library-notifications-seen-v1:';
+function notificationIdentity(friend) { return String(friend?.uid || friend?.email || '').trim().toLowerCase(); }
+function readSeenNotifications() {
+  const identity = state.driveUserEmail || invitationUser?.uid || '';
+  if (!identity) return new Set();
+  try {
+    const value = JSON.parse(localStorage.getItem(`${NOTIFICATION_SEEN_PREFIX}${identity}`) || '[]');
+    return new Set(Array.isArray(value) ? value.filter((item) => typeof item === 'string') : []);
+  } catch { return new Set(); }
+}
+function buildDriveNotifications(friends = driveFriends) {
+  const seen = readSeenNotifications();
+  return friends.filter((friend) => friend.inbound && friend.uid && !String(friend.uid).startsWith('email:'))
+    .map((friend) => {
+      const key = notificationIdentity(friend);
+      return { ownerUid: friend.uid, email: friend.email || '', displayName: friend.displayName || 'Пользователь',
+        unread: Boolean(key && !seen.has(key)), mutual: friend.outbound === true, notificationKey: key };
+    }).sort((a, b) => a.displayName.localeCompare(b.displayName, 'ru'));
+}
+function markDriveNotificationsSeen(items = []) {
+  const identity = state.driveUserEmail || invitationUser?.uid || '';
+  if (!identity) return;
+  const seen = readSeenNotifications();
+  for (const item of items) if (item.notificationKey) seen.add(item.notificationKey);
+  try { localStorage.setItem(`${NOTIFICATION_SEEN_PREFIX}${identity}`, JSON.stringify([...seen].slice(-1000))); }
+  catch { /* Notifications remain usable for this session if storage is unavailable. */ }
+  emit({ notifications: buildDriveNotifications() });
+}
 const emit = (change) => {
   state = { ...state, ...change };
   if (invitationUser && Array.isArray(change.friends)) writeFriendCache(invitationUser.uid, change.friends);
@@ -76,7 +104,7 @@ async function refreshDriveFriends(user, currentGeneration = generation, knownFr
     if (currentGeneration !== generation) return;
     if (result.rootFolderId) configuredRootFolderId = result.rootFolderId;
     driveFriends = result.friends;
-    emit({ friends: driveFriends, ownRootFolderId: result.rootFolderId || configuredRootFolderId, driveDiscoveryMessage: result.errors?.join(' ') || '' });
+    emit({ friends: driveFriends, notifications: buildDriveNotifications(driveFriends), ownRootFolderId: result.rootFolderId || configuredRootFolderId, driveDiscoveryMessage: result.errors?.join(' ') || '' });
     watchCatalogs(driveFriends);
   } catch (error) {
     // Keep the last confirmed Drive-derived list when Drive is temporarily unavailable.
@@ -112,6 +140,7 @@ export const social = {
       // This path runs independently of Firebase Authentication/Firestore.
       const driveUser = await getCurrentDriveUser();
       if (current !== generation) return;
+      emit({ driveUserEmail: String(driveUser?.email || driveUser?.emailAddress || '').trim().toLowerCase() });
       driveReader?.dispose();
       driveReader = createSharedLibraryStore({ user: { uid: '' } });
       driveFriends = [];
@@ -134,10 +163,9 @@ export const social = {
       settleConnectionReady(true);
       stop = store.subscribe((snapshot) => {
         if (current !== generation) return;
-        // The database snapshot is used only for unrelated social features such as
-        // notifications. It must never supply friend emails, friend rows, or tabs.
-        // Folder discovery and library tabs are built exclusively from Google Drive
-        // results plus the local cache populated by earlier Drive discovery.
+        // Firestore snapshots supply invitation-management data only.
+        // Friend rows, library tabs and notifications are all derived from Google Drive;
+        // notification read state is stored locally in this browser.
         emit({ ...snapshot, friends: driveFriends, libraries: driveFriends
           .filter((friend) => friend.inbound && !String(friend.uid).startsWith('email:'))
           .map((friend) => ({ uid: friend.uid, displayName: friend.displayName, revision: 'drive', catalogId: friend.catalogId || '' })) });
@@ -180,7 +208,7 @@ export const social = {
     const known = driveFriends.find((friend) => String(friend.email || '').trim().toLowerCase() === normalizedEmail);
     if (known) known.outbound = true;
     else driveFriends = [...driveFriends, { uid: `email:${normalizedEmail}`, email: normalizedEmail, displayName: normalizedEmail, inbound: false, outbound: true, isAdmin: false }];
-    emit({ friends: driveFriends, ownRootFolderId: rootFolderId });
+    emit({ friends: driveFriends, notifications: buildDriveNotifications(driveFriends), ownRootFolderId: rootFolderId });
     watchCatalogs(driveFriends);
     if (invitationUser) void refreshDriveFriends(invitationUser, generation, driveFriends);
     return access.created
@@ -198,7 +226,7 @@ export const social = {
     return fetchInvitationStatuses({ emails, idToken });
   },
   setSharing(uid, active) { if (!store || state.status !== 'ready') return Promise.reject(new Error(state.message)); return store.setSharing(uid, active); },
-  markSeen(items) { if (!store || state.status !== 'ready') return Promise.resolve(); return store.markSeen(items); },
+  markSeen(items) { markDriveNotificationsSeen(items); return Promise.resolve(); },
   syncKnownContacts(signature = '') {
     if (!store || state.status !== 'ready') return Promise.resolve();
     const key = `${invitationUser?.uid || ''}:${signature}`;

@@ -1,14 +1,11 @@
-import { socialError } from './social-runtime.js';
-
-export function createNotificationsController({ button, panel, avatarButton, closeAvatar, social, retry }) {
+export function createNotificationsController({ button, panel, avatarButton, closeAvatar, social }) {
   if (!button || !panel) return { close() {}, destroy() {} };
   const events = new AbortController();
   const listen = (element, type, callback) => element?.addEventListener(type, callback, { signal: events.signal });
   const badge = button.querySelector('[data-notification-badge]');
-  let snapshot = { notifications: [], status: 'idle' };
+  let snapshot = { notifications: [] };
   const busy = new Set();
   let reading = false;
-  let serviceMessage = '';
   const close = (restore = false) => { panel.hidden = true; button.setAttribute('aria-expanded', 'false'); if (restore) button.focus(); };
   const message = document.createElement('p'); message.setAttribute('role', 'status');
   const render = () => {
@@ -23,20 +20,20 @@ export function createNotificationsController({ button, panel, avatarButton, clo
       if (item.mutual) { const mutual = document.createElement('small'); mutual.textContent = 'Вы уже делитесь'; row.append(mutual); }
       else {
         const action = document.createElement('button'); action.type = 'button'; action.className = 'settings-save-button notification-share-button';
-        action.textContent = 'ПОДЕЛИТЬСЯ В ОТВЕТ'; action.disabled = busy.has(item.ownerUid) || snapshot.status !== 'ready';
+        action.textContent = 'ПОДЕЛИТЬСЯ В ОТВЕТ'; action.disabled = busy.has(item.ownerUid) || !item.email;
+        action.title = item.email ? '' : 'Google Drive не предоставил email владельца библиотеки';
         action.addEventListener('click', async () => {
-          if (busy.has(item.ownerUid)) return;
+          if (busy.has(item.ownerUid) || !item.email) return;
           busy.add(item.ownerUid); action.disabled = true; message.textContent = '';
-          try { await social.setSharing(item.ownerUid, true); }
-          catch (error) { message.textContent = socialError(error); }
+          try { await social.shareWithEmail(item.email); }
+          catch (error) { message.textContent = error?.message || 'Не удалось предоставить доступ к библиотеке.'; }
           finally { busy.delete(item.ownerUid); render(); }
         }); row.append(action);
       }
       list.append(row);
     }
-    if (!list.children.length) { const empty = document.createElement('li'); empty.textContent = snapshot.status === 'ready' ? 'Уведомлений пока нет.' : snapshot.message; list.append(empty); }
+    if (!list.children.length) { const empty = document.createElement('li'); empty.textContent = 'Уведомлений пока нет.'; list.append(empty); }
     panel.replaceChildren(heading, list, message);
-    if (snapshot.status === 'error') { const action = document.createElement('button'); action.textContent = 'ПОВТОРИТЬ ПОДКЛЮЧЕНИЕ'; action.type = 'button'; action.className = 'settings-save-button'; action.addEventListener('click', retry); panel.append(action); }
   };
   const mark = async () => {
     if (reading || panel.hidden) return;
@@ -44,13 +41,11 @@ export function createNotificationsController({ button, panel, avatarButton, clo
     if (!displayed.some((item) => item.unread)) return;
     reading = true;
     try { await social.markSeen(displayed); message.textContent = ''; }
-    catch (error) { message.textContent = socialError(error); }
+    catch (error) { message.textContent = error?.message || 'Не удалось отметить уведомления прочитанными.'; }
     finally { reading = false; }
   };
   const unsubscribe = social.subscribe((next) => {
-    snapshot = next;
-    if (next.message || message.textContent === serviceMessage) message.textContent = next.message || '';
-    serviceMessage = next.message || '';
+    snapshot = { notifications: Array.isArray(next.notifications) ? next.notifications : [] };
     render();
   });
   listen(button, 'click', () => {

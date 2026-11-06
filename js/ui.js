@@ -12,8 +12,8 @@ import { createSearchController } from './search-ui.js';
 import { createIndexingErrorsController } from './indexing-errors-ui.js';
 import { createUserSettingsController } from './user-settings-ui.js';
 import { mountFriends } from './friends-ui.js';
-import { createNotificationsController } from './notifications-ui.js';
-import { social } from './social-runtime.js?v=20261106-drive-only-share';
+import { createNotificationsController } from './notifications-ui.js?v=20261106-drive-notifications';
+import { social } from './social-runtime.js?v=20261106-drive-notifications';
 import { getAccessToken } from './auth.js';
 import { loadUserSettings, saveUserSettings } from './user-settings.js';
 
@@ -94,10 +94,9 @@ const elements = {
 };
 
 const dropdown = setupDropdown(elements.avatar, elements.avatarMenu);
-const retrySocial = () => { void social.connect(getAccessToken()); };
 const notifications = createNotificationsController({ button: document.querySelector('#notifications-button'),
   panel: document.querySelector('#notifications-panel'), avatarButton: elements.avatar,
-  closeAvatar: () => dropdown.close(), social, retry: retrySocial });
+  closeAvatar: () => dropdown.close(), social });
 const indexingErrors = createIndexingErrorsController(document.querySelector('#indexing-errors'));
 export function updateIndexingErrors(entries) { indexingErrors.update(entries); }
 const avatar = createAvatarController(elements.avatar, elements.avatarImage, elements.avatarPlaceholder);

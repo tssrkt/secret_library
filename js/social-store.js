@@ -1,12 +1,11 @@
-import { normalizeEmail, validateShareEmail, shareId, friendsModel, notificationsModel } from './social-model.js';
+import { normalizeEmail, validateShareEmail, shareId } from './social-model.js?v=20261106-drive-notifications';
 
 export function createSocialStore({ db, sdk, user }) {
-  const { doc, collection, collectionGroup, query, where, getDoc, getDocs, runTransaction,
-    serverTimestamp, onSnapshot, writeBatch } = sdk;
+  const { doc, collection, collectionGroup, query, where, getDocs, runTransaction,
+    serverTimestamp, onSnapshot } = sdk;
   const uid = user.uid;
   const email = normalizeEmail(user.email);
   const founderUid = 'aA89pCYsKNbWWePmAveUVrG34F82';
-  let superAdminUid = '';
   const ref = (...path) => doc(db, ...path);
   const data = (snapshot) => snapshot.exists() ? snapshot.data() : null;
   const profileRef = ref('users', uid);
@@ -41,7 +40,6 @@ export function createSocialStore({ db, sdk, user }) {
       if (!existing) tx.set(directory, { uid });
     });
     // The founder UID is fixed in the security model; no email-directory lookup is needed.
-    superAdminUid = founderUid;
     const pending = await getDocs(collection(db, 'pendingInvites', email, 'shares'));
     await forEachConcurrent(pending.docs, 10, (snapshot) => claimInvitation(snapshot.ref));
   }
@@ -140,91 +138,29 @@ export function createSocialStore({ db, sdk, user }) {
       if (!existing.exists()) tx.set(contact, { email: contactEmail });
     }));
   }
-  async function markSeen(notifications) {
-    ensureCurrent();
-    const displayed = notifications.slice(0, 50).filter((item) => item.unread);
-    // Rules validate each marker against its share; stay below the batch access-call limit.
-    for (let offset = 0; offset < displayed.length; offset += 10) {
-      ensureCurrent();
-      const batch = writeBatch(db);
-      for (const item of displayed.slice(offset, offset + 10)) batch.set(ref('users', uid, 'incomingShareReads', item.ownerUid), { seenSharedAt: item.sharedAt });
-      await batch.commit();
-    }
-  }
-
   function subscribe(listener, onError) {
-    const collections = { outgoing: [], incoming: [], invitations: [], contacts: {}, reads: {} };
-    const profiles = {};
-    // Snapshot callbacks for several collections often arrive together. Reuse recent
-    // profile reads and share in-flight requests instead of charging one read per emit.
-    const profileCache = new Map();
-    const profileRequests = new Map();
-    const profileCacheTtlMs = 30_000;
-    const deniedProfileCacheTtlMs = 5_000;
-    const loadProfile = (id) => {
-      const cached = profileCache.get(id);
-      if (cached && cached.expiresAt > Date.now()) return Promise.resolve(cached.profile);
-      if (profileRequests.has(id)) return profileRequests.get(id);
-      const request = (async () => {
-        try {
-          const profile = data(await getDoc(ref('users', id)));
-          profileCache.set(id, { profile, expiresAt: Date.now() + profileCacheTtlMs });
-          return profile;
-        } catch (error) {
-          // A legacy private profile may become readable after its owner migrates it.
-          // Cache that denial only briefly; do not cache transient/network failures.
-          if (!String(error?.code || '').includes('permission-denied')) throw error;
-          profileCache.set(id, { profile: null, expiresAt: Date.now() + deniedProfileCacheTtlMs });
-          return null;
-        } finally {
-          profileRequests.delete(id);
-        }
-      })();
-      profileRequests.set(id, request);
-      return request;
-    };
-    let revision = 0;
+    let invitations = [];
     let stopped = false;
-    const emit = async () => {
-      const current = ++revision;
-      try {
-        const shares = [...collections.outgoing, ...collections.incoming];
-        // The friends table is Drive-derived now. Only load profiles needed to label incoming notifications.
-        const ids = new Set(collections.incoming.filter((item) => item.active).map((item) => item.ownerUid));
-        await Promise.all([...ids].map(async (id) => {
-          const profile = await loadProfile(id);
-          const safeProfile = profile || { uid: id, displayName: 'Пользователь' };
-          profiles[id] = id === superAdminUid ? { ...safeProfile, isAdmin: true } : safeProfile;
-        }));
-        if (stopped || disposed || current !== revision) return;
-        listener({ friends: friendsModel(uid, shares, profiles, collections.contacts),
-          invitations: collections.invitations.filter((item) => item.active === true && !item.claimedUid && item.inviteeEmail),
-          notifications: notificationsModel(uid, shares, collections.reads, profiles) });
-      } catch (error) { if (!stopped && !disposed) onError(error); }
+    const emit = () => {
+      if (!stopped && !disposed) listener({
+        invitations: invitations.filter((item) => item.active === true && !item.claimedUid && item.inviteeEmail),
+      });
     };
-    const watch = (target, key, map = false) => onSnapshot(target, { includeMetadataChanges: true }, (snapshot) => {
-      // Do not present a locally queued write as granted access or a successful read marker.
-      if (snapshot.metadata.hasPendingWrites) return;
-      collections[key] = map ? Object.fromEntries(snapshot.docs.map((item) => [item.id, item.data()])) : snapshot.docs.map((item) => item.data());
-      void emit();
-    }, onError);
     const incomingInvites = query(collectionGroup(db, 'shares'), where('inviteeEmail', '==', email));
     const stopIncomingInvites = onSnapshot(incomingInvites, (snapshot) => {
       for (const item of snapshot.docs) {
         const invite = item.data();
-        if (invite.active === true && !invite.claimedUid) {
-          void claimInvitation(item.ref).catch(onError);
-        }
+        if (invite.active === true && !invite.claimedUid) void claimInvitation(item.ref).catch(onError);
       }
     }, onError);
-    const stops = [
-      stopIncomingInvites,
-      watch(query(collection(db, 'libraryShares'), where('ownerUid', '==', uid)), 'outgoing'),
-      watch(query(collection(db, 'libraryShares'), where('viewerUid', '==', uid)), 'incoming'),
-      watch(query(collectionGroup(db, 'shares'), where('ownerUid', '==', uid)), 'invitations'),
-      watch(collection(db, 'users', uid, 'incomingShareReads'), 'reads', true),
-    ];
-    return () => { stopped = true; stops.forEach((stop) => stop()); };
+    const outgoingInvites = query(collectionGroup(db, 'shares'), where('ownerUid', '==', uid));
+    const stopOutgoingInvites = onSnapshot(outgoingInvites, (snapshot) => {
+      if (snapshot.metadata?.hasPendingWrites) return;
+      invitations = snapshot.docs.map((item) => item.data());
+      emit();
+    }, onError);
+    emit();
+    return () => { stopped = true; stopIncomingInvites(); stopOutgoingInvites(); };
   }
-  return { uid, register, shareWithEmail, setSharing, syncShareEmails, syncKnownContacts, markSeen, subscribe, dispose() { disposed = true; } };
+  return { uid, register, shareWithEmail, setSharing, syncShareEmails, syncKnownContacts, subscribe, dispose() { disposed = true; } };
 }

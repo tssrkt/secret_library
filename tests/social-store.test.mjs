@@ -2,9 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createSocialStore } from '../js/social-store.js';
 
-test('a legacy private profile cannot hide an otherwise valid friend relationship', async () => {
+test('notification-related subscriptions do not read Firestore relationships, read markers or profiles', async () => {
   const uid = 'current-user';
-  const share = { ownerUid: 'legacy-friend', viewerUid: uid, active: true, sharedAt: 1 };
   const profileReads = new Map();
   const watchers = [];
   const sdk = {
@@ -41,17 +40,11 @@ test('a legacy private profile cannot hide an otherwise valid friend relationshi
   let error;
   store.subscribe((snapshot) => { latest = snapshot; }, (value) => { error = value; });
   await new Promise((resolve) => setTimeout(resolve, 0));
-  assert.equal(error, undefined, 'profile-only permission denial is handled locally');
-  assert.equal(latest.friends.length, 1, 'friend relationship remains visible');
-  assert.equal(latest.friends[0].uid, 'legacy-friend');
-  assert.equal(latest.friends[0].displayName, 'Пользователь', 'private legacy name is not leaked');
-  assert.equal(profileReads.get('users/legacy-friend'), 1);
-
-  const incoming = watchers.find(({ target, filters }) => target.path === 'libraryShares' &&
-    filters.some((filter) => filter.field === 'viewerUid' && filter.value === uid));
-  incoming.next({ metadata: { hasPendingWrites: false }, docs: incoming.docs });
-  await new Promise((resolve) => setTimeout(resolve, 0));
-  assert.equal(profileReads.get('users/legacy-friend'), 1, 'repeated snapshots reuse the briefly cached denied profile');
+  assert.equal(error, undefined, 'invitation subscription succeeds');
+  assert.deepEqual(latest.invitations, [], 'store emits only invitation data to the social runtime');
+  assert.equal(profileReads.size, 0, 'notification labels never trigger profile reads');
+  assert.equal(watchers.some(({ target }) => target.path === 'libraryShares'), false, 'no relationship subscription for notifications');
+  assert.equal(watchers.some(({ target }) => target.path === 'users/current-user/incomingShareReads'), false, 'no read-marker subscription');
 });
 
 test('share email migration processes records concurrently in bounded batches', async () => {

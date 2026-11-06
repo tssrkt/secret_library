@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { initializeTestEnvironment, assertFails, assertSucceeds } from '@firebase/rules-unit-testing';
 import * as sdk from 'firebase/firestore';
 import { createSocialStore } from '../js/social-store.js';
-import { friendsModel, notificationsModel, validateShareEmail } from '../js/social-model.js';
+import { friendsModel, validateShareEmail } from '../js/social-model.js';
 import { createSharedLibraryStore } from '../js/shared-library.js';
 
 let env;
@@ -210,19 +210,23 @@ test('only the fixed founder may create a profile without an invitation', async 
   assert.equal((await get(stranger.db, 'users/uninvited-person')).invitedByUid, FOUNDER_UID);
 });
 
-test('an already registered recipient claims a new email invitation live', async () => {
+test('an already registered recipient claims a new email invitation live without notification subscriptions', async () => {
   const a = client('live-inviter'); const b = client('live-recipient');
   await register(a); await register(b);
   let state; let failure;
   const stop = b.store.subscribe((next) => { state = next; }, (error) => { failure = error; });
   try {
     await a.store.shareWithEmail(b.user.email);
-    for (let i = 0; i < 150 && !failure && !state?.friends?.some((friend) => friend.uid === a.user.uid); i++) {
+    let invitation;
+    for (let i = 0; i < 150; i++) {
+      if (failure) throw failure;
+      invitation = await get(a.db, `pendingInvites/${b.user.email}/shares/${a.user.uid}`);
+      if (invitation?.claimedUid === b.user.uid) break;
       await new Promise((resolve) => setTimeout(resolve, 20));
     }
-    if (failure) throw failure;
-    assert(state?.friends?.some((friend) => friend.uid === a.user.uid), 'recipient sees the new share without reconnecting');
-    assert.equal((await get(a.db, `pendingInvites/${b.user.email}/shares/${a.user.uid}`)).claimedUid, b.user.uid);
+    assert.equal(invitation?.claimedUid, b.user.uid, 'registration invitation is claimed independently');
+    assert.deepEqual(state?.invitations, [], 'store subscription emits invitation management data only');
+    assert.equal('notifications' in (state || {}), false, 'bell notifications are not produced by Firestore');
   } finally { stop(); b.store.dispose(); }
 });
 
@@ -307,7 +311,6 @@ test('pending invites claim atomically for own email; earliest inviter is perman
   assert.deepEqual((await get(n.db, 'libraryShares/a__new')).sharedAt, share.sharedAt);
   await a.store.syncKnownContacts();
   assert.equal((await get(a.db, 'users/a/knownContacts/new')).email, 'new@gmail.com');
-  assert(notificationsModel('new', [share])[0].unread);
   await a.store.setSharing('new', false);
   await register(n);
   assert.equal((await get(n.db, 'libraryShares/a__new')).active, false, 'consumed pending cannot restore revoked access');
@@ -328,38 +331,7 @@ test('clients cannot forge server-only invitation email delivery status', async 
   }));
 });
 
-test('read markers are private, reference actual events and regrant becomes unread again', async () => {
-  const a = client('a'); const b = client('b'); await register(a); await register(b);
-  await a.store.setSharing('b');
-  let share = await get(b.db, 'libraryShares/a__b');
-  let notifications = notificationsModel('b', [share]);
-  await b.store.markSeen(notifications);
-  const read = await get(b.db, 'users/b/incomingShareReads/a');
-  assert.equal(notificationsModel('b', [share], { a: read })[0].unread, false);
-  await assertFails(sdk.getDoc(sdk.doc(a.db, 'users/b/incomingShareReads/a')));
-  await assertFails(sdk.setDoc(sdk.doc(a.db, 'users/b/incomingShareReads/a'), { seenSharedAt: share.sharedAt }));
-  await assertFails(sdk.setDoc(sdk.doc(b.db, 'users/b/incomingShareReads/a'), { seenSharedAt: sdk.Timestamp.fromMillis(Date.now() + 999999) }));
-  await a.store.setSharing('b', false); await a.store.setSharing('b', true);
-  share = await get(b.db, 'libraryShares/a__b');
-  assert(notificationsModel('b', [share], { a: read })[0].unread);
-  await b.store.setSharing('a');
-  assert(notificationsModel('b', [share, await get(b.db, 'libraryShares/b__a')])[0].mutual);
-});
 
-test('50 displayed notifications can be marked without exceeding security rule batch limits', async () => {
-  const b = client('b'); await register(b);
-  const shares = Array.from({ length: 51 }, (_, i) => ({ ownerUid: `owner${i}`, viewerUid: 'b', active: true, sharedAt: sdk.Timestamp.fromMillis(1000 + i), revokedAt: null }));
-  await env.withSecurityRulesDisabled(async (context) => {
-    const db = context.firestore(); const batch = sdk.writeBatch(db);
-    for (const share of shares) batch.set(sdk.doc(db, 'libraryShares', `${share.ownerUid}__b`), share);
-    await batch.commit();
-  });
-  await b.store.markSeen(notificationsModel('b', shares));
-  const markers = await sdk.getDocs(sdk.collection(b.db, 'users/b/incomingShareReads'));
-  assert.equal(markers.size, 50);
-  const reads = Object.fromEntries(markers.docs.map((doc) => [doc.id, doc.data()]));
-  assert.equal(notificationsModel('b', shares, reads).filter((item) => item.unread).length, 1);
-});
 
 test('claim cannot be forged by another email or without a matching atomic share activation', async () => {
   const a = client('a'); const c = client('c'); await register(a); await register(c);
@@ -368,33 +340,4 @@ test('claim cannot be forged by another email or without a matching atomic share
   await assertFails(sdk.setDoc(sdk.doc(c.db, 'libraryShares/a__c'), { ownerUid: 'a', viewerUid: 'c', active: true, sharedAt: sdk.serverTimestamp(), revokedAt: null }));
   await assertFails(sdk.deleteDoc(sdk.doc(a.db, 'pendingInvites/future@gmail.com/shares/a')));
   await assertFails(sdk.getDocs(sdk.collectionGroup(c.db, 'shares')));
-});
-
-test('live subscriptions update friends and notifications after reciprocal share and revocation', async () => {
-  const a = client('a'); const b = client('b'); await register(a); await register(b);
-  let state; let failure; const observed = [];
-  const stop = b.store.subscribe((next) => { state = next; observed.push(next); }, (error) => { failure = error; });
-  const until = async (predicate) => {
-    for (let i = 0; i < 150 && !failure && !predicate(); i++) await new Promise((resolve) => setTimeout(resolve, 20));
-    if (failure) throw failure;
-    assert(predicate());
-  };
-  try {
-    await a.store.setSharing('b');
-    await until(() => state?.friends.length === 1 && state.notifications.length === 1);
-    assert.equal(state.friends[0].email, 'a@gmail.com');
-    assert.equal(state.friends[0].inbound, true); assert.equal(state.friends[0].outbound, false);
-    observed.length = 0;
-    await assertFails(sdk.updateDoc(sdk.doc(b.db, 'libraryShares/a__b'), { active: false, revokedAt: sdk.serverTimestamp() }));
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    assert(observed.every((value) => value.friends.length === 1 && value.friends[0].inbound), 'denied local writes never become visible successful changes');
-    await b.store.setSharing('a');
-    await until(() => state?.friends[0]?.outbound && state.notifications[0]?.mutual);
-    await b.store.markSeen(state.notifications);
-    await until(() => !state?.notifications[0]?.unread);
-    await a.store.setSharing('b', false);
-    await until(() => state?.friends.length === 1 && !state.friends[0].inbound && state.notifications.length === 0);
-    await b.store.setSharing('a', false);
-    await until(() => state?.friends.length === 0);
-  } finally { stop(); b.store.dispose(); }
 });

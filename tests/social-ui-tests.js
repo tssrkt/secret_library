@@ -1,4 +1,4 @@
-import { friendsModel, notificationsModel, validateShareEmail } from '../js/social-model.js';
+import { friendsModel, validateShareEmail } from '../js/social-model.js';
 import { mountFriends } from '../js/friends-ui.js';
 import { createNotificationsController } from '../js/notifications-ui.js';
 import { setupDropdown } from '../js/dropdown.js';
@@ -26,9 +26,6 @@ export async function runSocialUiTests(test, assert, equal) {
     equal(friends.map((item) => [item.uid, item.inbound, item.outbound, item.email]), [['a', true, true, ''], ['b', false, true, 'known@gmail.com']], 'direction, unique person and stable uid tiebreak');
     equal(validateShareEmail(' Ab.C+tag@Gmail.Com ', 'me@gmail.com'), 'ab.c+tag@gmail.com', 'trim lowercase only');
     equal(friendsModel('me', [{ ownerUid: 'owner', viewerUid: 'me', active: true, ownerEmail: 'owner@gmail.com' }], { owner: { displayName: 'Owner' } })[0].email, 'owner@gmail.com', 'incoming friend displays the email attached to their share');
-    assert(notificationsModel('me', shares)[0].mutual, 'reciprocal share');
-    assert(!notificationsModel('me', shares, { a: { seenSharedAt: 1 } })[0].unread, 'seen timestamp hides unread');
-    assert(notificationsModel('me', [{ ...shares[0], sharedAt: 3 }], { a: { seenSharedAt: 1 } })[0].unread, 'regrant is unread');
   });
   await test('known contact sync repeats when an invited friend registers later', async () => {
     const page = document.createElement('div'); document.body.append(page);
@@ -167,8 +164,8 @@ export async function runSocialUiTests(test, assert, equal) {
     document.body.append(root);
     const [button, panel, avatarButton, menu] = root.children;
     const dropdown = setupDropdown(avatarButton, menu);
-    const social = stub({ notifications: Array.from({ length: 51 }, (_, i) => ({ ownerUid: String(i), displayName: `User ${i}`, sharedAt: 51 - i, unread: true, mutual: i === 1 })) });
-    const controller = createNotificationsController({ button, panel, avatarButton, closeAvatar: () => dropdown.close(), social, retry: () => {} });
+    const social = stub({ notifications: Array.from({ length: 51 }, (_, i) => ({ ownerUid: String(i), email: `user${i}@gmail.com`, displayName: `User ${i}`, sharedAt: 51 - i, unread: true, mutual: i === 1 })) });
+    const controller = createNotificationsController({ button, panel, avatarButton, closeAvatar: () => dropdown.close(), social });
     try {
       equal(button.querySelector('span').textContent, '51', 'badge count');
       avatarButton.click(); assert(!menu.hidden, 'avatar open');
@@ -178,7 +175,7 @@ export async function runSocialUiTests(test, assert, equal) {
       equal(button.querySelector('span').textContent, '1', 'remaining unloaded event stays unread');
       equal(panel.querySelectorAll('li').length, 50, 'dropdown limited to 50');
       const action = panel.querySelector('li button'); equal(action.textContent, 'ПОДЕЛИТЬСЯ В ОТВЕТ', 'exact reciprocal text');
-      action.click(); await tick(); equal(social.calls[1], ['0', true], 'reverse direction created');
+      action.click(); await tick(); equal(social.calls[1], 'user0@gmail.com', 'reverse direction granted through Google Drive email sharing');
       assert(panel.querySelectorAll('li')[1].textContent.includes('Вы уже делитесь') && !panel.querySelectorAll('li')[1].querySelector('button'), 'mutual state is text');
       document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
       assert(panel.hidden && document.activeElement === button, 'Escape closes and restores button focus');
