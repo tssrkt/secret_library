@@ -105,7 +105,10 @@ export const social = {
       if (current !== generation) return;
       if (!session) { settleConnectionReady(false); return; }
       store = createSocialStore(session);
+      // Drive catalog publishing must not depend on Firestore registration/quota.
+      // Resolve this gate as soon as the Google-authenticated Drive store exists.
       shared = createSharedLibraryStore({ user: session.user });
+      settleConnectionReady(true);
       invitationUser = session.user;
       const cachedFriends = readFriendCache(session.user.uid);
       driveFriends = cachedFriends || driveFriends;
@@ -169,10 +172,8 @@ export const social = {
     return pending;
   },
   async publishLibrary(index, settings) {
-    if (!shared || state.status !== 'ready') {
-      if (state.status === 'loading') await connectionReadyPromise;
-    }
-    if (!shared || state.status !== 'ready') throw new Error(state.message || 'Firebase connection is not ready; the friend catalog was not synchronized.');
+    if (!shared && state.status === 'loading') await connectionReadyPromise;
+    if (!shared) throw new Error(state.message || 'Google Drive session is not ready; the friend catalog was not synchronized.');
     if (index?.rootFolderId) configuredRootFolderId = index.rootFolderId;
     const result = await shared.publish(index, settings);
     if (invitationUser) void refreshDriveFriends(invitationUser);
