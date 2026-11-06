@@ -303,8 +303,24 @@ export async function findDriveCatalogFile(ownerUid) {
       fields: 'nextPageToken,files(id,name,mimeType,parents,appProperties)', supportsAllDrives: 'true', includeItemsFromAllDrives: 'true' });
     if (pageToken) params.set('pageToken', pageToken);
     const result = await driveFetch(`/files?${params}`, { readJson: true });
-    const match = (result.files || []).find((file) => file.appProperties?.secretLibraryOwnerUid === ownerUid);
-    if (match) return match;
+    const candidates = result.files || [];
+    // appProperties are private to this OAuth application and may be absent from
+    // results in some sharing configurations. Prefer the marker, but verify the
+    // catalog payload as a fallback instead of incorrectly reporting it missing.
+    const marked = candidates.find((file) => file.appProperties?.secretLibraryOwnerUid === ownerUid);
+    if (marked) return marked;
+    for (const candidate of candidates) {
+      if (candidate.mimeType !== 'application/json') continue;
+      try {
+        const catalog = await downloadDriveJsonFile(candidate.id);
+        if (catalog?.ownerUid === ownerUid) return candidate;
+      } catch (error) {
+        // A catalog belonging to another account may not be readable to this user.
+        // Keep searching other candidates; the requested owner's access will be
+        // reported accurately if no matching catalog can be found.
+        if (error?.status !== 403 && error?.status !== 404) throw error;
+      }
+    }
     pageToken = result.nextPageToken || '';
   } while (pageToken);
   return null;

@@ -48,7 +48,7 @@ export function createSharedLibraryStore({ user }) {
     const cached = catalogIds.get(owner);
     if (cached) return { id: cached, cached: true };
     const file = await findDriveCatalogFile(owner);
-    if (!file) throw new Error('Каталог не найден в Google Drive. Проверьте, что владелец поделился корневой папкой библиотеки.');
+    if (!file) throw new Error('Не найден опубликованный каталог библиотеки в доступных файлах Google Drive. Владелец должен открыть свою библиотеку в обновлённой версии сайта, чтобы каталог создался в корневой папке, и предоставить вам доступ к этой папке.');
     catalogIds.set(owner, file.id);
     return { ...file, cached: false };
   }

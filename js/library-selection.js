@@ -23,7 +23,10 @@ export function createLibrarySelection({ tabs, service, show, unavailable, locat
       const index = await service.loadLibrary(selected, target.revision);
       if (request === version) show(index, { own: false, ownerIndex: own, ownerId: selected });
     } catch (error) {
-      if (request === version) unavailable('Не удалось открыть библиотеку. Возможно, доступ закрыт или соединение прервано.', () => select(''));
+      if (request === version) {
+        const detail = typeof error?.message === 'string' && error.message.trim() ? ` ${error.message}` : '';
+        unavailable(`Не удалось открыть библиотеку друга.${detail}`, () => select(''));
+      }
     }
   };
   function select(uid, write = true) {
