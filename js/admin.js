@@ -7,7 +7,6 @@ const authPanel = $('#auth'), dashboard = $('#dashboard'), status = $('#status')
 let session, call, data, activeTab = 'users';
 const adminPageState = Object.create(null);
 const adminPageFields = { users: 'users', relationships: 'users', invites: 'invitations', shares: 'shares', events: 'events', banned: 'banned', admins: 'admins' };
-function resetAdminPages() { Object.keys(adminPageState).forEach(key => delete adminPageState[key]); }
 const sections = [
   ['users','Участники'],['relationships','Связи'],
   ['shares','Доступ к библиотекам'],['events','Журнал событий'],['banned','Забаненные'],['admins','Администраторы'],['texts','Тексты']
@@ -170,13 +169,13 @@ function renderUserCard(uid) {
   if (data.permissions?.admins && !user.banned && !admin) actions.append(button('Назначить администратором', () => { activeTab = 'admins'; renderAdminEditor(user); }));
   content.append(actions);
 }
-async function loadAdminPage(key, cursor = '', shouldRender = true) {
+async function loadAdminPage(key, cursor = '', shouldRender = true, forceReload = false) {
   if (!data?.permissions?.[key]) return;
   const field = adminPageFields[key];
   const state = adminPageState[key] || { history: [''], pages: Object.create(null) };
   // A page already loaded in this session is restored locally without another Firestore request.
   const cached = state.pages[cursor];
-  if (cached) {
+  if (cached && !forceReload) {
     data[field] = cached.items;
     if (cached.userProfiles) data.userProfiles = { ...(data.userProfiles || {}), ...cached.userProfiles };
     if (key === 'relationships' && cached.shares) data.shares = cached.shares;
@@ -218,19 +217,33 @@ async function changeAdminPage(direction) {
   state.history = history;
   await loadAdminPage(activeTab, history[history.length - 1]);
 }
+let refreshPromise = null;
 async function refresh() {
-  say('Загружаем данные администратора…');
-  data = await call('getAdminDashboardSummary')({});
-  resetAdminPages();
-  if (!data.permissions?.[activeTab] && activeTab !== 'texts') {
-    activeTab = sections.find(([key]) => data.permissions?.[key])?.[0] || 'users';
-  }
-  if (activeTab !== 'texts') {
-    await loadAdminPage(activeTab, '', false);
-    if (adminPageState[activeTab]) adminPageState[activeTab].history = [''];
-  }
-  render();
-  say('Данные обновлены.');
+  // Coalesce repeated clicks while a refresh is already in flight.
+  if (refreshPromise) return refreshPromise;
+  refreshPromise = (async () => {
+    const refreshButton = $('#refresh-data');
+    if (refreshButton) refreshButton.disabled = true;
+    const requestedTab = activeTab;
+    try {
+      say('Обновляем сводку и текущую страницу…');
+      data = await call('getAdminDashboardSummary')({});
+      if (!data.permissions?.[activeTab] && activeTab !== 'texts') {
+        activeTab = sections.find(([key]) => data.permissions?.[key])?.[0] || 'users';
+      }
+      if (activeTab !== 'texts') {
+        // Refresh only the visible page. Keep caches for other tabs/pages intact.
+        const cursor = activeTab === requestedTab ? (adminPageState[activeTab]?.cursor || '') : '';
+        await loadAdminPage(activeTab, cursor, false, true);
+      }
+      render();
+      say('Данные обновлены.');
+    } finally {
+      if (refreshButton) refreshButton.disabled = false;
+      refreshPromise = null;
+    }
+  })();
+  return refreshPromise;
 }
 function renderStats() {
   stats.replaceChildren();
