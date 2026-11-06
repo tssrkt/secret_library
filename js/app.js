@@ -15,7 +15,7 @@ import {
   canResumeBuildingIndex, prepareBuildingIndex, updateBuildProgress, validateCompletedIndex,
 } from './index-build.js';
 import { prepareIndexingRun, createRetryEligibilityCheck } from './indexing-run.js';
-import * as ui from './ui.js?v=20261106-sharing-settings-fix';
+import * as ui from './ui.js?v=20261106-social-singleton-fix';
 import { errorDetails, recordIndexingError } from './indexing-errors.js';
 import { social, socialError } from './social-runtime.js?v=20261106-friend-cache-fallback';
 import { getAccessToken } from './auth.js';
