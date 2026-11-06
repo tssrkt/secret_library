@@ -15,6 +15,12 @@ export function createSocialStore({ db, sdk, user }) {
   const newShare = (ownerUid, viewerUid, ownerEmail = ownerUid === uid ? email : '') => ({ ownerUid, viewerUid, ...(ownerEmail ? { ownerEmail: normalizeEmail(ownerEmail) } : {}), active: true, sharedAt: serverTimestamp(), revokedAt: null });
   let disposed = false;
   const ensureCurrent = () => { if (disposed) throw new Error('Сеанс социальной части завершён.'); };
+  async function forEachConcurrent(items, limit, callback) {
+    for (let offset = 0; offset < items.length; offset += limit) {
+      ensureCurrent();
+      await Promise.all(items.slice(offset, offset + limit).map(callback));
+    }
+  }
 
   async function register() {
     ensureCurrent();
@@ -37,10 +43,7 @@ export function createSocialStore({ db, sdk, user }) {
     // The founder UID is fixed in the security model; no email-directory lookup is needed.
     superAdminUid = founderUid;
     const pending = await getDocs(collection(db, 'pendingInvites', email, 'shares'));
-    for (const snapshot of pending.docs) {
-      ensureCurrent();
-      await claimInvitation(snapshot.ref);
-    }
+    await forEachConcurrent(pending.docs, 10, (snapshot) => claimInvitation(snapshot.ref));
   }
 
   async function shareWithEmail(value) {
@@ -108,30 +111,30 @@ export function createSocialStore({ db, sdk, user }) {
   async function syncShareEmails() {
     ensureCurrent();
     const outgoing = await getDocs(query(collection(db, 'libraryShares'), where('ownerUid', '==', uid)));
-    for (const snapshot of outgoing.docs) {
+    const needingEmail = outgoing.docs.filter((snapshot) => {
       const share = snapshot.data();
-      if (!share.active || share.ownerEmail) continue;
-      await runTransaction(db, async (tx) => {
-        const current = data(await tx.get(snapshot.ref));
-        ensureCurrent();
-        if (current?.active && !current.ownerEmail) tx.update(snapshot.ref, { ownerEmail: email });
-      });
-    }
+      return share.active && !share.ownerEmail;
+    });
+    await forEachConcurrent(needingEmail, 10, (snapshot) => runTransaction(db, async (tx) => {
+      const current = data(await tx.get(snapshot.ref));
+      ensureCurrent();
+      if (current?.active && !current.ownerEmail) tx.update(snapshot.ref, { ownerEmail: email });
+    }));
   }
 
   async function syncKnownContacts() {
     ensureCurrent();
     const pending = await getDocs(query(collectionGroup(db, 'shares'), where('ownerUid', '==', uid)));
-    for (const snapshot of pending.docs) {
+    const claimed = pending.docs.filter((snapshot) => Boolean(snapshot.data().claimedUid));
+    await forEachConcurrent(claimed, 10, (snapshot) => {
       const invite = snapshot.data();
-      if (!invite.claimedUid) continue;
-      await runTransaction(db, async (tx) => {
+      return runTransaction(db, async (tx) => {
         const contact = ref('users', uid, 'knownContacts', invite.claimedUid);
         const existing = await tx.get(contact);
         ensureCurrent();
         if (!existing.exists()) tx.set(contact, { email: invite.inviteeEmail });
       });
-    }
+    });
   }
 
   async function markSeen(notifications) {

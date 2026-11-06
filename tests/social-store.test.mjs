@@ -53,3 +53,37 @@ test('a legacy private profile cannot hide an otherwise valid friend relationshi
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.equal(profileReads.get('users/legacy-friend'), 1, 'repeated snapshots reuse the briefly cached denied profile');
 });
+
+test('share email migration processes records concurrently in bounded batches', async () => {
+  const shares = Array.from({ length: 25 }, (_, index) => ({
+    ref: { path: 'libraryShares/share-' + index },
+    data: () => ({ ownerUid: 'current-user', viewerUid: 'viewer-' + index, active: true })
+  }));
+  let active = 0;
+  let maxActive = 0;
+  let updated = 0;
+  const sdk = {
+    doc: (_db, ...path) => ({ path: path.join('/') }),
+    collection: (_db, ...path) => ({ path: path.join('/'), kind: 'collection' }),
+    where: (field, op, value) => ({ field, op, value }),
+    query: (target, ...filters) => ({ ...target, filters }),
+    getDocs: async () => ({ docs: shares }),
+    runTransaction: async (_db, callback) => {
+      active++;
+      maxActive = Math.max(maxActive, active);
+      try {
+        await new Promise((resolve) => setTimeout(resolve, 2));
+        return await callback({
+          get: async () => ({ exists: () => true, data: () => ({ active: true }) }),
+          update: () => { updated++; }
+        });
+      } finally { active--; }
+    },
+    serverTimestamp: () => 1,
+  };
+  const store = createSocialStore({ db: {}, sdk, user: { uid: 'current-user', email: 'current@example.com', emailVerified: true } });
+  await store.syncShareEmails();
+  assert.equal(updated, 25, 'every active legacy share receives the missing owner email');
+  assert.ok(maxActive > 1, 'independent migrations overlap instead of running sequentially');
+  assert.ok(maxActive <= 10, 'concurrency is capped to avoid flooding Firestore');
+});
