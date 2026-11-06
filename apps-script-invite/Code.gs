@@ -1118,43 +1118,32 @@ function fsQueryInvitationPage(pageSize, cursor, filter) {
     try { decoded = JSON.parse(Utilities.newBlob(Utilities.base64DecodeWebSafe(cursor)).getDataAsString()); }
     catch (_) { throw new Error('Некорректный курсор страницы.'); }
     if (decoded.path !== '@invites' || typeof decoded.name !== 'string' ||
-        !decoded.name.startsWith('projects/' + FIREBASE_PROJECT_ID + '/databases/(default)/documents/pendingInvites/') || !decoded.name.includes('/shares/') ||
-        decoded.name.split('/').pop() !== decoded.id) throw new Error('Некорректный курсор страницы.');
+        !decoded.name.startsWith('projects/' + FIREBASE_PROJECT_ID + '/databases/(default)/documents/pendingInvites/') ||
+        !decoded.name.includes('/shares/') || decoded.name.split('/').pop() !== decoded.id) {
+      throw new Error('Некорректный курсор страницы.');
+    }
     afterName = decoded.name;
   }
-  const base = 'projects/' + FIREBASE_PROJECT_ID + '/databases/(default)/documents/';
+
+  // Enumerate only invitation roots and their shares. Never scan the global
+  // collection group "shares", which also contains unrelated library data.
+  const roots = fsList('pendingInvites');
   const rows = [];
-  let exhausted = false;
-  // Collection-group queries also return libraryShares and other unrelated
-  // documents. Page through them instead of relying on optional legacy fields.
-  while (rows.length < size + 1 && !exhausted) {
-    const structuredQuery = {
-      from: [{ collectionId: 'shares', allDescendants: true }],
-      orderBy: [{ field: { fieldPath: '__name__' }, direction: 'ASCENDING' }],
-      limit: 100
-    };
-    if (afterName) structuredQuery.startAt = { before: false, values: [{ referenceValue: afterName }] };
-    const response = fsFetch(FIRESTORE_REST_ROOT.slice(0, -1) + ':runQuery', 'post', { structuredQuery });
-    if (response.code !== 200) throw new Error('Не удалось загрузить приглашения Firebase (' + response.code + ').');
-    const batch = JSON.parse(response.text).filter(row => row && row.document && typeof row.document.name === 'string' && row.document.name.startsWith(base));
-    if (!batch.length) { exhausted = true; break; }
-    for (const row of batch) {
-      const doc = row.document;
-      afterName = doc.name;
-      const marker = '/documents/pendingInvites/';
-      const markerIndex = doc.name.indexOf(marker);
-      if (markerIndex < 0) continue;
-      const segments = doc.name.slice(markerIndex + marker.length).split('/');
-      if (segments.length !== 3 || segments[1] !== 'shares') continue;
-      const item = { ...fsDecodeFields(doc.fields || {}), id: segments[2], email: decodeURIComponent(segments[0]), _documentName: doc.name };
-      if (filter === 'accepted' && !item.claimedUid) continue;
-      if (filter === 'pending' && item.claimedUid) continue;
-      if (filter === 'revoked' && item.active !== false) continue;
+  roots.forEach(root => {
+    const email = String(root.id || '');
+    if (!email) return;
+    fsList('pendingInvites/' + encodeURIComponent(email) + '/shares').forEach(share => {
+      const documentName = 'projects/' + FIREBASE_PROJECT_ID + '/databases/(default)/documents/pendingInvites/' +
+        encodeURIComponent(email) + '/shares/' + share.id;
+      if (afterName && documentName <= afterName) return;
+      const item = { ...share, id: share.id, email: decodeURIComponent(email), _documentName: documentName };
+      if (filter === 'accepted' && !item.claimedUid) return;
+      if (filter === 'pending' && item.claimedUid) return;
+      if (filter === 'revoked' && item.active !== false) return;
       rows.push(item);
-      if (rows.length >= size + 1) break;
-    }
-    if (batch.length < 100) exhausted = true;
-  }
+    });
+  });
+  rows.sort((a, b) => a._documentName.localeCompare(b._documentName));
   const hasMore = rows.length > size;
   const items = rows.slice(0, size);
   const last = items[items.length - 1];

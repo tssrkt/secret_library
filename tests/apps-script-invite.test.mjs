@@ -560,20 +560,25 @@ test('participant name search is executed in Firestore and keeps a stable name-p
   assert.match(requests[1].startAt.values[1].referenceValue, /users\/user-a$/);
   assert.equal(second.items.length, 1);
 });
-test('invitation pages cursor through nested pendingInvites shares and ignore unrelated share subcollections', () => {
+test('invitation pages read only pendingInvites roots and their shares, with a stable cursor', () => {
   const app = harness();
   const requests = [];
   app.context.fsFetch = (url, method, body) => {
     requests.push({ url, method, body });
-    const first = !body.structuredQuery.startAt;
-    const docs = first ? [
-      { name: 'projects/project-071ee00e-4a4a-4a3d-95d/databases/(default)/documents/otherCollection/doc/shares/noise', fields: {} },
-      { name: 'projects/project-071ee00e-4a4a-4a3d-95d/databases/(default)/documents/pendingInvites/ada%40example.com/shares/owner-1', fields: { ownerUid: { stringValue: 'owner-1' } } },
-      { name: 'projects/project-071ee00e-4a4a-4a3d-95d/databases/(default)/documents/pendingInvites/bob%40example.com/shares/owner-2', fields: { ownerUid: { stringValue: 'owner-2' } } }
-    ] : [
-      { name: 'projects/project-071ee00e-4a4a-4a3d-95d/databases/(default)/documents/pendingInvites/bob%40example.com/shares/owner-2', fields: { ownerUid: { stringValue: 'owner-2' } } }
-    ];
-    return { code: 200, text: JSON.stringify(docs.map(document => ({ document }))) };
+    if (method !== 'get') throw new Error('Invitation paging must not use a global collection-group query');
+    if (/pendingInvites\?pageSize=/.test(url)) {
+      return { code: 200, text: JSON.stringify({ documents: [
+        { name: 'projects/project-071ee00e-4a4a-4a3d-95d/databases/(default)/documents/pendingInvites/ada@example.com', fields: {} },
+        { name: 'projects/project-071ee00e-4a4a-4a3d-95d/databases/(default)/documents/pendingInvites/bob@example.com', fields: {} }
+      ] }) };
+    }
+    if (/pendingInvites\/ada%40example.com\/shares/.test(url)) return { code: 200, text: JSON.stringify({ documents: [
+      { name: 'projects/project-071ee00e-4a4a-4a3d-95d/databases/(default)/documents/pendingInvites/ada@example.com/shares/owner-1', fields: { ownerUid: { stringValue: 'owner-1' } } }
+    ] }) };
+    if (/pendingInvites\/bob%40example.com\/shares/.test(url)) return { code: 200, text: JSON.stringify({ documents: [
+      { name: 'projects/project-071ee00e-4a4a-4a3d-95d/databases/(default)/documents/pendingInvites/bob@example.com/shares/owner-2', fields: { ownerUid: { stringValue: 'owner-2' } } }
+    ] }) };
+    throw new Error('Unexpected invitation query URL: ' + url);
   };
   const first = app.context.fsQueryInvitationPage(1, '');
   assert.equal(first.items.length, 1);
@@ -582,11 +587,10 @@ test('invitation pages cursor through nested pendingInvites shares and ignore un
   assert.equal(first.hasMore, true);
   const second = app.context.fsQueryInvitationPage(1, first.nextCursor);
   assert.equal(second.items[0].ownerUid, 'owner-2');
-  assert.equal(requests[0].body.structuredQuery.from[0].allDescendants, true);
-  assert.equal(requests[0].body.structuredQuery.where, undefined);
-  assert.equal(requests[0].body.structuredQuery.limit, 100);
-  assert.equal(requests[1].body.structuredQuery.startAt.before, false);
+  assert(requests.every(request => request.method === 'get'));
+  assert(requests.every(request => !String(request.url).includes(':runQuery')));
 });
+
 test('admin relationship branches filter by inviter UID on Firestore before paging', () => {
   const app = harness();
   let query;
@@ -609,11 +613,9 @@ test('server-side invitation and share filters are encoded as Firestore field fi
     queries.push(body.structuredQuery);
     return { code: 200, text: JSON.stringify([]) };
   };
-  app.context.fsQueryInvitationPage(25, '', 'pending');
   app.context.fsQueryFilteredPage('libraryShares', 'active', false, 25, '');
-  assert.equal(queries[0].where, undefined); // Legacy invitations may omit claimedUid; filter after path selection.
-  assert.equal(queries[1].where.fieldFilter.field.fieldPath, 'active');
-  assert.deepEqual(JSON.parse(JSON.stringify(queries[1].where.fieldFilter.value)), { booleanValue: false });
+  assert.equal(queries[0].where.fieldFilter.field.fieldPath, 'active');
+  assert.deepEqual(JSON.parse(JSON.stringify(queries[0].where.fieldFilter.value)), { booleanValue: false });
 });
 test('participant page status flags and directory emails use three bounded IN queries', () => {
   const app = harness();
