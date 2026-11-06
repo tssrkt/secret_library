@@ -576,7 +576,7 @@ dd { margin: 0; color: #000; font-weight: 400; font-variant-numeric: tabular-num
 
 .social-section { margin-top: 2rem; }
 .social-share-form { display: flex; align-items: stretch; gap: .75rem; flex-wrap: wrap; }
-.social-share-form .settings-save-button { height: auto; min-height: 34px; }
+
 .social-section [data-social-retry] { padding-inline: 1rem; white-space: nowrap; }
 .social-share-form label { display: grid; gap: .3rem; max-width: 100%; }
 .social-share-form input { width: 280px; max-width: 100%; padding: .5rem .6rem; border: 1px solid #cdbbab; border-radius: .25rem; font: inherit; color: inherit; background: #fffdf9; }
