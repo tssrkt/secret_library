@@ -21,7 +21,32 @@ let generation = 0;
 let shared;
 let invitationUser = null;
 const knownContactsSyncs = new Map();
-const emit = (change) => { state = { ...state, ...change }; listeners.forEach((listener) => listener(state)); };
+const FRIEND_CACHE_PREFIX = 'secret-library-social-friends-v1:';
+function readFriendCache(uid) {
+  try {
+    const value = JSON.parse(localStorage.getItem(`${FRIEND_CACHE_PREFIX}${uid}`) || 'null');
+    if (!Array.isArray(value)) return null;
+    return value.filter((friend) => friend && typeof friend.uid === 'string'
+      && typeof friend.displayName === 'string'
+      && typeof friend.inbound === 'boolean' && typeof friend.outbound === 'boolean');
+  } catch { return null; }
+}
+function writeFriendCache(uid, friends) {
+  if (!uid || !Array.isArray(friends)) return;
+  try {
+    const safe = friends.filter((friend) => friend && typeof friend.uid === 'string').slice(0, 500)
+      .map(({ uid: friendUid, displayName, inbound, outbound, isAdmin }) => ({
+        uid: friendUid, displayName: String(displayName || '').slice(0, 160),
+        inbound: inbound === true, outbound: outbound === true, isAdmin: isAdmin === true,
+      }));
+    localStorage.setItem(`${FRIEND_CACHE_PREFIX}${uid}`, JSON.stringify(safe));
+  } catch { /* A full or disabled local storage must not break the library. */ }
+}
+const emit = (change) => {
+  state = { ...state, ...change };
+  if (invitationUser && Array.isArray(change.friends)) writeFriendCache(invitationUser.uid, change.friends);
+  listeners.forEach((listener) => listener(state));
+};
 function watchCatalogs(friends) {
   // Friend relationships come from the social store; catalog discovery and loading use Drive only.
   // Opening a library does not query Firestore for a manifest or catalog.
@@ -55,6 +80,11 @@ export const social = {
       store = createSocialStore(session);
       shared = createSharedLibraryStore({ user: session.user });
       invitationUser = session.user;
+      const cachedFriends = readFriendCache(session.user.uid);
+      if (cachedFriends) {
+        emit({ friends: cachedFriends, libraries: cachedFriends.filter((friend) => friend.inbound)
+          .map((friend) => ({ uid: friend.uid, displayName: friend.displayName, revision: 'drive' })) });
+      }
       await store.register();
       await store.syncShareEmails().catch(() => {});
       if (current !== generation) return;
@@ -103,11 +133,13 @@ export const social = {
   get ready() { return state.status === 'ready'; },
   unpublishLibrary() { if (!shared || state.status !== 'ready') return Promise.reject(new Error('Для изменения доступа подключите социальную часть.')); return shared.unpublish(); },
   loadLibrary(uid, revision) {
-    if (!shared || state.status !== 'ready' || !state.libraries?.some((library) => library.uid === uid)) return Promise.reject(new Error('Библиотека недоступна.'));
+    // A cached relationship may keep the friend's tab available while Firestore is
+    // temporarily over quota. Google Drive still enforces the owner's actual access.
+    if (!shared || !state.libraries?.some((library) => library.uid === uid)) return Promise.reject(new Error('Библиотека недоступна.'));
     return shared.load(uid);
   },
   loadCover(uid, book) {
-    if (!shared || state.status !== 'ready' || !state.friends.some((friend) => friend.uid === uid && friend.inbound)) return Promise.resolve(null);
+    if (!shared || !state.friends.some((friend) => friend.uid === uid && friend.inbound)) return Promise.resolve(null);
     return shared.loadCover(uid, book);
-  },
+  }
 };
