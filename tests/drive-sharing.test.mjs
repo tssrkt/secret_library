@@ -169,3 +169,29 @@ test('matches a published catalog to the known friend email when Drive omits roo
   assert.equal(friend.inbound, true);
   assert.equal(friend.catalogId, 'catalog-olya');
 });
+
+test('discovers a shared catalog from Drive owner metadata without Firebase UID or contact list', async () => {
+  const request = async (path) => {
+    const url = new URL(path, 'https://drive.googleapis.com');
+    const q = url.searchParams.get('q') || '';
+    if (url.pathname === '/files' && q.includes('sharedWithMe = true')) {
+      return { files: [{ id: 'root-friend', name: 'Friend Library', owners: [{ emailAddress: 'friend@example.com', displayName: 'Friend' }] }] };
+    }
+    if (url.pathname === '/files' && q.includes("'root-friend' in parents")) {
+      return { files: [{ id: 'catalog-friend', name: '.secret-library-catalog.json', mimeType: 'application/json' }] };
+    }
+    if (url.pathname === '/files' && q.includes("name = '.secret-library-catalog.json'")) {
+      return { files: [{ id: 'catalog-friend', name: '.secret-library-catalog.json', mimeType: 'application/json', parents: ['root-friend'] }] };
+    }
+    if (url.pathname === '/files/root-friend') { const error = new Error('metadata unavailable'); error.status = 404; throw error; }
+    throw new Error(`Unexpected Drive request: ${path}`);
+  };
+  const result = await discoverDriveFriends(
+    { emailAddress: 'me@example.com', displayName: 'Me' },
+    '',
+    { driveFetch: request, downloadDriveJsonFile: async () => ({ ownerUid: 'friend-uid', rootFolderId: 'root-friend', signature: 'sig', books: [], folders: [] }) },
+    [],
+  );
+  assert.ok(result.friends.some((friend) => friend.uid === 'friend-uid' && friend.inbound && friend.email === 'friend@example.com'));
+  assert.match(result.errors.join(' '), /владелец сопоставлен по данным Google Drive/);
+});

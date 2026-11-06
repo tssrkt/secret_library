@@ -279,9 +279,25 @@ export async function discoverDriveFriends(user, configuredRootFolderId = '', ap
       // its parent folder. The catalog's parents + rootFolderId already bind it
       // to that folder; match ownerUid against the in-memory friend list rather
       // than dropping a valid library because a separate folder metadata read failed.
-      const knownOwner = (Array.isArray(knownFriends) ? knownFriends : []).find((friend) =>
+      const knownContact = (Array.isArray(knownFriends) ? knownFriends : []).find((friend) =>
         friend?.uid && String(friend.uid) === catalog.ownerUid);
-      if (rootReadError) note('catalog-root-metadata-unavailable', `Каталог ${file.id} доступен, но метаданные корневой папки ${catalog.rootFolderId} недоступны (HTTP ${rootReadError.status}); ${knownOwner ? 'владелец сопоставлен с известным другом по UID.' : 'в списке друзей не найден UID владельца.'}`);
+      // Drive can return a shared catalog but deny a separate read of its parent
+      // folder. In that case, use the owner metadata already returned by the
+      // shared-folder listing; never require a Firestore contact/UID match.
+      const listedRoot = sharedFolders.find((folder) => folder.id === catalog.rootFolderId);
+      const listedOwner = (listedRoot?.owners || []).find((item) => normalizeEmail(item.emailAddress)) || listedRoot?.owners?.[0] || {};
+      const knownOwner = knownContact || (listedRoot ? {
+        uid: catalog.ownerUid,
+        email: listedOwner.emailAddress || folderEmailById.get(catalog.rootFolderId) || '',
+        displayName: listedOwner.displayName || listedRoot.name || '',
+      } : null);
+      const effectiveOwnerEmail = normalizeEmail(root?.owners?.find((item) => normalizeEmail(item.emailAddress))?.emailAddress)
+        || normalizeEmail(knownOwner?.email);
+      if (effectiveOwnerEmail && effectiveOwnerEmail === ownEmail) {
+        note('catalog-validation', `Файл ${file.id} отклонён: каталог принадлежит текущему Google Drive аккаунту (${ownEmail}).`);
+        continue;
+      }
+      if (rootReadError) note('catalog-root-metadata-unavailable', `Каталог ${file.id} доступен, но метаданные корневой папки ${catalog.rootFolderId} недоступны (HTTP ${rootReadError.status}); ${knownOwner ? 'владелец сопоставлен по данным Google Drive.' : 'в доступных данных Google Drive нет сведений о владельце.'}`);
       if (root && root.mimeType !== FOLDER_MIME_TYPE) {
         note('catalog-root-invalid', `Корень ${catalog.rootFolderId} каталога ${file.id} не является папкой: MIME=${root.mimeType || 'не указан'}.`);
         continue;

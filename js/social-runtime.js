@@ -1,7 +1,7 @@
 import { startFirebaseSession, endFirebaseSession } from './firebase-session.js';
 import { createSocialStore } from './social-store.js';
 import { createSharedLibraryStore } from './shared-library.js?v=20261106-drive-catalog';
-import { discoverDriveFriends, grantRootFolderAccess } from './drive-sharing.js?v=20261106-drive-only-share';
+import { discoverDriveFriends, grantRootFolderAccess } from './drive-sharing.js?v=20261106-drive-discovery-v2';
 import { findDriveCatalogFile, downloadDriveJsonFile, getCurrentDriveUser } from './drive.js';
 import { sendInvitationEmail, getInvitationStatuses as fetchInvitationStatuses } from './invitation-mailer.js';
 
