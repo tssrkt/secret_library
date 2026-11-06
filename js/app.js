@@ -17,11 +17,11 @@ import {
 import { prepareIndexingRun, createRetryEligibilityCheck } from './indexing-run.js';
 import * as ui from './ui.js?v=20261106-sharing-settings-fix';
 import { errorDetails, recordIndexingError } from './indexing-errors.js';
-import { social, socialError } from './social-runtime.js';
+import { social, socialError } from './social-runtime.js?v=20261106-quota-graceful';
 import { getAccessToken } from './auth.js';
 import { checkpointKey, loadCheckpoint, saveCheckpoint, deleteCheckpoint, commitCheckpoint } from './indexing-checkpoint.js';
 import { createLibraryTabs } from './library-tabs.js';
-import { createLibrarySelection } from './library-selection.js';
+import { createLibrarySelection } from './library-selection.js?v=20261106-clean-diagnostic';
 import { loadUserSettings, loadRootFolderPreference, loadRootFolderResourceKey, saveRootFolderPreference } from './user-settings.js';
 import { chooseRootFolder } from './root-folder-picker.js?v=20261106-root-discovery';
 import { firebaseConfigured } from './firebase-config.js';

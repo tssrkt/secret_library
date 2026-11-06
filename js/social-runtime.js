@@ -11,6 +11,18 @@ export function socialError(error) {
   if (error?.code?.startsWith('auth/')) return 'Не удалось подтвердить Google-сеанс в Firebase. Повторите вход через Google.';
   return error?.message || 'Не удалось выполнить социальную операцию. Попробуйте ещё раз.';
 }
+function isQuotaExceeded(error) {
+  return /resource-exhausted|quota.?exceeded|exceeded.*quota/i.test(`${error?.code || ''} ${error?.message || ''}`);
+}
+function disableFirestoreAfterQuota(current) {
+  if (current !== generation) return;
+  stop?.(); stop = null;
+  store?.dispose(); store = null;
+  invitationUser = null;
+  // Google Drive sharing and friend catalogs remain usable without Firestore.
+  emit({ status: 'ready', message: '' });
+  settleConnectionReady(true);
+}
 export function isPendingInvitationResult(result) {
   return typeof result === 'string' && /Приглашение (?:уже )?сохранено/.test(result);
 }
@@ -158,7 +170,15 @@ export const social = {
       invitationUser = session.user;
       // Registration supports unrelated social features only; Drive discovery and
       // friend-library loading have already started independently above.
-      await store.register();
+      try {
+        await store.register();
+      } catch (error) {
+        if (!isQuotaExceeded(error)) throw error;
+        // Firestore quota exhaustion must not disable Drive-only library features
+        // or leave a misleading reconnect button on the settings page.
+        disableFirestoreAfterQuota(current);
+        return;
+      }
       if (current !== generation) return;
       emit({ status: 'ready', message: '' });
       settleConnectionReady(true);
@@ -171,7 +191,11 @@ export const social = {
           .filter((friend) => friend.inbound && !String(friend.uid).startsWith('email:'))
           .map((friend) => ({ uid: friend.uid, displayName: friend.displayName, revision: 'drive', catalogId: friend.catalogId || '' })) });
       },
-        (error) => { if (current === generation) emit({ status: 'error', message: socialError(error) }); });
+        (error) => {
+          if (current !== generation) return;
+          if (isQuotaExceeded(error)) { disableFirestoreAfterQuota(current); return; }
+          emit({ status: 'error', message: socialError(error) });
+        });
     } catch (error) {
       if (current === generation) {
         settleConnectionReady(false);

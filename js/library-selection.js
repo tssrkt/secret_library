@@ -18,9 +18,7 @@ export function createLibrarySelection({ tabs, service, show, unavailable, locat
     if (!selected) { show(own, { own: true, ownerIndex: own, ownerId: '' }); return; }
     if (!/^[A-Za-z0-9_-]{1,128}$/.test(selected) || !target) {
       const base = snapshot.status === 'loading' ? 'Проверяем доступ к библиотеке…' : 'Библиотека не найдена среди доступных каталогов друзей.';
-      const diagnostic = typeof snapshot.driveDiscoveryMessage === 'string' && snapshot.driveDiscoveryMessage.trim()
-        ? ` Диагностика поиска: ${snapshot.driveDiscoveryMessage}` : ' Диагностика поиска пока отсутствует: проверьте сообщение в разделе «Друзья» настроек.';
-      unavailable(`${base}${diagnostic}`, () => select(''));
+      unavailable(base, () => select(''));
       return;
     }
     unavailable('Загружаем библиотеку…', () => select(''));
