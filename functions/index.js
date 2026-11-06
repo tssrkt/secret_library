@@ -89,9 +89,9 @@ export const getAdminDashboard = onCall({ region: 'europe-west1', invoker: 'publ
   const needsBans = Boolean(allPermissions.banned || allPermissions.users || allPermissions.relationships);
   const needsAdmins = Boolean(allPermissions.admins || allPermissions.users);
   const needsShares = Boolean(allPermissions.shares || allPermissions.relationships);
-  const [users, invites, shares, admins, banned, events, directory] = await Promise.all([
+  const [users, invitations, shares, admins, banned, events, directory] = await Promise.all([
     needsUsers ? db.collection('users').get() : Promise.resolve(null),
-    allPermissions.invites ? db.collection('pendingInvites').get() : Promise.resolve(null),
+    allPermissions.invites ? db.collectionGroup('shares').where('inviteeEmail', '!=', '').get() : Promise.resolve(null),
     needsShares ? db.collection('libraryShares').get() : Promise.resolve(null),
     needsAdmins ? db.collection('adminUsers').get() : Promise.resolve(null),
     needsBans ? db.collection('bannedUsers').get() : Promise.resolve(null),
@@ -99,7 +99,7 @@ export const getAdminDashboard = onCall({ region: 'europe-west1', invoker: 'publ
     allPermissions.users ? db.collection('userDirectory').get() : Promise.resolve(null)
   ]);
   const userDocs = users?.docs || [];
-  const inviteDocs = invites?.docs || [];
+  const invitationDocs = invitations?.docs || [];
   const shareDocs = shares?.docs || [];
   const adminDocs = admins?.docs || [];
   const bannedDocs = banned?.docs || [];
@@ -113,15 +113,13 @@ export const getAdminDashboard = onCall({ region: 'europe-west1', invoker: 'publ
     banned: bannedUids.has(d.id),
     admin: adminUids.has(d.id)
   }));
-  // Read invitation subcollections concurrently; sequential reads add one network
-  // round trip per pending invitation and can make this legacy endpoint time out.
-  const inviteSnapshots = await Promise.all(inviteDocs.map((invite) => invite.ref.collection('shares').get()));
-  const inviteRows = [];
-  inviteSnapshots.forEach((snapshot, index) => {
-    for (const item of snapshot.docs) {
-      inviteRows.push(projectDashboardInvitation(item.id, inviteDocs[index].id, item.data()));
-    }
-  });
+  // One collection-group query replaces a root query plus one subcollection
+  // query per invitation. Every invitation-share document carries inviteeEmail.
+  const inviteRows = invitationDocs.map((item) => projectDashboardInvitation(
+    item.id,
+    item.ref.parent.parent?.id || '',
+    item.data()
+  ));
   return {
     permissions: allPermissions,
     counts: {
