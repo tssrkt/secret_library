@@ -476,11 +476,13 @@ test('admin dashboard summary returns aggregate counts and a superadmin marker w
       fields: { role: { stringValue: 'superadmin' } }
     } }]) };
   };
+  app.context.fsListInviteShares = () => Array.from({ length: 7 }, (_, index) => ({ claimedUid: index < 2 ? `claimed-${index}` : null }));
   const summary = app.context.getAdminDashboardSummaryApi({ uid: 'root', admin: { role: 'superadmin' } });
   assert.equal(summary.counts.users, 7);
   assert.equal(summary.counts.invitations, 7);
+  assert.equal(summary.counts.acceptedInvitations, 2);
   assert.equal(summary.superAdminUid, 'root');
-  assert.equal(requests.filter(request => request.url.includes('runAggregationQuery')).length, 6);
+  assert.equal(requests.filter(request => request.url.includes('runAggregationQuery')).length, 4);
   assert.equal(requests.filter(request => request.url.endsWith('documents:runQuery')).length, 1);
 });
 test('admin dashboard counters use Firestore aggregation without downloading collection documents', () => {
@@ -580,8 +582,9 @@ test('invitation pages cursor through nested pendingInvites shares and ignore un
   const second = app.context.fsQueryInvitationPage(1, first.nextCursor);
   assert.equal(second.items[0].ownerUid, 'owner-2');
   assert.equal(requests[0].body.structuredQuery.from[0].allDescendants, true);
-  assert.equal(requests[0].body.structuredQuery.where.fieldFilter.field.fieldPath, 'inviteeEmail');
+  assert.equal(requests[0].body.structuredQuery.where.fieldFilter.field.fieldPath, 'ownerUid');
   assert.equal(requests[0].body.structuredQuery.where.fieldFilter.op, 'NOT_EQUAL');
+  assert.equal(requests[0].body.structuredQuery.limit, 2);
   assert.equal(requests[1].body.structuredQuery.startAt.before, false);
 });
 test('admin relationship branches filter by inviter UID on Firestore before paging', () => {
@@ -1399,7 +1402,7 @@ test('admin summary batches cold-cache superadmin lookup with aggregation counts
   };
   const summary = app.context.getAdminDashboardSummaryApi({ uid: 'root', admin: { role: 'superadmin' } });
   assert.equal(batches.length, 1);
-  assert.equal(batches[0].filter(request => request.url.includes('runAggregationQuery')).length, 6);
+  assert.equal(batches[0].filter(request => request.url.includes('runAggregationQuery')).length, 4);
   assert.equal(batches[0].filter(request => request.url.endsWith('documents:runQuery')).length, 1);
   assert.equal(summary.counts.users, 4);
   assert.equal(summary.superAdminUid, 'root');

@@ -559,15 +559,20 @@ function getAdminDashboardSummaryApi(actor) {
   if (!Object.values(p).some(Boolean)) throw new Error('Не назначены права для просмотра админки.');
   const countSpecs = [
     { key: 'users', enabled: p.users, collectionId: 'users' },
-    { key: 'invitations', enabled: p.invites, collectionId: 'shares', filter: { fieldPath: 'inviteeEmail', op: 'NOT_EQUAL', value: { nullValue: null } }, allDescendants: true },
-    { key: 'acceptedInvitations', enabled: p.invites, collectionId: 'shares', filter: { fieldPath: 'claimedUid', op: 'NOT_EQUAL', value: { nullValue: null } }, allDescendants: true },
     { key: 'shares', enabled: p.shares, collectionId: 'libraryShares', filter: { fieldPath: 'active', op: 'EQUAL', value: { booleanValue: true } } },
     { key: 'admins', enabled: p.admins, collectionId: 'adminUsers' },
     { key: 'banned', enabled: p.banned, collectionId: 'bannedUsers' }
   ];
-  const counts = Object.fromEntries(countSpecs.map(spec => [spec.key, null]));
+  const counts = Object.fromEntries([...countSpecs, { key: 'invitations' }, { key: 'acceptedInvitations' }].map(spec => [spec.key, null]));
   const summary = fsCountMany(countSpecs.filter(spec => spec.enabled), true);
   Object.assign(counts, summary.counts);
+  if (p.invites) {
+    // Older invitations may not contain inviteeEmail as a field: their email is
+    // encoded in pendingInvites/{email}/shares/{ownerUid}. Count by document path.
+    const invitations = fsListInviteShares();
+    counts.invitations = invitations.length;
+    counts.acceptedInvitations = invitations.filter(item => Boolean(item.claimedUid)).length;
+  }
   const superadminUid = summary.superAdminUid;
   return { permissions: p, counts, superAdminUid: superadminUid, invitationEmailTemplate: p.texts ? getInvitationEmailTemplate() : null, invitationLimit: p.invites ? getInvitationLimit() : null };
 }
@@ -1107,16 +1112,15 @@ function fsQueryInvitationPage(pageSize, cursor, filter) {
   const size = Math.max(1, Math.min(100, Number(pageSize) || 25));
   const structuredQuery = {
     from: [{ collectionId: 'shares', allDescendants: true }],
-    where: filter === 'accepted'
-      ? { fieldFilter: { field: { fieldPath: 'claimedUid' }, op: 'NOT_EQUAL', value: { nullValue: null } } }
-      : filter === 'pending'
-        ? { fieldFilter: { field: { fieldPath: 'claimedUid' }, op: 'EQUAL', value: { nullValue: null } } }
-        : filter === 'revoked'
-          ? { fieldFilter: { field: { fieldPath: 'active' }, op: 'EQUAL', value: { booleanValue: false } } }
-          : { fieldFilter: { field: { fieldPath: 'inviteeEmail' }, op: 'NOT_EQUAL', value: { nullValue: null } } },
     orderBy: [{ field: { fieldPath: '__name__' }, direction: 'ASCENDING' }],
     limit: size + 1
   };
+  // Legacy invitation records may lack inviteeEmail; ownerUid is part of the
+  // invitation schema and keeps unrelated shares subcollections out of this page.
+  if (filter === 'accepted') structuredQuery.where = { fieldFilter: { field: { fieldPath: 'claimedUid' }, op: 'NOT_EQUAL', value: { nullValue: null } } };
+  else if (filter === 'pending') structuredQuery.where = { fieldFilter: { field: { fieldPath: 'claimedUid' }, op: 'EQUAL', value: { nullValue: null } } };
+  else if (filter === 'revoked') structuredQuery.where = { fieldFilter: { field: { fieldPath: 'active' }, op: 'EQUAL', value: { booleanValue: false } } };
+  else structuredQuery.where = { fieldFilter: { field: { fieldPath: 'ownerUid' }, op: 'NOT_EQUAL', value: { nullValue: null } } };
   if (cursor) {
     let decoded;
     try { decoded = JSON.parse(Utilities.newBlob(Utilities.base64DecodeWebSafe(cursor)).getDataAsString()); }
