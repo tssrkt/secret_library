@@ -13,7 +13,7 @@ import { createIndexingErrorsController } from './indexing-errors-ui.js';
 import { createUserSettingsController } from './user-settings-ui.js';
 import { mountFriends } from './friends-ui.js';
 import { createNotificationsController } from './notifications-ui.js';
-import { social } from './social-runtime.js?v=20261106-share-fix';
+import { social } from './social-runtime.js?v=20261106-drive-only-share';
 import { getAccessToken } from './auth.js';
 import { loadUserSettings, saveUserSettings } from './user-settings.js';
 

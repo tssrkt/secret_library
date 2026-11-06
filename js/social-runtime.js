@@ -1,7 +1,8 @@
 import { startFirebaseSession, endFirebaseSession } from './firebase-session.js';
 import { createSocialStore } from './social-store.js';
 import { createSharedLibraryStore } from './shared-library.js?v=20261106-drive-catalog';
-import { discoverDriveFriends, grantRootFolderAccess } from './drive-sharing.js?v=20261106-catalog-id-load';
+import { discoverDriveFriends, grantRootFolderAccess } from './drive-sharing.js?v=20261106-drive-only-share';
+import { findDriveCatalogFile, downloadDriveJsonFile } from './drive.js';
 import { sendInvitationEmail, getInvitationStatuses as fetchInvitationStatuses } from './invitation-mailer.js';
 
 export function socialError(error) {
@@ -153,16 +154,31 @@ export const social = {
     void endFirebaseSession().catch(() => {});
   },
   async shareWithEmail(email) {
-    if (!configuredRootFolderId) throw new Error('Сначала выберите корневую папку своей библиотеки.');
-    // Drive permissions define library access; Firestore is only invitation metadata.
-    await grantRootFolderAccess(configuredRootFolderId, email);
-    if (!store || !invitationUser || state.status !== 'ready') return 'Доступ к папке Google Drive предоставлен.';
-    let result;
-    try { result = await store.shareWithEmail(email); }
-    catch (error) { return 'Доступ к папке Google Drive предоставлен, но приглашение не удалось сохранить в базе данных. ' + (error?.message || ''); }
-    if (!isPendingInvitationResult(result)) return result;
-    const idToken = await invitationUser.getIdToken();
-    return sendInvitationEmail({ email, idToken });
+    let rootFolderId = configuredRootFolderId || state.ownRootFolderId || '';
+    // The selected root is already represented by the published Drive catalog.
+    // Recover it from Drive if the in-memory setting has not caught up yet.
+    if (!rootFolderId && invitationUser?.uid) {
+      const catalogFile = await findDriveCatalogFile(invitationUser.uid);
+      if (catalogFile) {
+        const catalog = await downloadDriveJsonFile(catalogFile.id);
+        if (catalog?.ownerUid === invitationUser.uid && typeof catalog.rootFolderId === 'string') {
+          rootFolderId = catalog.rootFolderId;
+          configuredRootFolderId = rootFolderId;
+        }
+      }
+    }
+    if (!rootFolderId) throw new Error('Не удалось определить корневую папку из опубликованного каталога Google Drive. Обновите библиотеку и повторите попытку.');
+    const access = await grantRootFolderAccess(rootFolderId, email);
+    const normalizedEmail = String(email || '').trim().toLowerCase();
+    const known = driveFriends.find((friend) => String(friend.email || '').trim().toLowerCase() === normalizedEmail);
+    if (known) known.outbound = true;
+    else driveFriends = [...driveFriends, { uid: `email:${normalizedEmail}`, email: normalizedEmail, displayName: normalizedEmail, inbound: false, outbound: true, isAdmin: false }];
+    emit({ friends: driveFriends, ownRootFolderId: rootFolderId });
+    watchCatalogs(driveFriends);
+    if (invitationUser) void refreshDriveFriends(invitationUser, generation, driveFriends);
+    return access.created
+      ? `Папка Google Drive предоставлена пользователю ${normalizedEmail}. Она появится у него на главной после обновления страницы.`
+      : `У пользователя ${normalizedEmail} уже есть доступ к корневой папке Google Drive.`;
   },
   async resendInvitation(email) {
     if (!store || !invitationUser || state.status !== 'ready') throw new Error(state.message);
