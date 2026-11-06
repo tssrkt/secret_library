@@ -1,4 +1,6 @@
 // Local working data only. Credentials must never enter this database.
+const checkpointBookMaps = new WeakMap();
+
 function openDatabase() {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open('secret-library-indexing', 1);
@@ -41,8 +43,15 @@ export async function checkpointTransaction(key, action, { open = openDatabase }
           // Small journal writes commit together with their progress manifest.
           const { books, ...header } = index;
           results.put({ header }, [key, '']);
-          const selected = new Set(changedIds);
-          for (const book of books) if (selected.has(book.id)) results.put({ book }, [key, book.id]);
+          let cached = checkpointBookMaps.get(index);
+          if (!cached || cached.books !== books || cached.length !== books.length) {
+            cached = { books, length: books.length, byId: new Map(books.map((book) => [book.id, book])) };
+            checkpointBookMaps.set(index, cached);
+          }
+          for (const id of changedIds) {
+            const book = cached.byId.get(id);
+            if (book) results.put({ book }, [key, book.id]);
+          }
         }
       }
       tx.oncomplete = () => {
