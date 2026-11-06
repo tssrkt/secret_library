@@ -191,6 +191,10 @@ export async function discoverDriveFriends(user, configuredRootFolderId = '', ap
     }
   }
 
+  if (!sharedFolders.length && !driveDiscoveryErrors.some((error) => error.startsWith('Не удалось найти папки'))) {
+    driveDiscoveryErrors.push('Google Drive не обнаружил папок, которыми поделились с текущим аккаунтом. Проверьте, что друзья предоставили доступ именно тому Google-аккаунту, под которым вы вошли на сайт.');
+  }
+
   if (foldersWithoutCatalog.length) {
     const names = [...new Set(foldersWithoutCatalog)];
     const shown = names.slice(0, 5).join('», «');
