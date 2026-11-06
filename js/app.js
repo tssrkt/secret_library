@@ -77,7 +77,7 @@ let publishingFor = null;
 const friendLibrariesStatus = document.querySelector('#friend-libraries-status');
 social.subscribe((state) => {
   if (friendLibrariesStatus) {
-    const inboundCount = (state.libraries || []).length;
+    const inboundCount = (state.friends || []).filter((friend) => friend.inbound).length;
     if (state.driveDiscoveryStatus === 'loading') {
       friendLibrariesStatus.textContent = 'Библиотеки друзей загружаются…';
       friendLibrariesStatus.hidden = false;
