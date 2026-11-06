@@ -8,6 +8,7 @@ export const ROOT_FOLDER_RESOURCE_KEY = '';
 export const INDEX_FILE_NAME = 'secret-library-index.json';
 export const BUILDING_INDEX_FILE_NAME = 'secret-library-index-building.json';
 export const USER_SETTINGS_FILE_NAME = 'secret-library-user-settings.json';
+export const SHARED_CATALOG_FILE_NAME = '.secret-library-catalog.json';
 export const INDEX_VERSION = 4;
 export const METADATA_VERSION = 3;
 export const COVER_CACHE_PREFIX = 'secret-library-cover-';
@@ -16,6 +17,7 @@ export const COVER_MAX_HEIGHT = 320;
 export const DRIVE_SCOPES = [
   'https://www.googleapis.com/auth/drive.readonly',
   'https://www.googleapis.com/auth/drive.appdata',
+  'https://www.googleapis.com/auth/drive.file',
 ].join(' ');
 
 export const FOLDER_MIME_TYPE = 'application/vnd.google-apps.folder';

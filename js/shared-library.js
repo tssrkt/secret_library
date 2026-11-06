@@ -1,211 +1,123 @@
-import { downloadAppDataBlob } from './drive.js';
+import { SHARED_CATALOG_FILE_NAME } from './config.js';
+import {
+  createDriveJsonFile, deleteDriveFile, downloadDriveJsonFile, findDriveCatalogFile, updateDriveJsonFile,
+} from './drive.js';
+import { loadSharedCover } from './shared-cover-cache.js';
 
-// A read-only projection; the owner's complete Drive index remains authoritative.
+// A read-only projection of the owner's index. Books remain in their original Drive folders.
 export function sharedLibraryIndex(index, settings) {
-  const excluded = new Set(settings.sharing.excludedFolderIds);
+  const excluded = new Set(settings?.sharing?.excludedFolderIds || []);
   const childrenByParent = new Map();
   for (const folder of index.folders) {
     if (!childrenByParent.has(folder.parentId)) childrenByParent.set(folder.parentId, []);
     childrenByParent.get(folder.parentId).push(folder);
   }
   const allowed = new Set();
-  const queue = [];
-  for (const folder of childrenByParent.get(index.rootFolderId) || []) queue.push(folder);
+  const queue = [...(childrenByParent.get(index.rootFolderId) || [])];
   for (let head = 0; head < queue.length; head++) {
     const folder = queue[head];
     if (excluded.has(folder.id) || allowed.has(folder.id)) continue;
     allowed.add(folder.id);
-    for (const child of childrenByParent.get(folder.id) || []) queue.push(child);
+    queue.push(...(childrenByParent.get(folder.id) || []));
   }
   const fields = ['id', 'parentId', 'fileName', 'extension', 'sourceType', 'size', 'modifiedTime', 'metadataStatus',
-    'metadataVersion', 'title', 'authors', 'genres', 'series', 'seriesNumber', 'annotation', 'preview', 'language', 'resourceKey'];
-  const projectBook = (book) => {
-    const projected = {};
-    for (const field of fields) if (book[field] !== undefined) projected[field] = book[field];
-    return projected;
-  };
-  const folderNotes = Object.fromEntries(Object.entries(settings.folderNotes || {})
+    'metadataVersion', 'title', 'authors', 'genres', 'series', 'seriesNumber', 'annotation', 'preview', 'language'];
+  const projectBook = (book) => Object.fromEntries(fields.filter((field) => book[field] !== undefined).map((field) => [field, book[field]]));
+  const folderNotes = Object.fromEntries(Object.entries(settings?.folderNotes || {})
     .filter(([folderId, note]) => allowed.has(folderId) && typeof note === 'string' && note.trim())
     .map(([folderId, note]) => [folderId, note.trim()]));
-  return { version: index.version, rootFolderId: index.rootFolderId, updatedAt: index.updatedAt || '', folderNotes,
+  return {
+    version: index.version, rootFolderId: index.rootFolderId, updatedAt: index.updatedAt || '', folderNotes,
     folders: index.folders.filter((folder) => folder.id === index.rootFolderId || allowed.has(folder.id))
       .map(({ id, parentId, name }) => ({ id, parentId, name })),
-    books: index.books.filter((book) => book.parentId === index.rootFolderId || allowed.has(book.parentId)).map(projectBook) };
+    books: index.books.filter((book) => book.parentId === index.rootFolderId || allowed.has(book.parentId)).map(projectBook),
+  };
 }
 
-export async function sharedLibraryPayload(index, settings) {
-  const json = JSON.stringify(sharedLibraryIndex(index, settings));
-  const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(json));
-  const signature = [...new Uint8Array(hash)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
-  const chunks = [];
-  // At most 600 kB UTF-8 per document, below Firestore's 1 MiB limit.
-  for (let offset = 0; offset < json.length;) {
-    let end = Math.min(json.length, offset + 150000);
-    if (end < json.length && /[\uD800-\uDBFF]/.test(json[end - 1])) end--;
-    chunks.push(json.slice(offset, end)); offset = end;
-  }
-  return { signature, chunks };
-}
-
-async function coverSourceKey(book) {
-  const bytes = new TextEncoder().encode(`${book.coverFileId}:${book.modifiedTime || ''}`);
-  const digest = await crypto.subtle.digest('SHA-256', bytes);
+async function signatureOf(value) {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(value)));
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
-async function blobToBase64(blob) {
-  const bytes = new Uint8Array(await blob.arrayBuffer());
-  let binary = '';
-  for (let offset = 0; offset < bytes.length; offset += 0x8000) {
-    binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
-  }
-  return btoa(binary);
-}
-
-function base64ToBlob(value, mimeType) {
-  const binary = atob(value);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-  return new Blob([bytes], { type: mimeType });
-}
-
-export function createSharedLibraryStore({ db, sdk, user, downloadCover = downloadAppDataBlob }) {
-  const manifest = (owner) => sdk.doc(db, 'sharedLibraries', owner);
-  const chunks = (owner, revision) => sdk.collection(db, 'sharedLibraries', owner, 'versions', revision, 'chunks');
-  const covers = (owner) => sdk.collection(db, 'sharedLibraries', owner, 'covers');
-  const coverRef = (owner, bookId) => sdk.doc(db, 'sharedLibraries', owner, 'covers', bookId);
-  async function syncCovers(index, projection) {
-    const visibleIds = new Set(projection.books.map((book) => book.id));
-    const books = index.books.filter((book) => visibleIds.has(book.id) && book.coverFileId);
-    const sources = await Promise.all(books.map(async (book) => ({ book, sourceKey: await coverSourceKey(book) })));
-    const digestInput = sources.map(({ book, sourceKey }) => `${book.id}:${sourceKey}`).sort().join('|');
-    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(digestInput));
-    const signature = [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
-    const existingSnapshot = await sdk.getDocsFromServer(covers(user.uid));
-    const existing = new Map(existingSnapshot.docs.map((doc) => [doc.id, doc.data()]));
-    const currentIds = new Set(sources.map(({ book }) => book.id));
-    const staleIds = [...existing.keys()].filter((id) => !currentIds.has(id));
-    let cursor = 0;
-    const worker = async () => {
-      while (cursor < sources.length) {
-        const item = sources[cursor++];
-        ensureCurrent();
-        if (existing.get(item.book.id)?.sourceKey === item.sourceKey) continue;
-        const blob = await downloadCover(item.book.coverFileId);
-        const data = await blobToBase64(blob);
-        if (data.length > 800000) throw new Error(`Обложка книги «${item.book.title || item.book.fileName || item.book.id}» слишком велика для бесплатного хранилища Firebase.`);
-        ensureCurrent();
-        await sdk.setDoc(coverRef(user.uid, item.book.id), { sourceKey: item.sourceKey, mimeType: 'image/webp', data });
-      }
-    };
-    await Promise.all(Array.from({ length: Math.min(4, sources.length) }, worker));
-    return { signature, staleIds };
-  }
-  async function deleteStaleCovers(ids) {
-    for (const id of ids) {
-      ensureCurrent();
-      await sdk.deleteDoc(coverRef(user.uid, id));
-    }
-  }
-  let queue = Promise.resolve();
+export function createSharedLibraryStore({ user }) {
   let disposed = false;
+  let queue = Promise.resolve();
+  const catalogIds = new Map();
   const ensureCurrent = () => { if (disposed) throw new Error('Сеанс завершён.'); };
+  async function findCatalog(owner) {
+    const cached = catalogIds.get(owner);
+    if (cached) return { id: cached, cached: true };
+    const file = await findDriveCatalogFile(owner);
+    if (!file) throw new Error('Каталог не найден в Google Drive. Проверьте, что владелец поделился корневой папкой библиотеки.');
+    catalogIds.set(owner, file.id);
+    return { ...file, cached: false };
+  }
   return {
-    dispose() { disposed = true; },
-    unpublish() {
-      queue = queue.catch(() => {}).then(async () => {
-        ensureCurrent();
-        await sdk.deleteDoc(manifest(user.uid));
-        const snapshot = await sdk.getDocsFromServer(covers(user.uid));
-        for (let start = 0; start < snapshot.docs.length; start += 100) {
-          ensureCurrent();
-          const batch = sdk.writeBatch(db);
-          snapshot.docs.slice(start, start + 100).forEach((doc) => batch.delete(doc.ref));
-          await batch.commit();
-        }
-      });
-      return queue;
-    },
-    watchManifest(owner, next, error) {
-      return sdk.onSnapshot(manifest(owner), { includeMetadataChanges: true }, (snapshot) => {
-        if (!snapshot.metadata.fromCache && !snapshot.metadata.hasPendingWrites) next(snapshot.exists() ? snapshot.data() : null);
-      }, error);
-    },
+    dispose() { disposed = true; catalogIds.clear(); },
     publish(index, settings) {
       const task = async () => {
         ensureCurrent();
         const projection = sharedLibraryIndex(index, settings);
-        const payload = await sharedLibraryPayload(index, settings);
-        const before = await sdk.getDocFromServer(manifest(user.uid));
-        const previous = before.exists() ? before.data() : {};
-        if (before.exists() && previous.signature === payload.signature) {
-          await sdk.setDoc(manifest(user.uid), {
-            revision: previous.revision, signature: previous.signature, chunkCount: previous.chunkCount,
-            ...(previous.coversSignature ? { coversSignature: previous.coversSignature } : {}),
-            pendingRevision: previous.revision, pendingChunkCount: previous.chunkCount,
-          });
-          const coverSync = await syncCovers(index, projection);
-          ensureCurrent();
-          await deleteStaleCovers(coverSync.staleIds);
-          await sdk.setDoc(manifest(user.uid), {
-            revision: previous.revision, signature: previous.signature, chunkCount: previous.chunkCount,
-            coversSignature: coverSync.signature,
-          });
-          return;
+        const signature = await signatureOf(projection);
+        const catalog = JSON.stringify({ ...projection, ownerUid: user.uid, signature });
+        let existing = await findDriveCatalogFile(user.uid);
+        if (existing && !existing.parents?.includes(index.rootFolderId)) {
+          await deleteDriveFile(existing.id);
+          existing = null;
         }
-        const revision = crypto.randomUUID();
-        await sdk.setDoc(manifest(user.uid), {
-          revision: previous.revision || '', signature: previous.signature || '', chunkCount: previous.chunkCount || 0,
-          ...(previous.coversSignature ? { coversSignature: previous.coversSignature } : {}),
-          pendingRevision: revision, pendingChunkCount: payload.chunks.length,
-        });
-        const coverSync = await syncCovers(index, projection);
-        for (let start = 0; start < payload.chunks.length; start += 10) {
-          const batch = sdk.writeBatch(db);
-          payload.chunks.slice(start, start + 10).forEach((json, offset) => batch.set(sdk.doc(chunks(user.uid, revision), String(start + offset)), { position: start + offset, json }));
-          await batch.commit();
-        }
-        ensureCurrent();
-        await sdk.setDoc(manifest(user.uid), {
-          revision, signature: payload.signature, chunkCount: payload.chunks.length,
-          coversSignature: coverSync.signature, pendingRevision: revision, pendingChunkCount: payload.chunks.length,
-        });
-        await deleteStaleCovers(coverSync.staleIds);
-        await sdk.setDoc(manifest(user.uid), { revision, signature: payload.signature, chunkCount: payload.chunks.length, coversSignature: coverSync.signature });
-        if (before.exists()) {
-          const old = await sdk.getDocsFromServer(chunks(user.uid, before.data().revision));
-          for (let start = 0; start < old.docs.length; start += 100) {
-            const batch = sdk.writeBatch(db);
-            old.docs.slice(start, start + 100).forEach((doc) => batch.delete(doc.ref));
-            await batch.commit();
+        if (existing) {
+          const current = await downloadDriveJsonFile(existing.id);
+          if (current?.signature === signature && current.rootFolderId === index.rootFolderId) {
+            catalogIds.set(user.uid, existing.id);
+            return { fileId: existing.id, revision: signature };
           }
         }
+        ensureCurrent();
+        if (existing) await updateDriveJsonFile(existing.id, catalog);
+        else existing = await createDriveJsonFile(SHARED_CATALOG_FILE_NAME, index.rootFolderId, catalog, user.uid);
+        catalogIds.set(user.uid, existing.id);
+        return { fileId: existing.id, revision: signature };
       };
       queue = queue.catch(() => {}).then(task);
       return queue;
     },
-    async loadCover(owner, bookId) {
-      ensureCurrent();
-      if (!owner || !bookId) return null;
-      const snapshot = await sdk.getDocFromServer(coverRef(owner, bookId));
-      if (!snapshot.exists()) return null;
-      const cover = snapshot.data();
-      if (typeof cover.data !== 'string' || cover.mimeType !== 'image/webp') return null;
-      return base64ToBlob(cover.data, cover.mimeType);
+    unpublish() {
+      const task = async () => {
+        ensureCurrent();
+        const existing = await findDriveCatalogFile(user.uid);
+        if (existing) await deleteDriveFile(existing.id);
+        catalogIds.delete(user.uid);
+      };
+      queue = queue.catch(() => {}).then(task);
+      return queue;
     },
-    async load(owner, expected) {
-      const before = await sdk.getDocFromServer(manifest(owner));
-      if (!before.exists()) throw new Error('Библиотека недоступна.');
-      const header = before.data();
-      if (expected && header.revision !== expected) throw new Error('Библиотека обновляется. Выберите её ещё раз.');
-      const snapshot = await sdk.getDocsFromServer(chunks(owner, header.revision));
-      const parts = snapshot.docs.map((doc) => doc.data()).sort((a, b) => a.position - b.position);
-      if (parts.length !== header.chunkCount || parts.some((part, i) => part.position !== i)) throw new Error('Каталог ещё не готов.');
-      const after = await sdk.getDocFromServer(manifest(owner));
-      if (!after.exists() || after.data().revision !== header.revision) throw new Error('Библиотека обновляется. Выберите её ещё раз.');
-      const index = JSON.parse(parts.map((part) => part.json).join(''));
-      if (!Array.isArray(index.books) || !Array.isArray(index.folders) || !index.rootFolderId) throw new Error('Некорректный каталог.');
-      return index;
+    async load(owner) {
+      ensureCurrent();
+      let file = await findCatalog(owner);
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          // Direct Google Drive read. There is no Firestore manifest/catalog request here.
+          const index = await downloadDriveJsonFile(file.id);
+          ensureCurrent();
+          if (index.ownerUid !== owner || !Array.isArray(index.books) || !Array.isArray(index.folders) || !index.rootFolderId
+              || typeof index.signature !== 'string') throw new Error('Каталог библиотеки повреждён или не соответствует владельцу.');
+          return index;
+        } catch (error) {
+          if (attempt === 0 && file.cached && (error?.status === 403 || error?.status === 404)) {
+            catalogIds.delete(owner);
+            file = await findCatalog(owner);
+            continue;
+          }
+          if (error?.status === 403 || error?.status === 404) catalogIds.delete(owner);
+          throw error;
+        }
+      }
+      throw new Error('Не удалось загрузить каталог из Google Drive.');
+    },
+    loadCover(owner, book) {
+      ensureCurrent();
+      if (!owner || !book?.id) return Promise.resolve(null);
+      return loadSharedCover(owner, book);
     },
   };
 }

@@ -13,7 +13,7 @@ import { createIndexingErrorsController } from './indexing-errors-ui.js';
 import { createUserSettingsController } from './user-settings-ui.js';
 import { mountFriends } from './friends-ui.js';
 import { createNotificationsController } from './notifications-ui.js';
-import { social } from './social-runtime.js';
+import { social } from './social-runtime.js?v=20261106-drive-catalog';
 import { getAccessToken } from './auth.js';
 import { loadUserSettings, saveUserSettings } from './user-settings.js';
 
@@ -26,7 +26,7 @@ let activeCoverReadOnly = false;
 
 async function loadBookCoverBlob(book) {
   if (book?.coverFileId) return loadOwnCover(book.coverFileId);
-  if (activeCoverReadOnly && activeCoverOwnerId) return social.loadCover(activeCoverOwnerId, book.id);
+  if (activeCoverReadOnly && activeCoverOwnerId) return social.loadCover(activeCoverOwnerId, book);
   return null;
 }
 

@@ -1,4 +1,4 @@
-import { FOLDER_MIME_TYPE } from './config.js';
+import { FOLDER_MIME_TYPE, SHARED_CATALOG_FILE_NAME } from './config.js';
 import { ensureAccessToken, renewAccessToken } from './auth.js';
 
 const API_ROOT = 'https://www.googleapis.com/drive/v3';
@@ -262,6 +262,56 @@ export async function updateAppDataFile(fileId, jsonText) {
     body: jsonText,
   }, 0, UPLOAD_ROOT);
   return response.json();
+}
+
+// Shared catalogs live inside the owner's selected Drive root so inherited Drive
+// permissions protect them. Unlike appDataFolder files, friends can read these files.
+export async function createDriveJsonFile(name, parentId, jsonText, ownerUid) {
+  if (!name || !parentId || !ownerUid) throw new Error('Для каталога не заданы имя, владелец или корневая папка Google Drive.');
+  const boundary = `secret_library_${crypto.randomUUID()}`;
+  const metadata = JSON.stringify({ name, parents: [parentId], mimeType: 'application/json',
+    appProperties: { secretLibraryOwnerUid: ownerUid } });
+  const body = `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${metadata}\r\n--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${jsonText}\r\n--${boundary}--`;
+  const params = new URLSearchParams({ uploadType: 'multipart', fields: 'id,name,parents,mimeType', supportsAllDrives: 'true' });
+  const response = await driveFetch(`/files?${params}`, {
+    method: 'POST', headers: { 'Content-Type': `multipart/related; boundary=${boundary}` }, body,
+  }, 0, UPLOAD_ROOT);
+  return response.json();
+}
+
+export async function updateDriveJsonFile(fileId, jsonText) {
+  const params = new URLSearchParams({ uploadType: 'media', fields: 'id', supportsAllDrives: 'true' });
+  const response = await driveFetch(`/files/${encodeURIComponent(fileId)}?${params}`, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json; charset=UTF-8' }, body: jsonText,
+  }, 0, UPLOAD_ROOT);
+  return response.json();
+}
+
+export async function downloadDriveJsonFile(fileId) {
+  const params = new URLSearchParams({ alt: 'media', supportsAllDrives: 'true' });
+  return driveFetch(`/files/${encodeURIComponent(fileId)}?${params}`, { readJson: true });
+}
+
+export async function findDriveCatalogFile(ownerUid) {
+  if (!ownerUid) return null;
+  // Search all Drive files visible to this account, including files inherited from
+  // shared folders; then match the app-private owner marker returned by the API.
+  let pageToken = '';
+  do {
+    const query = `name = '${SHARED_CATALOG_FILE_NAME}' and trashed = false`;
+    const params = new URLSearchParams({ q: query, spaces: 'drive', pageSize: '100',
+      fields: 'nextPageToken,files(id,name,mimeType,parents,appProperties)', supportsAllDrives: 'true', includeItemsFromAllDrives: 'true' });
+    if (pageToken) params.set('pageToken', pageToken);
+    const result = await driveFetch(`/files?${params}`, { readJson: true });
+    const match = (result.files || []).find((file) => file.appProperties?.secretLibraryOwnerUid === ownerUid);
+    if (match) return match;
+    pageToken = result.nextPageToken || '';
+  } while (pageToken);
+  return null;
+}
+
+export async function deleteDriveFile(fileId) {
+  await driveFetch(`/files/${encodeURIComponent(fileId)}?supportsAllDrives=true`, { method: 'DELETE' });
 }
 
 export async function createAppDataBlob(name, blob) {

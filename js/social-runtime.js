@@ -1,6 +1,6 @@
 import { startFirebaseSession, endFirebaseSession } from './firebase-session.js';
 import { createSocialStore } from './social-store.js';
-import { createSharedLibraryStore } from './shared-library.js?v=20261105-excluded-nested-folders';
+import { createSharedLibraryStore } from './shared-library.js?v=20261106-drive-catalog';
 import { sendInvitationEmail, getInvitationStatuses as fetchInvitationStatuses } from './invitation-mailer.js';
 
 export function socialError(error) {
@@ -21,28 +21,14 @@ let generation = 0;
 let shared;
 let invitationUser = null;
 const knownContactsSyncs = new Map();
-const catalogs = new Map();
-const catalogWatches = new Map();
-function clearCatalogs() {
-  for (const stop of catalogWatches.values()) stop();
-  catalogWatches.clear(); catalogs.clear();
-}
-function watchCatalogs(friends) {
-  const watchGeneration = generation;
-  const incoming = friends.filter((friend) => friend.inbound);
-  const ids = new Set(incoming.map((friend) => friend.uid));
-  for (const [id, stop] of catalogWatches) if (!ids.has(id)) { stop(); catalogWatches.delete(id); catalogs.delete(id); }
-  const publish = () => emit({ libraries: state.friends.filter((friend) => friend.inbound && catalogs.get(friend.uid))
-    .map((friend) => ({ uid: friend.uid, displayName: friend.displayName, revision: catalogs.get(friend.uid).revision })) });
-  for (const friend of incoming) if (!catalogWatches.has(friend.uid)) {
-    catalogWatches.set(friend.uid, shared.watchManifest(friend.uid, (value) => {
-      if (generation !== watchGeneration || !state.friends.some((item) => item.uid === friend.uid && item.inbound)) return;
-      catalogs.set(friend.uid, value); watchCatalogs(state.friends);
-    }, () => { if (generation === watchGeneration) { catalogs.delete(friend.uid); publish(); } }));
-  }
-  publish();
-}
 const emit = (change) => { state = { ...state, ...change }; listeners.forEach((listener) => listener(state)); };
+function watchCatalogs(friends) {
+  // Friend relationships come from the social store; catalog discovery and loading use Drive only.
+  // Opening a library does not query Firestore for a manifest or catalog.
+  const libraries = friends.filter((friend) => friend.inbound)
+    .map((friend) => ({ uid: friend.uid, displayName: friend.displayName, revision: 'drive' }));
+  emit({ libraries });
+}
 export const social = {
   async checkAccess(token) {
     const session = await startFirebaseSession(token);
@@ -61,13 +47,13 @@ export const social = {
     const current = ++generation;
     knownContactsSyncs.clear();
     stop?.(); store?.dispose(); store = null;
-    clearCatalogs(); shared?.dispose(); shared = null;
+    shared?.dispose(); shared = null;
     emit({ status: 'loading', message: 'Подключение социальной части…', friends: [], notifications: [], libraries: [] });
     try {
       const session = await startFirebaseSession(token);
       if (!session || current !== generation) return;
       store = createSocialStore(session);
-      shared = createSharedLibraryStore(session);
+      shared = createSharedLibraryStore({ user: session.user });
       invitationUser = session.user;
       await store.register();
       await store.syncShareEmails().catch(() => {});
@@ -79,7 +65,7 @@ export const social = {
   },
   disconnect() {
     generation++; stop?.(); stop = null; store?.dispose(); store = null; invitationUser = null;
-    clearCatalogs(); shared?.dispose(); shared = null;
+    shared?.dispose(); shared = null;
     emit({ status: 'idle', message: 'Войдите через Google.', friends: [], notifications: [], libraries: [] });
     void endFirebaseSession().catch(() => {});
   },
@@ -118,10 +104,10 @@ export const social = {
   unpublishLibrary() { if (!shared || state.status !== 'ready') return Promise.reject(new Error('Для изменения доступа подключите социальную часть.')); return shared.unpublish(); },
   loadLibrary(uid, revision) {
     if (!shared || state.status !== 'ready' || !state.libraries?.some((library) => library.uid === uid)) return Promise.reject(new Error('Библиотека недоступна.'));
-    return shared.load(uid, revision);
+    return shared.load(uid);
   },
-  loadCover(uid, bookId) {
+  loadCover(uid, book) {
     if (!shared || state.status !== 'ready' || !state.friends.some((friend) => friend.uid === uid && friend.inbound)) return Promise.resolve(null);
-    return shared.loadCover(uid, bookId);
+    return shared.loadCover(uid, book);
   },
 };
