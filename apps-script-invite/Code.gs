@@ -563,16 +563,11 @@ function getAdminDashboardSummaryApi(actor) {
     { key: 'admins', enabled: p.admins, collectionId: 'adminUsers' },
     { key: 'banned', enabled: p.banned, collectionId: 'bannedUsers' }
   ];
-  const counts = Object.fromEntries([...countSpecs, { key: 'invitations' }, { key: 'acceptedInvitations' }].map(spec => [spec.key, null]));
+  // The dashboard summary deliberately excludes invitations: enumerating
+  // pendingInvites here caused extra Firestore reads on every admin refresh.
+  const counts = Object.fromEntries(countSpecs.map(spec => [spec.key, null]));
   const summary = fsCountMany(countSpecs.filter(spec => spec.enabled), true);
   Object.assign(counts, summary.counts);
-  if (p.invites) {
-    // Older invitations may not contain inviteeEmail as a field: their email is
-    // encoded in pendingInvites/{email}/shares/{ownerUid}. Count by document path.
-    const invitations = fsListInviteShares();
-    counts.invitations = invitations.length;
-    counts.acceptedInvitations = invitations.filter(item => Boolean(item.claimedUid)).length;
-  }
   const superadminUid = summary.superAdminUid;
   return { permissions: p, counts, superAdminUid: superadminUid, invitationEmailTemplate: p.texts ? getInvitationEmailTemplate() : null, invitationLimit: p.invites ? getInvitationLimit() : null };
 }

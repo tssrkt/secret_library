@@ -9,7 +9,7 @@ const adminPageState = Object.create(null);
 const adminPageFields = { users: 'users', relationships: 'users', invites: 'invitations', shares: 'shares', events: 'events', banned: 'banned', admins: 'admins' };
 function resetAdminPages() { Object.keys(adminPageState).forEach(key => delete adminPageState[key]); }
 const sections = [
-  ['users','Участники'],['relationships','Связи'],['invites','Приглашения'],
+  ['users','Участники'],['relationships','Связи'],
   ['shares','Доступ к библиотекам'],['events','Журнал событий'],['banned','Забаненные'],['admins','Администраторы'],['texts','Тексты']
 ];
 const label = (value) => value == null || value === '' ? '—' : String(value);
@@ -216,7 +216,7 @@ async function refresh() {
 function renderStats() {
   stats.replaceChildren();
   const counts = data.counts || {};
-  [['users','Участники'],['invitations','Приглашения'],['shares','Активные доступы'],['admins','Администраторы'],['banned','Забаненные']].forEach(([key,title]) => {
+  [['users','Участники'],['shares','Активные доступы'],['admins','Администраторы'],['banned','Забаненные']].forEach(([key,title]) => {
     if (counts[key] == null) return;
     const card = node('div', null, 'stat');
     card.append(node('span', title));
