@@ -585,13 +585,13 @@ dd { margin: 0; color: #000; font-weight: 400; font-variant-numeric: tabular-num
 .friends-table { width: 100%; border-collapse: collapse; }
 .friends-table th, .friends-table td { text-align: left; padding: .6rem .35rem; border-bottom: 1px solid #e5dbce; }
 .friends-table small { display: block; overflow-wrap: anywhere; }
-.friends-table .settings-save-button { height: auto; min-height: 34px; padding: 0 .3rem; white-space: nowrap; }
+.friends-table .settings-save-button { height: auto; min-height: 34px; padding: 0 1.8rem; white-space: nowrap; }
 .friends-table td:first-child { padding: 0; }
 .sent-invitations-table-container { overflow-x: auto; }
 .sent-invitations-table { width: 100%; border-collapse: collapse; }
 .sent-invitations-table th, .sent-invitations-table td { text-align: left; padding: .6rem .35rem; border-bottom: 1px solid #e5dbce; vertical-align: middle; }
 .sent-invitation-user { overflow-wrap: anywhere; }
-.sent-invitations-table .settings-save-button { height: auto; min-height: 34px; padding: 0 .5rem; white-space: nowrap; }
+.sent-invitations-table .settings-save-button { height: auto; min-height: 34px; padding: 0 1.8rem; white-space: nowrap; }
 .invitation-resend-tooltip { display: inline-block; }
 .sent-invitations-message:empty { display: none; }
 .friend-library-button { display: block; width: 100%; min-height: 100%; padding: .6rem .35rem .6rem calc(.35rem + 5px); color: inherit; background: transparent; font: inherit; font-weight: 650; text-align: left; overflow-wrap: anywhere; border-radius: 0; }
