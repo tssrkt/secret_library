@@ -117,7 +117,7 @@ h1 { margin: 0; font: 750 clamp(2rem, 5vw, 3rem)/1.05 system-ui, sans-serif; whi
 button {
   border: 0;
   border-radius: .45rem;
-  padding: .7rem .3rem;
+  padding: .7rem 1rem;
   font: inherit;
   font-weight: 650;
   cursor: pointer;
