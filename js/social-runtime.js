@@ -284,7 +284,9 @@ export const social = {
     return driveReader.load(uid, catalogId || library.catalogId || '');
   },
   loadCover(uid, book) {
-    if (!shared || !state.friends.some((friend) => friend.uid === uid && friend.inbound)) return Promise.resolve(null);
-    return shared.loadCover(uid, book);
+    // Cover loading is a Google Drive-only feature. Use the reader initialized before
+    // Firebase registration so a Firebase session/quota problem cannot blank friend covers.
+    if (!driveReader || !state.friends.some((friend) => friend.uid === uid && friend.inbound)) return Promise.resolve(null);
+    return driveReader.loadCover(uid, book);
   }
 };

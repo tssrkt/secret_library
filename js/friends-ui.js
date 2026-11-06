@@ -1,5 +1,5 @@
 import { createPaginator, paginateItems } from './pagination.js';
-import { socialError } from './social-runtime.js?v=20261106-friend-cache-fallback';
+import { socialError } from './social-runtime.js?v=20261106-friend-covers-fix';
 
 const HOUR_MS = 60 * 60 * 1000;
 

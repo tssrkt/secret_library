@@ -13,7 +13,7 @@ import { createIndexingErrorsController } from './indexing-errors-ui.js';
 import { createUserSettingsController } from './user-settings-ui.js';
 import { mountFriends } from './friends-ui.js';
 import { createNotificationsController } from './notifications-ui.js?v=20261106-drive-notifications';
-import { social } from './social-runtime.js?v=20261106-friend-cache-fallback';
+import { social } from './social-runtime.js?v=20261106-friend-covers-fix';
 import { getAccessToken } from './auth.js';
 import { loadUserSettings, saveUserSettings } from './user-settings.js';
 
