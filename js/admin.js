@@ -172,17 +172,36 @@ function renderUserCard(uid) {
 }
 async function loadAdminPage(key, cursor = '', shouldRender = true) {
   if (!data?.permissions?.[key]) return;
-  let result;
+  const field = adminPageFields[key];
+  const state = adminPageState[key] || { history: [''], pages: Object.create(null) };
+  // A page already loaded in this session is restored locally without another Firestore request.
+  const cached = state.pages[cursor];
+  if (cached) {
+    data[field] = cached.items;
+    if (cached.userProfiles) data.userProfiles = { ...(data.userProfiles || {}), ...cached.userProfiles };
+    if (key === 'relationships' && cached.shares) data.shares = cached.shares;
+    state.cursor = cursor;
+    state.nextCursor = cached.nextCursor;
+    state.hasMore = cached.hasMore;
+    adminPageState[key] = state;
+    if (shouldRender) render();
+    return;
+  }
   const knownProfileUids = Object.keys(data.userProfiles || {}).slice(-300);
+  let result;
   if (key === 'relationships') result = await call('getAdminRelationshipRoots')({ cursor, includeShares: !Array.isArray(data.shares), knownProfileUids });
   else result = await call('getAdminCollectionPage')({ section: key, cursor, knownProfileUids });
-  if (result.userProfiles && typeof result.userProfiles === 'object') {
-    data.userProfiles = { ...(data.userProfiles || {}), ...result.userProfiles };
-  }
+  const profileDelta = result.userProfiles && typeof result.userProfiles === 'object' ? result.userProfiles : null;
+  if (profileDelta) data.userProfiles = { ...(data.userProfiles || {}), ...profileDelta };
   if (key === 'relationships' && Array.isArray(result.shares)) data.shares = result.shares;
-  const field = adminPageFields[key];
-  data[field] = result.items || [];
-  adminPageState[key] = { cursor, nextCursor: result.nextCursor || '', hasMore: Boolean(result.hasMore), history: adminPageState[key]?.history || [''] };
+  const items = result.items || [];
+  const shares = key === 'relationships' && Array.isArray(result.shares) ? result.shares : null;
+  state.pages[cursor] = { items, nextCursor: result.nextCursor || '', hasMore: Boolean(result.hasMore), userProfiles: profileDelta, shares };
+  state.cursor = cursor;
+  state.nextCursor = result.nextCursor || '';
+  state.hasMore = Boolean(result.hasMore);
+  adminPageState[key] = state;
+  data[field] = items;
   if (shouldRender) render();
 }
 async function changeAdminPage(direction) {
