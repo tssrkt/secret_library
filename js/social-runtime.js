@@ -109,15 +109,21 @@ function watchCatalogs(friends) {
 async function refreshDriveFriends(user, currentGeneration = generation, knownFriends = driveFriends) {
   emit({ driveDiscoveryStatus: 'loading', driveDiscoveryMessage: '' });
   try {
-    // Use emails already present in the UI/cache snapshot as search keys only.
     // Folder discovery, catalog reads and library availability are Google Drive-only.
-    // Friend tabs are discovered exclusively from Drive permissions and Drive catalogs.
-    // Never seed this process from Firestore snapshots or cached contact lists.
-    const result = await discoverDriveFriends(user, configuredRootFolderId, {}, []);
+    // Friend tabs are discovered from Drive permissions and Drive catalogs; a prior
+    // local snapshot is only a fallback if Drive unexpectedly returns no friends.
+    const result = await discoverDriveFriends(user, configuredRootFolderId, {}, knownFriends);
     if (currentGeneration !== generation) return;
     if (result.rootFolderId) configuredRootFolderId = result.rootFolderId;
-    driveFriends = result.friends;
-    emit({ friends: driveFriends, notifications: buildDriveNotifications(driveFriends), ownRootFolderId: result.rootFolderId || configuredRootFolderId, driveDiscoveryMessage: result.errors?.join(' ') || '', driveDiscoveryStatus: result.discoveryStatus || 'ready' });
+    // If Drive's catalog search temporarily returns no records, retain the last
+    // confirmed friend list from this browser instead of showing a false zero.
+    // This fallback is local-only and does not add Firestore reads.
+    const cachedFriends = invitationUser ? readFriendCache(invitationUser.uid) : null;
+    driveFriends = result.friends.length ? result.friends
+      : (cachedFriends?.length ? cachedFriends : (knownFriends || []));
+    const discoveryMessage = result.errors?.join(' ') || '';
+    const usedFriendFallback = result.friends.length === 0 && driveFriends.length > 0;
+    emit({ friends: driveFriends, notifications: buildDriveNotifications(driveFriends), ownRootFolderId: result.rootFolderId || configuredRootFolderId, driveDiscoveryMessage: usedFriendFallback ? `Не удалось повторно обнаружить библиотеки в Google Drive; временно показан последний сохранённый список друзей. ${discoveryMessage}` : discoveryMessage, driveDiscoveryStatus: usedFriendFallback ? 'error' : (result.discoveryStatus || 'ready') });
     watchCatalogs(driveFriends);
   } catch (error) {
     // Keep the last confirmed Drive-derived list when Drive is temporarily unavailable.
