@@ -1,7 +1,7 @@
 import { startFirebaseSession, endFirebaseSession } from './firebase-session.js';
 import { createSocialStore } from './social-store.js';
 import { createSharedLibraryStore } from './shared-library.js?v=20261106-drive-catalog';
-import { discoverDriveFriends, grantRootFolderAccess } from './drive-sharing.js?v=20261106-drive-folder-file-details';
+import { discoverDriveFriends, grantRootFolderAccess } from './drive-sharing.js?v=20261106-catalog-id-load';
 import { sendInvitationEmail, getInvitationStatuses as fetchInvitationStatuses } from './invitation-mailer.js';
 
 export function socialError(error) {
@@ -47,7 +47,7 @@ function writeFriendCache(uid, friends) {
     const safe = friends.filter((friend) => friend && typeof friend.uid === 'string').slice(0, 500)
       .map((friend) => ({
         uid: friend.uid, displayName: String(friend.displayName || '').slice(0, 160),
-        email: String(friend.email || '').slice(0, 254),
+        email: String(friend.email || '').slice(0, 254), catalogId: String(friend.catalogId || '').slice(0, 256),
         inbound: friend.inbound === true, outbound: friend.outbound === true, isAdmin: friend.isAdmin === true,
       }));
     localStorage.setItem(`${FRIEND_CACHE_PREFIX}${uid}`, JSON.stringify(safe));
@@ -61,7 +61,7 @@ const emit = (change) => {
 function watchCatalogs(friends) {
   // Friend relationships and access direction are determined by live Google Drive permissions.
   const libraries = friends.filter((friend) => friend.inbound && !String(friend.uid).startsWith('email:'))
-    .map((friend) => ({ uid: friend.uid, displayName: friend.displayName, revision: 'drive' }));
+    .map((friend) => ({ uid: friend.uid, displayName: friend.displayName, revision: 'drive', catalogId: friend.catalogId || '' }));
   emit({ libraries });
 }
 async function refreshDriveFriends(user, currentGeneration = generation, knownFriends = driveFriends) {
@@ -194,11 +194,12 @@ export const social = {
   },
   get ready() { return state.status === 'ready'; },
   unpublishLibrary() { if (!shared || state.status !== 'ready') return Promise.reject(new Error('Для изменения доступа подключите социальную часть.')); return shared.unpublish(); },
-  loadLibrary(uid, revision) {
-    // A cached relationship may keep the friend's tab available while Firestore is
-    // temporarily over quota. Google Drive still enforces the owner's actual access.
-    if (!shared || !state.libraries?.some((library) => library.uid === uid)) return Promise.reject(new Error('Библиотека недоступна.'));
-    return shared.load(uid);
+  loadLibrary(uid, revision, catalogId = '') {
+    // Use the exact catalog ID already validated by Drive discovery. This avoids
+    // a second ambiguous global filename search when the user opens the tab.
+    const library = state.libraries?.find((item) => item.uid === uid);
+    if (!shared || !library) return Promise.reject(new Error('Библиотека недоступна.'));
+    return shared.load(uid, catalogId || library.catalogId || '');
   },
   loadCover(uid, book) {
     if (!shared || !state.friends.some((friend) => friend.uid === uid && friend.inbound)) return Promise.resolve(null);

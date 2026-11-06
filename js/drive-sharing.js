@@ -134,6 +134,7 @@ export async function discoverDriveFriends(user, configuredRootFolderId = '', ap
     current.inbound ||= friend.inbound === true;
     current.outbound ||= friend.outbound === true;
     if (friend.inbound && friend.uid) current.uid = friend.uid;
+    if (friend.catalogId) current.catalogId = friend.catalogId;
     if (friend.displayName && (!current.displayName || current.displayName === current.email)) current.displayName = friend.displayName;
     if (email) {
       current.email = email;
@@ -243,6 +244,7 @@ export async function discoverDriveFriends(user, configuredRootFolderId = '', ap
       displayName: owner.displayName || folder.name || 'Участник',
       isAdmin: catalog.ownerUid === 'aA89pCYsKNbWWePmAveUVrG34F82',
       inbound: true,
+      catalogId: catalogFile.id,
     });
   }
 
@@ -298,6 +300,7 @@ export async function discoverDriveFriends(user, configuredRootFolderId = '', ap
         displayName: owner.displayName || knownOwner?.displayName || root?.name || ownerEmail || 'Участник',
         isAdmin: catalog.ownerUid === 'aA89pCYsKNbWWePmAveUVrG34F82',
         inbound: true,
+        catalogId: file.id,
       });
     }
   } catch (error) {

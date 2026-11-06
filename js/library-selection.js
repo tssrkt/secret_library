@@ -23,7 +23,7 @@ export function createLibrarySelection({ tabs, service, show, unavailable, locat
     }
     unavailable('Загружаем библиотеку…', () => select(''));
     try {
-      const index = await service.loadLibrary(selected, target.revision);
+      const index = await service.loadLibrary(selected, target.revision, target.catalogId || '');
       if (request === version) show(index, { own: false, ownerIndex: own, ownerId: selected });
     } catch (error) {
       if (request === version) {

@@ -167,4 +167,5 @@ test('matches a published catalog to the known friend email when Drive omits roo
   assert.ok(friend);
   assert.equal(friend.email, 'olya@example.com');
   assert.equal(friend.inbound, true);
+  assert.equal(friend.catalogId, 'catalog-olya');
 });

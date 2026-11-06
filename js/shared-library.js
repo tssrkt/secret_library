@@ -91,9 +91,9 @@ export function createSharedLibraryStore({ user }) {
       queue = queue.catch(() => {}).then(task);
       return queue;
     },
-    async load(owner) {
+    async load(owner, discoveredCatalogId = '') {
       ensureCurrent();
-      let file = await findCatalog(owner);
+      let file = discoveredCatalogId ? { id: discoveredCatalogId, cached: false } : await findCatalog(owner);
       for (let attempt = 0; attempt < 2; attempt++) {
         try {
           // Direct Google Drive read. There is no Firestore manifest/catalog request here.
