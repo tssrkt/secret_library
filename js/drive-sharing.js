@@ -267,9 +267,16 @@ export async function discoverDriveFriends(user, configuredRootFolderId = '', ap
         const existing = byEmail.get(email);
         if (existing) {
           existing.outbound = true;
+          const driveName = String(permission.displayName || '').trim();
+          if (driveName && (!existing.displayName || existing.displayName === existing.email || isEmailPrefixName(existing.displayName, existing.email))) {
+            existing.displayName = driveName;
+          }
           continue;
         }
-          add({ uid: '', email, displayName: permission.displayName || email, outbound: true });
+        // A Drive permission only means the folder is shared. It does not prove
+        // the recipient registered or accepted the invitation, so do not create
+        // a Friends row for an outbound-only permission.
+
         }
       }
     } catch (error) {
@@ -285,7 +292,7 @@ export async function discoverDriveFriends(user, configuredRootFolderId = '', ap
     discoveryStatus: catalogDiscoveryFailed ? 'error' : 'ready',
     errors: [...driveDiscoveryErrors, ...diagnostics],
     friends: [...friends.values()]
-      .filter((friend) => friend.inbound || friend.outbound)
+      .filter((friend) => friend.inbound)
       .sort((a, b) => a.displayName.localeCompare(b.displayName, 'ru') || a.uid.localeCompare(b.uid)),
   };
 }

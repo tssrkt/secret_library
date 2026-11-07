@@ -52,13 +52,13 @@ function readFriendCache(uid) {
     if (!Array.isArray(value)) return null;
     return value.filter((friend) => friend && typeof friend.uid === 'string'
       && typeof friend.displayName === 'string'
-      && typeof friend.inbound === 'boolean' && typeof friend.outbound === 'boolean');
+      && friend.inbound === true && typeof friend.outbound === 'boolean');
   } catch { return null; }
 }
 function writeFriendCache(uid, friends) {
   if (!uid || !Array.isArray(friends)) return;
   try {
-    const safe = friends.filter((friend) => friend && typeof friend.uid === 'string').slice(0, 500)
+    const safe = friends.filter((friend) => friend && typeof friend.uid === 'string' && friend.inbound === true).slice(0, 500)
       .map((friend) => ({
         uid: friend.uid, displayName: String(friend.displayName || '').slice(0, 160),
         email: String(friend.email || '').slice(0, 254), catalogId: String(friend.catalogId || '').slice(0, 256),
@@ -237,8 +237,9 @@ export const social = {
     const access = await grantRootFolderAccess(rootFolderId, email);
     const normalizedEmail = String(email || '').trim().toLowerCase();
     const known = driveFriends.find((friend) => String(friend.email || '').trim().toLowerCase() === normalizedEmail);
-    if (known) known.outbound = true;
-    else driveFriends = [...driveFriends, { uid: `email:${normalizedEmail}`, email: normalizedEmail, displayName: normalizedEmail, inbound: false, outbound: true, isAdmin: false }];
+    if (known?.inbound) known.outbound = true;
+    // Do not add a recipient to Friends merely because a Drive permission was granted.
+    // The invitation remains in Sent invitations until registration is confirmed.
     emit({ friends: driveFriends, notifications: buildDriveNotifications(driveFriends), ownRootFolderId: rootFolderId });
     watchCatalogs(driveFriends);
     if (invitationUser) void refreshDriveFriends(invitationUser, generation, driveFriends);

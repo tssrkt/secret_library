@@ -29,7 +29,7 @@ test('Drive permissions define one-way and mutual friend access independently', 
   };
   const download = async (id) => {
     if (id === 'catalog-owner') return { ownerUid: 'owner-uid', rootFolderId: 'root-me' };
-    if (id === 'catalog-alice') return { ownerUid: 'alice-uid', rootFolderId: 'root-alice' };
+    if (id === 'catalog-alice') return { ownerUid: 'alice-uid', ownerDisplayName: 'alice', rootFolderId: 'root-alice' };
     throw new Error(`Unexpected catalog id: ${id}`);
   };
   const result = await discoverDriveFriends(
@@ -40,8 +40,8 @@ test('Drive permissions define one-way and mutual friend access independently', 
   assert.equal(result.rootFolderId, 'root-me');
   assert.deepEqual(result.friends.map(({ uid, email, inbound, outbound }) => ({ uid, email, inbound, outbound })), [
     { uid: 'alice-uid', email: 'alice@example.com', inbound: true, outbound: true },
-    { uid: 'email:bob@example.com', email: 'bob@example.com', inbound: false, outbound: true },
   ]);
+  assert.equal(result.friends[0].displayName, 'Alice Example');
 });
 
 
