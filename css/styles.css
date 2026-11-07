@@ -582,7 +582,7 @@ dd { margin: 0; color: #000; font-weight: 400; font-variant-numeric: tabular-num
 .social-share-form { display: grid; grid-template-columns: minmax(0, 280px) auto; align-items: start; gap: .25rem .75rem; }
 .social-share-form label { grid-column: 1; grid-row: 1; }
 .social-share-form .invitation-send-status { grid-column: 1; grid-row: 2; width: 100%; max-width: 100%; margin: 0; font: inherit; color: inherit; overflow-wrap: anywhere; }
-.social-share-form button[type="submit"] { grid-column: 2; grid-row: 1; }
+.social-share-form button[type="submit"] { grid-column: 2; grid-row: 1; justify-self: start; }
 @media (max-width: 420px) { .social-share-form { grid-template-columns: minmax(0, 1fr); } .social-share-form button[type="submit"] { grid-column: 1; grid-row: 3; justify-self: start; } }
 .invitation-send-status a { color: #684629; text-decoration: underline; }
 
