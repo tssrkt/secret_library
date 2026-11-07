@@ -3,7 +3,7 @@ import { createSocialStore } from './social-store.js?v=20261107-invite-registry-
 import { createSharedLibraryStore } from './shared-library.js?v=20261106-root-discovery';
 import { discoverDriveFriends, grantRootFolderAccess, closeRootFolderAccess } from './drive-sharing.js?v=20261107-close-friend-access';
 import { findDriveCatalogFile, downloadDriveJsonFile, getCurrentDriveUser } from './drive.js';
-import { sendInvitationEmail, getInvitationStatuses as fetchInvitationStatuses, acceptInvitation as acceptInvitationToken } from './invitation-mailer.js?v=20261107-mailer-response-fix';
+import { sendInvitationEmail, getInvitationStatuses as fetchInvitationStatuses, acceptInvitation as acceptInvitationToken, cancelInvitation as cancelInvitationToken } from './invitation-mailer.js?v=20261107-cancel-invitation';
 import { createInvitationLedger, acceptedInvitationFriends, invitationLedgerRows, mergeInvitationRows } from './invitation-ledger.js?v=20261107-ledger-server-discovery';
 
 export function socialError(error) {
@@ -406,6 +406,43 @@ export const social = {
     if (!invitationUser) throw new Error('Сначала войдите через Google, чтобы отправлять приглашения.');
     const idToken = await invitationUser.getIdToken();
     return sendInvitationEmail({ email, idToken });
+  },
+  async cancelInvitation(email) {
+    if (!invitationUser) throw new Error('Сначала войдите через Google, чтобы отменять приглашения.');
+    const normalizedEmail = String(email || '').trim().toLowerCase();
+    if (!normalizedEmail) throw new Error('Не указан адрес приглашённого участника.');
+    let rootFolderId = configuredRootFolderId || state.ownRootFolderId || '';
+    if (!rootFolderId) {
+      const catalogFile = await findDriveCatalogFile(invitationUser.uid);
+      if (catalogFile) {
+        const catalog = await downloadDriveJsonFile(catalogFile.id);
+        if (catalog?.ownerUid === invitationUser.uid && typeof catalog.rootFolderId === 'string') {
+          rootFolderId = catalog.rootFolderId;
+          configuredRootFolderId = rootFolderId;
+        }
+      }
+    }
+    if (!rootFolderId) throw new Error('Не удалось определить корневую папку. Приглашение не отменено; обновите библиотеку и повторите попытку.');
+    const idToken = await invitationUser.getIdToken();
+    // Server-side revocation comes first: even if Drive permission cleanup fails,
+    // the invitation token is already unusable and cannot register the recipient.
+    const result = await cancelInvitationToken({ email: normalizedEmail, idToken });
+    try {
+      await closeRootFolderAccess(rootFolderId, normalizedEmail);
+    } catch (error) {
+      throw new Error('Приглашение отменено, ссылка регистрации недействительна, письмо отправлено, но Google Drive не подтвердил закрытие доступа к папке. Повторите закрытие доступа из списка друзей или проверьте права папки. ' + (error?.message || error));
+    }
+    closedAccessEmails.add(normalizedEmail);
+    for (const friend of driveFriends) {
+      if (String(friend.email || '').trim().toLowerCase() === normalizedEmail) friend.outbound = false;
+    }
+    try {
+      await invitationLedger.setStatus(invitationUser.uid, normalizedEmail, 'revoked');
+    } catch (error) {
+      console.warn('Could not update the Drive invitation ledger after cancellation:', error);
+    }
+    emit({ friends: combineFriendRows() });
+    return result;
   },
   async getInvitationStatuses(emails) {
     if (!invitationUser) throw new Error('Сначала войдите через Google, чтобы проверить приглашения.');
