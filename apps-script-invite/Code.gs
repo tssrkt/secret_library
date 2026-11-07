@@ -752,7 +752,7 @@ function reserveSend(uid, email, firestoreSentAt) {
         return entry && Number.isFinite(Number(entry.at)) && now - Number(entry.at) < 24 * 60 * 60 * 1000;
       });
     if (recent.length >= MAX_INVITES_PER_USER_PER_DAY) {
-      throw new Error('Достигнут дневной лимит приглашений. Попробуйте завтра.');
+      throw new Error('Достигнут дневной лимит приглашений. Попробуйте через 24 часа.');
     }
     const reservationId = Utilities.getUuid();
     recent.push({ id: reservationId, at: now, status: 'reserved' });
