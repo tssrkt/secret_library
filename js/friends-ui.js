@@ -43,16 +43,11 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
   const setInvitationMessage = (value) => {
     const cooldownResponse = 'Запрос обработан. Если получателю нужно приглашение, письмо отправлено.';
     if (value === cooldownResponse) {
-      message.replaceChildren(
-        document.createTextNode('Вы не можете отправлять приглашение одному и тому же человеку чаще чем раз в час. Если ваш друг не получил приглашение, пусть проверит папку «Спам». Если и там нет письма обратитесь в техподдержку')
-      );
       const supportLink = document.createElement('a');
       supportLink.href = 'https://t.me/ptica_govorun_bot';
       supportLink.target = '_blank';
       supportLink.rel = 'noopener noreferrer';
       supportLink.textContent = 'техподдержку';
-      // Keep the support link in the sentence while avoiding HTML injection.
-      const fullText = message.firstChild.textContent;
       const prefix = 'Вы не можете отправлять приглашение одному и тому же человеку чаще чем раз в час. Если ваш друг не получил приглашение, пусть проверит папку «Спам». Если и там нет письма обратитесь в ';
       message.replaceChildren(document.createTextNode(prefix), supportLink);
       return;
