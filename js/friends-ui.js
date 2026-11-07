@@ -257,7 +257,7 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
       if (pendingEmails.size) {
         summary += `, и отправлено еще ${pendingEmails.size.toLocaleString('ru-RU')} ${plural(pendingEmails.size, 'приглашение', 'приглашения', 'приглашений')}`;
       }
-      if (invitationQuota && invitationQuota.isAdmin !== true) {
+      if (invitationQuota) {
         const limit = Number(invitationQuota.limit);
         const used = Number(invitationQuota.used);
         if (Number.isFinite(limit) && Number.isFinite(used)) {

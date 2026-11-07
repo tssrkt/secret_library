@@ -23,8 +23,9 @@ export function createUserSettingsController({ container, index, onError, clearE
     clearError();
     const page = element('div', '', 'user-settings-page');
     const section = element('section');
-    section.append(element('h3', 'Папки, которыми вы делитесь'),
-      element('p', 'Выберите папки библиотеки, которые будут доступны вашим друзьям.'));
+    section.append(element('h3', 'Папки, которыми вы делитесь'));
+    const description = element('p', 'Выберите папки библиотеки, которые будут доступны вашим друзьям.');
+    section.append(description);
     const status = element('p', 'Загрузка настроек…');
     status.setAttribute('role', 'status');
     page.append(section);
@@ -43,6 +44,7 @@ export function createUserSettingsController({ container, index, onError, clearE
       status.textContent = '';
       const folders = sharingFolders(index);
       if (!folders.length) {
+        description.hidden = true;
         status.textContent = 'В корневой папке библиотеки нет папок.';
         return;
       }
