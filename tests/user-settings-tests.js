@@ -84,7 +84,8 @@ export async function runUserSettingsTests(test, assert, equal) {
     const writes = [];
     const controller = createUserSettingsController({ container, index: makeIndex(), clearError: () => {},
       onError: (error) => errors.push(error),
-      load: async (index) => ({ fileId: null, settings: normalizeUserSettings(settings(), index) }),
+      load: async (index) => ({ fileId: writes.length ? 'settings-id' : null,
+        settings: writes.length ? writes[writes.length - 1].value : normalizeUserSettings(settings(), index) }),
       save: (value, index, fileId) => { writes.push({ value, fileId }); return new Promise((resolve, reject) => { resolveSave = resolve; rejectSave = reject; }); },
     });
     const fields = () => [...container.querySelectorAll('input')];
@@ -235,7 +236,8 @@ export async function runUserSettingsTests(test, assert, equal) {
       equal(stored.sharing.excludedFolderIds, ['sf', 'history'], 'retry saves the same draft');
       assert(fixture.querySelector('#error-panel').hidden, 'retry clears old error');
       click('#library-home-link');
-      equal(requests.map((request) => request.method), ['GET', 'GET', 'POST', 'PATCH', 'PATCH'], 'failed settings lookup retries once; no scans or book requests');
+      equal(requests.filter((request) => request.method !== 'GET').map((request) => request.method), ['POST', 'PATCH', 'PATCH'], 'only settings writes occur; no scans or book requests');
+      equal(requests.filter((request) => request.method === 'GET').length, lookups, 'each settings-page open revalidates the appData settings file');
       equal(JSON.stringify(index), before, 'index and metadata versions unchanged');
     } finally {
       window.fetch = nativeFetch;

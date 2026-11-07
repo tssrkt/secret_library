@@ -36,10 +36,12 @@ export function createUserSettingsController({ container, index, onError, clearE
       // Reopening during a write waits for its file ID, so it cannot create a duplicate.
       if (saving) await saving;
       if (!isCurrent()) return;
-      if (!saved) {
-        loading ||= load(index).finally(() => { loading = null; });
-        saved = await loading;
-      }
+      // The in-memory value is only a cache, not the source of truth. Revalidate it
+      // against Drive whenever the page opens so changes made elsewhere cannot leave
+      // this form displaying stale sharing settings. Keep the loading state visible
+      // until the fresh snapshot is ready instead of briefly rendering old controls.
+      loading ||= load(index).finally(() => { loading = null; });
+      saved = await loading;
       if (!isCurrent()) return;
       status.textContent = '';
       const folders = sharingFolders(index);
