@@ -61,6 +61,7 @@ function harness({ authUser, pendingFields, pendingStatus = 200, profileStatus =
       getScriptProperties() {
         return {
           getProperty(key) { return properties.get(key) || null; },
+          getProperties() { return Object.fromEntries(properties); },
           setProperty(key, value) { properties.set(key, value); },
           deleteProperty(key) { properties.delete(key); }
         };

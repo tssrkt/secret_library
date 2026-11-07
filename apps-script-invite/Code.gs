@@ -300,37 +300,67 @@ function acceptanceCurrentKey(uid, email) {
 function ownerInvitationRegistryKey(uid) {
   return 'invite_owner_' + acceptanceDigest(String(uid || ''));
 }
-
-function readOwnerInvitationRegistry(uid) {
-  const value = PropertiesService.getScriptProperties().getProperty(ownerInvitationRegistryKey(uid));
+function ownerInvitationRecordPrefix(uid) {
+  return 'invite_owner_record_' + acceptanceDigest(String(uid || '')) + '_';
+}
+function ownerInvitationRecordKey(uid, email) {
+  return ownerInvitationRecordPrefix(uid) + acceptanceDigest(normalizeEmail(email));
+}
+function parseOwnerInvitationRegistry(value) {
   if (!value) return {};
   try {
     const parsed = JSON.parse(value);
     return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
   } catch (_) { return {}; }
 }
-
+function migrateLegacyOwnerInvitationRegistry(uid, properties) {
+  const legacyKey = ownerInvitationRegistryKey(uid);
+  const legacy = parseOwnerInvitationRegistry(properties.getProperty(legacyKey));
+  Object.keys(legacy).forEach(function (email) {
+    const normalized = normalizeEmail(email);
+    const record = legacy[email];
+    if (isValidEmail(normalized) && record && typeof record === 'object') {
+      properties.setProperty(ownerInvitationRecordKey(uid, normalized), JSON.stringify({ ...record, ownerUid: String(record.ownerUid || uid), inviteeEmail: normalized }));
+    }
+  });
+  if (properties.getProperty(legacyKey)) properties.deleteProperty(legacyKey);
+}
+function readOwnerInvitationRegistry(uid) {
+  const properties = PropertiesService.getScriptProperties();
+  const registry = parseOwnerInvitationRegistry(properties.getProperty(ownerInvitationRegistryKey(uid)));
+  if (typeof properties.getProperties === 'function') {
+    const prefix = ownerInvitationRecordPrefix(uid);
+    const all = properties.getProperties();
+    Object.keys(all).forEach(function (key) {
+      if (!key.startsWith(prefix)) return;
+      try {
+        const record = JSON.parse(all[key]);
+        const email = normalizeEmail(record && record.inviteeEmail);
+        if (isValidEmail(email) && record && typeof record === 'object') registry[email] = record;
+      } catch (_) {}
+    });
+  }
+  return registry;
+}
 function saveOwnerInvitationRecord(record) {
   const properties = PropertiesService.getScriptProperties();
-  const registry = readOwnerInvitationRegistry(record.ownerUid);
-  registry[normalizeEmail(record.inviteeEmail)] = {
-    ownerUid: record.ownerUid,
-    ownerEmail: normalizeEmail(record.ownerEmail),
-    inviteeEmail: normalizeEmail(record.inviteeEmail),
-    tokenHash: record.tokenHash,
-    status: record.status,
-    createdAt: Number(record.createdAt) || Date.now(),
-    acceptedUid: record.acceptedUid || '',
-    acceptedDisplayName: String(record.acceptedDisplayName || '').slice(0, 160),
+  migrateLegacyOwnerInvitationRegistry(record.ownerUid, properties);
+  const email = normalizeEmail(record.inviteeEmail);
+  properties.setProperty(ownerInvitationRecordKey(record.ownerUid, email), JSON.stringify({
+    ownerUid: record.ownerUid, ownerEmail: normalizeEmail(record.ownerEmail), inviteeEmail: email,
+    tokenHash: record.tokenHash, status: record.status, createdAt: Number(record.createdAt) || Date.now(),
+    acceptedUid: record.acceptedUid || '', acceptedDisplayName: String(record.acceptedDisplayName || '').slice(0, 160),
     acceptedAt: Number(record.acceptedAt) || 0
-  };
-  properties.setProperty(ownerInvitationRegistryKey(record.ownerUid), JSON.stringify(registry));
+  }));
 }
-
+function deleteOwnerInvitationRecord(uid, email) {
+  const properties = PropertiesService.getScriptProperties();
+  migrateLegacyOwnerInvitationRegistry(uid, properties);
+  properties.deleteProperty(ownerInvitationRecordKey(uid, email));
+}
 function readOwnerInvitationRecord(uid, email) {
   return readOwnerInvitationRegistry(uid)[normalizeEmail(email)] || null;
 }
-
 function issueInvitationAcceptanceToken(ownerUid, ownerEmail, inviteeEmail) {
   const properties = PropertiesService.getScriptProperties();
   const currentKey = acceptanceCurrentKey(ownerUid, inviteeEmail);
@@ -365,8 +395,7 @@ function revokeInvitationAcceptanceToken(tokenRecord) {
   const registry = readOwnerInvitationRegistry(tokenRecord.ownerUid);
   const email = normalizeEmail(tokenRecord.inviteeEmail);
   if (registry[email] && registry[email].tokenHash === tokenRecord.tokenHash) {
-    delete registry[email];
-    properties.setProperty(ownerInvitationRegistryKey(tokenRecord.ownerUid), JSON.stringify(registry));
+    deleteOwnerInvitationRecord(tokenRecord.ownerUid, email);
   }
 }
 

@@ -28,6 +28,7 @@ function createHarness(inviteeEmail = 'reader@example.com') {
     PropertiesService: {
       getScriptProperties: () => ({
         getProperty: (key) => values.has(key) ? values.get(key) : null,
+        getProperties: () => Object.fromEntries(values),
         setProperty: (key, value) => { values.set(key, String(value)); return this; },
         deleteProperty: (key) => values.delete(key),
       }),
@@ -74,6 +75,15 @@ test('empty status request enumerates the owner registry without Firestore invit
   assert.ok(statuses['reader@example.com'].createdAt > 0);
 });
 
+test('owner invitation registry migrates legacy storage and stores recipients separately', () => {
+  const { context, values } = createHarness(); const legacyKey = context.ownerInvitationRegistryKey('owner-uid');
+  values.set(legacyKey, JSON.stringify({ 'old@example.com': { ownerUid: 'owner-uid', inviteeEmail: 'old@example.com', status: 'accepted', acceptedUid: 'old-uid' } }));
+  assert.equal(context.readOwnerInvitationRegistry('owner-uid')['old@example.com'].acceptedUid, 'old-uid');
+  context.saveOwnerInvitationRecord({ ownerUid: 'owner-uid', ownerEmail: 'owner@example.com', inviteeEmail: 'new@example.com', tokenHash: 'hash', status: 'pending', createdAt: 123 });
+  assert.equal(values.has(legacyKey), false); assert.equal(context.readOwnerInvitationRegistry('owner-uid')['old@example.com'].acceptedUid, 'old-uid');
+  assert.equal(context.readOwnerInvitationRegistry('owner-uid')['new@example.com'].status, 'pending');
+  assert(values.has(context.ownerInvitationRecordKey('owner-uid', 'new@example.com')));
+});
 test('acceptance token is one-time, email-bound, and notifies the inviter once', () => {
   const { context, sent, documents, writes } = createHarness();
   const issued = context.issueInvitationAcceptanceToken('owner-uid', 'owner@example.com', 'reader@example.com');
