@@ -21,7 +21,7 @@ import { social, socialError } from './social-runtime.js?v=20261107-mailer-origi
 import { getAccessToken } from './auth.js';
 import { checkpointKey, loadCheckpoint, saveCheckpoint, deleteCheckpoint, commitCheckpoint } from './indexing-checkpoint.js';
 import { createLibraryTabs } from './library-tabs.js';
-import { createLibrarySelection } from './library-selection.js?v=20261106-clean-diagnostic';
+import { createLibrarySelection } from './library-selection.js?v=20261107-stable-friend-loading';
 import { loadUserSettings, loadRootFolderPreference, loadRootFolderResourceKey, saveRootFolderPreference } from './user-settings.js';
 import { chooseRootFolder } from './root-folder-picker.js?v=20261106-root-discovery';
 import { firebaseConfigured } from './firebase-config.js';
