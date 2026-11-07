@@ -19,7 +19,8 @@ function disableFirestoreAfterQuota(current) {
   if (current !== generation) return;
   stop?.(); stop = null;
   store?.dispose(); store = null;
-  invitationUser = null;
+  // Keep the Firebase-authenticated user for Apps Script invitation operations.
+  // Sending/status checks use the ID token and server registry, not Firestore.
   // Google Drive sharing and friend catalogs remain usable without Firestore.
   emit({ status: 'ready', message: '' });
   settleConnectionReady(true);
@@ -319,7 +320,7 @@ export const social = {
     void endFirebaseSession().catch(() => {});
   },
   async shareWithEmail(email) {
-    if (!store || !invitationUser || state.status !== 'ready') throw new Error(state.message || 'Сначала подключите библиотеку.');
+    if (!invitationUser || state.status !== 'ready') throw new Error(state.message || 'Сначала подключите библиотеку.');
     const normalizedEmail = String(email || '').trim().toLowerCase();
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) throw new Error('Укажите корректный адрес электронной почты.');
     if (normalizedEmail === String(invitationUser.email || '').trim().toLowerCase()) throw new Error('Нельзя пригласить собственный адрес.');
@@ -394,12 +395,12 @@ export const social = {
     return result;
   },
   async resendInvitation(email) {
-    if (!store || !invitationUser || state.status !== 'ready') throw new Error(state.message);
+    if (!invitationUser || state.status !== 'ready') throw new Error(state.message || 'Сначала подключите библиотеку.');
     const idToken = await invitationUser.getIdToken();
     return sendInvitationEmail({ email, idToken });
   },
   async getInvitationStatuses(emails) {
-    if (!store || !invitationUser || state.status !== 'ready') throw new Error(state.message);
+    if (!invitationUser || state.status !== 'ready') throw new Error(state.message || 'Сначала подключите библиотеку.');
     return syncAcceptedInvitationStatuses(emails, generation);
   },
   setSharing(uid, active) { if (!store || state.status !== 'ready') return Promise.reject(new Error(state.message)); return store.setSharing(uid, active); },
