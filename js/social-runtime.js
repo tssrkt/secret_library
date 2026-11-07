@@ -205,6 +205,9 @@ export const social = {
     connectionReadyPromise = new Promise((resolve) => { resolveConnectionReady = resolve; });
     if (rootFolderId) configuredRootFolderId = rootFolderId;
     const current = ++generation;
+    // Invitation operations use Firebase Auth ID tokens and the Apps Script registry;
+    // never reuse a stale user while a new connection is being established.
+    invitationUser = null;
     knownContactsSyncs.clear();
     stop?.(); store?.dispose(); store = null;
     shared?.dispose(); shared = null;
@@ -224,12 +227,14 @@ export const social = {
       const session = await startFirebaseSession(token);
       if (current !== generation) return;
       if (!session) { settleConnectionReady(false); return; }
+      // Keep invitation sending available as soon as Firebase Auth is ready. The
+      // invitation API is independent of Firestore registration and subscriptions.
+      invitationUser = session.user;
       store = createSocialStore(session);
       // Drive catalog publishing must not depend on Firestore registration/quota.
       // Resolve this gate as soon as the Google-authenticated Drive store exists.
       shared = createSharedLibraryStore({ user: session.user });
       settleConnectionReady(true);
-      invitationUser = session.user;
       let knownInvitationEmails = [];
       try {
         const savedLedger = await invitationLedger.load(invitationUser.uid);
@@ -320,7 +325,7 @@ export const social = {
     void endFirebaseSession().catch(() => {});
   },
   async shareWithEmail(email) {
-    if (!invitationUser || state.status !== 'ready') throw new Error(state.message || 'Сначала подключите библиотеку.');
+    if (!invitationUser) throw new Error('Сначала войдите через Google, чтобы отправлять приглашения.');
     const normalizedEmail = String(email || '').trim().toLowerCase();
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) throw new Error('Укажите корректный адрес электронной почты.');
     if (normalizedEmail === String(invitationUser.email || '').trim().toLowerCase()) throw new Error('Нельзя пригласить собственный адрес.');
@@ -395,12 +400,12 @@ export const social = {
     return result;
   },
   async resendInvitation(email) {
-    if (!invitationUser || state.status !== 'ready') throw new Error(state.message || 'Сначала подключите библиотеку.');
+    if (!invitationUser) throw new Error('Сначала войдите через Google, чтобы отправлять приглашения.');
     const idToken = await invitationUser.getIdToken();
     return sendInvitationEmail({ email, idToken });
   },
   async getInvitationStatuses(emails) {
-    if (!invitationUser || state.status !== 'ready') throw new Error(state.message || 'Сначала подключите библиотеку.');
+    if (!invitationUser) throw new Error('Сначала войдите через Google, чтобы проверить приглашения.');
     return syncAcceptedInvitationStatuses(emails, generation);
   },
   setSharing(uid, active) { if (!store || state.status !== 'ready') return Promise.reject(new Error(state.message)); return store.setSharing(uid, active); },
