@@ -124,7 +124,7 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
         const sentAt = currentStatus ? Number(currentStatus.lastSentAt) || 0 : timestampMillis(invite.emailSentAt || invite.createdAt);
         if (sentAt && Date.now() < sentAt + HOUR_MS) return;
         if (typeof social.resendInvitation !== 'function') {
-          setInvitationMessage('Повторная отправка пока недоступна. Обновите страницу и попробуйте снова.');
+          message.textContent = 'Повторная отправка пока недоступна. Обновите страницу и попробуйте снова.';
           return;
         }
         busy.add(email);
@@ -136,7 +136,7 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
           if (invitationWasSent(result)) await refreshInvitationStatuses();
           else setInvitationMessage(result);
         } catch (error) {
-          setInvitationMessage(socialError(error));
+          message.textContent = socialError(error);
         } finally {
           busy.delete(email);
           updateCooldowns();

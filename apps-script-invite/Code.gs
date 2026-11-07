@@ -595,7 +595,9 @@ function handleCancelInvitation(input) {
       throw new Error('Отменить можно только ожидающее принятия приглашение.');
     } else {
       const properties = PropertiesService.getScriptProperties();
-      const tokenHash = String(invitation.tokenHash || '');
+      let tokenHash = String(invitation.tokenHash || '');
+      const currentKey = acceptanceCurrentKey(user.localId, email);
+      if (!tokenHash) tokenHash = String(properties.getProperty(currentKey) || '');
       if (tokenHash) {
         const key = 'invite_accept_' + tokenHash;
         tokenRecord = JSON.parse(properties.getProperty(key) || 'null');
@@ -603,8 +605,8 @@ function handleCancelInvitation(input) {
           throw new Error('Приглашение уже принято. Закрыть доступ к сайту нельзя; при необходимости можно закрыть только доступ к вашей библиотеке.');
         }
         properties.deleteProperty(key);
-        const currentKey = acceptanceCurrentKey(user.localId, email);
         if (properties.getProperty(currentKey) === tokenHash) properties.deleteProperty(currentKey);
+        invitation.tokenHash = tokenHash;
       }
       invitation.status = 'revoked';
       invitation.revokedAt = Date.now();
@@ -616,15 +618,22 @@ function handleCancelInvitation(input) {
 
   // Sending is retriable and idempotent. A failed email does not reactivate the token.
   const properties = PropertiesService.getScriptProperties();
-  const notificationKey = 'invite_cancel_notified_' + acceptanceDigest(user.localId + '\n' + email);
-  if (properties.getProperty(notificationKey) !== 'sent') {
-    MailApp.sendEmail({
-      to: email,
-      subject: 'Приглашение отменено — Тайная Библиотека',
-      body: 'Приглашение в Тайную Библиотеку отменено.',
-      name: 'Тайная Библиотека'
-    });
-    properties.setProperty(notificationKey, 'sent');
+  const invitationGeneration = String(invitation.tokenHash || invitation.createdAt || 'legacy');
+  const notificationKey = 'invite_cancel_notified_' + acceptanceDigest(user.localId + '\n' + email + '\n' + invitationGeneration);
+  const notificationLock = LockService.getScriptLock();
+  notificationLock.waitLock(10000);
+  try {
+    if (properties.getProperty(notificationKey) !== 'sent') {
+      MailApp.sendEmail({
+        to: email,
+        subject: 'Приглашение отменено — Тайная Библиотека',
+        body: 'Приглашение в Тайную Библиотеку отменено.',
+        name: 'Тайная Библиотека'
+      });
+      properties.setProperty(notificationKey, 'sent');
+    }
+  } finally {
+    notificationLock.releaseLock();
   }
   return { cancelled: true, email: email, invitationStatus: 'revoked' };
 }
