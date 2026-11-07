@@ -506,14 +506,14 @@ function handleAcceptInvitation(input) {
 
 function handleInvitationStatuses(input) {
   const idToken = String(input.idToken || '');
-  const requestedEmails = Array.isArray(input.emails) ? [...new Set(input.emails.slice(0, 500).map(normalizeEmail))].slice(0, 100) : [];
+  const requestedEmails = Array.isArray(input.emails) ? [...new Set(input.emails.slice(0, 500).map(normalizeEmail))].slice(0, 500) : [];
   if (idToken.length < 100 || idToken.length > 5000 || requestedEmails.some(function (email) { return !isValidEmail(email); })) {
     throw new Error('?? ??????? ???????? ????????? ???????????. ???????? ????????.');
   }
   const user = verifyFirebaseUser(idToken);
   const properties = PropertiesService.getScriptProperties();
   // An empty email list means: return the current user's server-owned invitation registry.
-  const emails = requestedEmails.length ? requestedEmails : Object.keys(readOwnerInvitationRegistry(user.localId)).slice(0, 100);
+  const emails = requestedEmails.length ? requestedEmails : Object.keys(readOwnerInvitationRegistry(user.localId)).slice(0, 500);
   const statuses = {};
   emails.forEach(function (email) {
     if (email === normalizeEmail(user.email)) return;

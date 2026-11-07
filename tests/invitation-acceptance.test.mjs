@@ -75,6 +75,14 @@ test('empty status request enumerates the owner registry without Firestore invit
   assert.ok(statuses['reader@example.com'].createdAt > 0);
 });
 
+test('empty status discovery restores more than one hundred admin invitations', () => {
+  const { context } = createHarness();
+  for (let i = 0; i < 125; i++) context.issueInvitationAcceptanceToken('owner-uid', 'owner@example.com', 'reader' + i + '@example.com');
+  context.verifyFirebaseUser = () => ({ localId: 'owner-uid', email: 'owner@example.com', emailVerified: true });
+  const statuses = context.handleInvitationStatuses({ idToken: 'x'.repeat(120), emails: [] });
+  assert.equal(Object.keys(statuses).length, 125);
+});
+
 test('owner invitation registry migrates legacy storage and stores recipients separately', () => {
   const { context, values } = createHarness(); const legacyKey = context.ownerInvitationRegistryKey('owner-uid');
   values.set(legacyKey, JSON.stringify({ 'old@example.com': { ownerUid: 'owner-uid', inviteeEmail: 'old@example.com', status: 'accepted', acceptedUid: 'old-uid' } }));
