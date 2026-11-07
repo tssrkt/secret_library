@@ -999,6 +999,7 @@ function fsCount(collectionId, filter, allDescendants) {
   const value = rows.find(row => row && row.result)?.result?.aggregateFields?.total?.integerValue;
   return Number(value || 0);
 }
+const ADMIN_COUNT_CACHE_TTL_SECONDS = 60;
 function fsCountMany(specs, includeSuperAdmin) {
   const cache = CacheService.getScriptCache();
   const cachedSuperAdmin = includeSuperAdmin ? cache.get('superadmin_uid') : null;
@@ -1017,7 +1018,7 @@ function fsCountMany(specs, includeSuperAdmin) {
   if (!specs.length && !includeSuperAdmin) return cachedCounts;
   if (typeof UrlFetchApp.fetchAll !== 'function' || (!includeSuperAdmin && specs.length === 1)) {
     const counts = Object.fromEntries(specs.map(spec => [spec.key, fsCount(spec.collectionId, spec.filter, spec.allDescendants)]));
-    Object.entries(counts).forEach(([key, value]) => cache.put('admin_count_v1_' + key, String(value), 20));
+    Object.entries(counts).forEach(([key, value]) => cache.put('admin_count_v1_' + key, String(value), ADMIN_COUNT_CACHE_TTL_SECONDS));
     const combined = { ...cachedCounts, ...counts };
     return includeSuperAdmin ? { counts: combined, superAdminUid: fsFindSuperAdminUid() } : combined;
   }
@@ -1052,7 +1053,7 @@ function fsCountMany(specs, includeSuperAdmin) {
     const rows = JSON.parse(response.getContentText());
     const value = rows.find(row => row && row.result)?.result?.aggregateFields?.total?.integerValue;
     counts[specs[index].key] = Number(value || 0);
-    cache.put('admin_count_v1_' + specs[index].key, String(counts[specs[index].key]), 20);
+    cache.put('admin_count_v1_' + specs[index].key, String(counts[specs[index].key]), ADMIN_COUNT_CACHE_TTL_SECONDS);
   });
   const combinedCounts = { ...cachedCounts, ...counts };
   if (!includeSuperAdmin) return combinedCounts;

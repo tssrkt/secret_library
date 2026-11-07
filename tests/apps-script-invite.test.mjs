@@ -491,7 +491,10 @@ test('admin participant flags are cached briefly and mutations invalidate the pa
   assert.equal(requests, 6, 'invalidating a participant should force fresh flag queries');
 });
 
-test('admin aggregate counts are cached briefly and mutation invalidation forces a fresh read', () => {
+test('admin aggregate counts use a 60-second cache and mutation invalidation forces a fresh read', () => {
+  assert.match(source, /const ADMIN_COUNT_CACHE_TTL_SECONDS = 60/);
+  assert.match(source, /cache\.put\('admin_count_v1_' \+ key, String\(value\), ADMIN_COUNT_CACHE_TTL_SECONDS\)/);
+  assert.match(source, /cache\.put\('admin_count_v1_' \+ specs\[index\]\.key, String\(counts\[specs\[index\]\.key\]\), ADMIN_COUNT_CACHE_TTL_SECONDS\)/);
   const app = harness();
   let requests = 0;
   app.context.ScriptApp = { getOAuthToken: () => 'test-token' };
