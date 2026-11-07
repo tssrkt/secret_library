@@ -109,6 +109,18 @@ export async function runSocialUiTests(test, assert, equal) {
       assert(oldPage.querySelector('.sent-invitations-message').textContent === '', 'successful resend does not show a success message below the invitations table');
     } finally { cleanupOld(); oldPage.remove(); }
   });
+  await test('cancelled invitations are excluded from the friends summary', async () => {
+    const page = document.createElement('div'); document.body.append(page);
+    const social = stub({ friends: [{ uid: 'friend', displayName: 'Friend', email: 'friend@gmail.com' }], invitations: [{ inviteeEmail: 'cancelled@gmail.com', active: true }] });
+    social.getInvitationStatuses = async () => ({ 'cancelled@gmail.com': { invitationStatus: 'revoked' } });
+    const cleanup = mountFriends(page, social, () => {});
+    try {
+      await tick(); await tick();
+      const summary = page.querySelector('.friends-count').textContent;
+      assert(summary.includes('У вас 1 друг'), 'friend count remains correct');
+      assert(!summary.includes('отправлено еще'), 'cancelled invitation is not counted as pending');
+    } finally { cleanup(); page.remove(); }
+  });
   await test('friends table labels administrators without displaying their email', () => {
     const page = document.createElement('div'); document.body.append(page);
     const cleanup = mountFriends(page, stub({ friends: [{ uid: 'admin', displayName: 'Library owner', isAdmin: true, email: '', inbound: true, outbound: false }] }), () => {});

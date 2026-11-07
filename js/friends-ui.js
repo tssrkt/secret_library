@@ -253,7 +253,9 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
       const friendEmails = new Set((snapshot.friends || []).map((friend) => String(friend.email || '').trim().toLowerCase()).filter(Boolean));
       const pendingEmails = new Set((snapshot.invitations || [])
         .map((invite) => String(invite.inviteeEmail || '').trim().toLowerCase())
-        .filter((email) => email && !friendEmails.has(email) && invitationStatuses[email]?.invitationStatus !== 'accepted'));
+        .filter((email) => email && !friendEmails.has(email)
+          && invitationStatuses[email]?.invitationStatus !== 'accepted'
+          && invitationStatuses[email]?.invitationStatus !== 'revoked'));
       let summary = `У вас ${count.toLocaleString('ru-RU')} ${plural(count, 'друг', 'друга', 'друзей')}`;
       if (pendingEmails.size) {
         summary += `, и отправлено еще ${pendingEmails.size.toLocaleString('ru-RU')} ${plural(pendingEmails.size, 'приглашение', 'приглашения', 'приглашений')}`;
