@@ -218,7 +218,7 @@ async function changeAdminPage(direction) {
   await loadAdminPage(activeTab, history[history.length - 1]);
 }
 let refreshPromise = null;
-async function refresh() {
+async function refresh({ summary = true } = {}) {
   // Coalesce repeated clicks while a refresh is already in flight.
   if (refreshPromise) return refreshPromise;
   refreshPromise = (async () => {
@@ -226,12 +226,14 @@ async function refresh() {
     if (refreshButton) refreshButton.disabled = true;
     const requestedTab = activeTab;
     try {
-      say('Обновляем сводку и текущую страницу…');
+      say(summary ? 'Обновляем сводку и текущую страницу…' : 'Обновляем текущую страницу…');
       // Keep profiles accumulated from previously visited pages so the server can
       // omit already-known UIDs instead of re-reading the same users on refresh.
       const knownProfiles = data?.userProfiles && typeof data.userProfiles === 'object' ? data.userProfiles : {};
-      data = await call('getAdminDashboardSummary')({});
-      data.userProfiles = { ...knownProfiles };
+      if (summary) {
+        data = await call('getAdminDashboardSummary')({});
+        data.userProfiles = { ...knownProfiles };
+      }
       if (!data.permissions?.[activeTab] && activeTab !== 'texts') {
         activeTab = sections.find(([key]) => data.permissions?.[key])?.[0] || 'users';
       }
@@ -512,7 +514,7 @@ function renderInvites() {
   const invitations = data.invitations || [];
   const rows = invitations.map(i=>[
     i.email,userLink(resolveAdminUser(i.ownerUid)||{uid:i.ownerUid},i.ownerUid),i.claimedUid ? userLink(resolveAdminUser(i.claimedUid)||{uid:i.claimedUid},i.claimedUid) : 'Не принято',invitationEmailStatus(i),dateLabel(i.createdAt),
-    invitationActionState(i) || button('Отменить приглашение',async()=>{if(!confirm('Отменить это приглашение?'))return;try{await call('adminRevokeInvitation')({email:i.email,ownerUid:i.ownerUid||i.id});await refresh();}catch(e){say(e?.message||'Не удалось отменить приглашение.',true);}},'danger')
+    invitationActionState(i) || button('Отменить приглашение',async()=>{if(!confirm('Отменить это приглашение?'))return;try{await call('adminRevokeInvitation')({email:i.email,ownerUid:i.ownerUid||i.id});await refresh({ summary: false });}catch(e){say(e?.message||'Не удалось отменить приглашение.',true);}},'danger')
   ]);
   const rowClasses = invitations.map(i => i.claimedUid ? '' : 'invitation-unaccepted');
   content.append(paginatedTable(['Адрес приглашения','Пригласитель','Приглашённый','Статус письма','Создано','Действие'],rows,25,[],rowClasses));
