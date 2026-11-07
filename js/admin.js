@@ -7,6 +7,7 @@ const authPanel = $('#auth'), dashboard = $('#dashboard'), status = $('#status')
 let session, call, data, activeTab = 'users';
 let relationshipSharesCache = null;
 const adminPageState = Object.create(null);
+const adminPageRequests = new Map();
 const adminPageFields = { users: 'users', relationships: 'users', invites: 'invitations', shares: 'shares', events: 'events', banned: 'banned', admins: 'admins' };
 function invalidateAdminPages(...keys) {
   for (const key of keys) delete adminPageState[key];
@@ -182,6 +183,17 @@ function renderUserCard(uid) {
   if (data.permissions?.admins && !user.banned && !admin) actions.append(button('Назначить администратором', () => { activeTab = 'admins'; renderAdminEditor(user); }));
   content.append(actions);
 }
+async function requestAdminPage(key, cursor, knownProfileUids) {
+  const requestKey = key + '\0' + cursor;
+  const pending = adminPageRequests.get(requestKey);
+  if (pending) return pending;
+  const request = key === 'relationships'
+    ? call('getAdminRelationshipRoots')({ cursor, includeShares: !Array.isArray(relationshipSharesCache), knownProfileUids })
+    : call('getAdminCollectionPage')({ section: key, cursor, knownProfileUids });
+  adminPageRequests.set(requestKey, request);
+  try { return await request; }
+  finally { if (adminPageRequests.get(requestKey) === request) adminPageRequests.delete(requestKey); }
+}
 async function loadAdminPage(key, cursor = '', shouldRender = true, forceReload = false) {
   if (!data?.permissions?.[key]) return;
   const field = adminPageFields[key];
@@ -201,8 +213,10 @@ async function loadAdminPage(key, cursor = '', shouldRender = true, forceReload 
   }
   const knownProfileUids = knownAdminProfileUids();
   let result;
-  if (key === 'relationships') result = await call('getAdminRelationshipRoots')({ cursor, includeShares: !Array.isArray(relationshipSharesCache), knownProfileUids });
-  else result = await call('getAdminCollectionPage')({ section: key, cursor, knownProfileUids });
+  if (forceReload) {
+    if (key === 'relationships') result = await call('getAdminRelationshipRoots')({ cursor, includeShares: !Array.isArray(relationshipSharesCache), knownProfileUids });
+    else result = await call('getAdminCollectionPage')({ section: key, cursor, knownProfileUids });
+  } else result = await requestAdminPage(key, cursor, knownProfileUids);
   const profileDelta = result.userProfiles && typeof result.userProfiles === 'object' ? result.userProfiles : null;
   if (profileDelta) data.userProfiles = { ...(data.userProfiles || {}), ...profileDelta };
   if (key === 'relationships' && Array.isArray(result.shares)) relationshipSharesCache = result.shares;

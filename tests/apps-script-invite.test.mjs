@@ -200,6 +200,13 @@ test('admin summary batches independent Firestore aggregation counts', () => {
   assert.ok(requests.every(request => request.method === 'post' && request.headers.Authorization.startsWith('Bearer ')));
 });
 
+test('admin page requests coalesce duplicate in-flight loads but forced refreshes bypass the coalescer', () => {
+  assert.match(adminClientSource, /const adminPageRequests = new Map\(\)/);
+  assert.match(adminClientSource, /async function requestAdminPage\(key, cursor, knownProfileUids\)/);
+  assert.match(adminClientSource, /if \(pending\) return pending/);
+  assert.match(adminClientSource, /if \(forceReload\) \{/);
+});
+
 test('admin page requests reuse profiles already loaded by the client', () => {
   assert.match(adminClientSource, /function knownAdminProfileUids\(\)/);
   assert.match(adminClientSource, /adminPageState\.users\?\.pages/);
