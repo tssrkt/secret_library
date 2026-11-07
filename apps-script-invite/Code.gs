@@ -1000,15 +1000,26 @@ function fsCount(collectionId, filter, allDescendants) {
   return Number(value || 0);
 }
 function fsCountMany(specs, includeSuperAdmin) {
-  const cache = includeSuperAdmin ? CacheService.getScriptCache() : null;
-  const cachedSuperAdmin = cache ? cache.get('superadmin_uid') : null;
+  const cache = CacheService.getScriptCache();
+  const cachedSuperAdmin = includeSuperAdmin ? cache.get('superadmin_uid') : null;
   if (includeSuperAdmin && cachedSuperAdmin) {
     return { counts: fsCountMany(specs, false), superAdminUid: cachedSuperAdmin === 'none' ? null : cachedSuperAdmin };
   }
-  if (!specs.length && !includeSuperAdmin) return {};
+  const cachedCounts = {};
+  const missingSpecs = [];
+  specs.forEach(spec => {
+    const cached = cache.get('admin_count_v1_' + spec.key);
+    if (cached === null || cached === undefined) missingSpecs.push(spec);
+    else cachedCounts[spec.key] = Number(cached);
+  });
+  if (!missingSpecs.length && !includeSuperAdmin) return cachedCounts;
+  specs = missingSpecs;
+  if (!specs.length && !includeSuperAdmin) return cachedCounts;
   if (typeof UrlFetchApp.fetchAll !== 'function' || (!includeSuperAdmin && specs.length === 1)) {
     const counts = Object.fromEntries(specs.map(spec => [spec.key, fsCount(spec.collectionId, spec.filter, spec.allDescendants)]));
-    return includeSuperAdmin ? { counts, superAdminUid: fsFindSuperAdminUid() } : counts;
+    Object.entries(counts).forEach(([key, value]) => cache.put('admin_count_v1_' + key, String(value), 20));
+    const combined = { ...cachedCounts, ...counts };
+    return includeSuperAdmin ? { counts: combined, superAdminUid: fsFindSuperAdminUid() } : combined;
   }
   const token = ScriptApp.getOAuthToken();
   const requests = specs.map(spec => {
@@ -1041,14 +1052,20 @@ function fsCountMany(specs, includeSuperAdmin) {
     const rows = JSON.parse(response.getContentText());
     const value = rows.find(row => row && row.result)?.result?.aggregateFields?.total?.integerValue;
     counts[specs[index].key] = Number(value || 0);
+    cache.put('admin_count_v1_' + specs[index].key, String(counts[specs[index].key]), 20);
   });
-  if (!includeSuperAdmin) return counts;
+  const combinedCounts = { ...cachedCounts, ...counts };
+  if (!includeSuperAdmin) return combinedCounts;
   const response = responses[specs.length];
   if (response.getResponseCode() !== 200) throw new Error('Не удалось определить главного администратора.');
   const document = JSON.parse(response.getContentText()).find(row => row && row.document)?.document;
   const superAdminUid = document ? document.name.split('/').pop() : null;
   cache.put('superadmin_uid', superAdminUid || 'none', 30);
-  return { counts, superAdminUid };
+  return { counts: combinedCounts, superAdminUid };
+}
+function fsInvalidateAdminCountCache(...keys) {
+  const cache = CacheService.getScriptCache();
+  keys.forEach(key => cache.remove('admin_count_v1_' + key));
 }
 function getAdminCollectionPageApi(actor, data) {
   const config = {
@@ -1651,6 +1668,7 @@ function setAdminPermissionsApi(actor, data) {
   });
   fsSet('users/' + uid, { isAdmin: active });
   fsAddEvent(actor.uid, 'set-admin-permissions', uid, { permissions, active });
+  fsInvalidateAdminCountCache('users', 'admins');
   return { ok: true };
 }
 
@@ -1689,6 +1707,7 @@ function banLibraryUserApi(actor, data) {
     fsSet('users/' + uid, { isAdmin: false });
   }
   fsAddEvent(actor.uid, 'ban-user', uid, { reason });
+  fsInvalidateAdminCountCache('users', 'banned', 'admins');
   return { ok: true };
 }
 
@@ -1712,6 +1731,7 @@ function restoreLibraryUserApi(actor, data) {
     fsSet('users/' + uid, { isAdmin: true });
   }
   fsAddEvent(actor.uid, 'restore-user', uid, { adminRestored });
+  fsInvalidateAdminCountCache('users', 'banned', 'admins');
   return { ok: true };
 }
 
@@ -1743,6 +1763,7 @@ function setLibraryShareApi(actor, data) {
   }
   fsSet('libraryShares/' + encodeURIComponent(id), { active: data.active, revokedAt: data.active ? null : new Date() });
   fsAddEvent(actor.uid, data.active ? 'admin-open-share' : 'admin-close-share', current.viewerUid || null, { ownerUid: current.ownerUid || '' });
+  fsInvalidateAdminCountCache('shares');
   return { ok: true };
 }
 

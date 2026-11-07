@@ -29,7 +29,8 @@ function harness({ authUser, pendingFields, pendingStatus = 200, profileStatus =
       getScriptCache() {
         return {
           get(key) { return cacheEntries.has(key) ? cacheEntries.get(key) : null; },
-          put(key, value, _ttl) { cacheEntries.set(key, value); }
+          put(key, value, _ttl) { cacheEntries.set(key, value); },
+          remove(key) { cacheEntries.delete(key); }
         };
       }
     },
@@ -466,6 +467,31 @@ test('invitation dashboard reads only nested shares under pendingInvites', () =>
   assert.equal(invites[0].email, 'friend@gmail.com');
   assert.equal(invites[0].id, 'owner-uid');
   assert.equal(invites[0].ownerUid, 'owner-uid');
+});
+
+test('admin aggregate counts are cached briefly and mutation invalidation forces a fresh read', () => {
+  const app = harness();
+  let requests = 0;
+  app.context.ScriptApp = { getOAuthToken: () => 'test-token' };
+  app.context.UrlFetchApp.fetchAll = batch => {
+    requests += batch.length;
+    return batch.map((_, index) => ({
+      getResponseCode: () => 200,
+      getContentText: () => JSON.stringify([{ result: { aggregateFields: { total: { integerValue: String(10 + index) } } } }])
+    }));
+  };
+  app.context.fsCount = collectionId => { requests += 1; return collectionId === 'users' ? 10 : 11; };
+  const specs = [
+    { key: 'users', collectionId: 'users' },
+    { key: 'admins', collectionId: 'adminUsers' }
+  ];
+  assert.deepEqual({ ...app.context.fsCountMany(specs, false) }, { users: 10, admins: 11 });
+  assert.equal(requests, 2);
+  assert.deepEqual({ ...app.context.fsCountMany(specs, false) }, { users: 10, admins: 11 });
+  assert.equal(requests, 2, 'second read should use cached aggregate counts');
+  app.context.fsInvalidateAdminCountCache('users');
+  assert.deepEqual({ ...app.context.fsCountMany(specs, false) }, { users: 10, admins: 11 });
+  assert.equal(requests, 3, 'invalidated counter should be fetched again');
 });
 
 test('admin dashboard summary returns aggregate counts and a superadmin marker without listing user records', () => {
