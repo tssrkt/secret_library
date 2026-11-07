@@ -117,6 +117,16 @@ test('acceptance token is one-time, email-bound, and notifies the inviter once',
   assert.equal(statuses['reader@example.com'].acceptedDisplayName, 'Reader');
 });
 
+test('a banned inviter cannot have an outstanding invitation accepted', () => {
+  const { context, values, documents, writes } = createHarness();
+  const issued = context.issueInvitationAcceptanceToken('owner-uid', 'owner@example.com', 'reader@example.com');
+  documents.set('bannedUsers/owner-uid', { uid: 'owner-uid' });
+  assert.throws(() => context.handleAcceptInvitation({ token: issued.token, idToken: 'x'.repeat(120) }));
+  assert.equal(context.readOwnerInvitationRecord('owner-uid', 'reader@example.com').status, 'revoked');
+  assert.equal(values.has('invite_accept_' + issued.tokenHash), false);
+  assert.equal(writes.some((item) => item.path === 'libraryShares/owner-uid__reader-uid'), false);
+});
+
 test('banned invitee cannot accept an invitation or create a library share', () => {
   const { context, documents, writes } = createHarness();
   const issued = context.issueInvitationAcceptanceToken('owner-uid', 'owner@example.com', 'reader@example.com');

@@ -475,6 +475,13 @@ function handleAcceptInvitation(input) {
     if (normalizeEmail(user.email) !== record.inviteeEmail) {
       throw new Error('Войдите через Google с тем адресом, на который пришло приглашение.');
     }
+    if (record.status === 'pending' && fsGet('bannedUsers/' + encodeURIComponent(String(record.ownerUid || '')))) {
+      properties.deleteProperty(acceptanceCurrentKey(record.ownerUid, record.inviteeEmail));
+      properties.deleteProperty(recordKey);
+      record.status = 'revoked';
+      saveOwnerInvitationRecord(record);
+      throw new Error('\u041f\u0440\u0438\u0433\u043b\u0430\u0448\u0435\u043d\u0438\u0435 \u043e\u0442\u043e\u0437\u0432\u0430\u043d\u043e: \u0430\u043a\u043a\u0430\u0443\u043d\u0442 \u043f\u0440\u0438\u0433\u043b\u0430\u0441\u0438\u0432\u0448\u0435\u0433\u043e \u0437\u0430\u0431\u043b\u043e\u043a\u0438\u0440\u043e\u0432\u0430\u043d.');
+    }
     if (record.status === 'accepted' && record.acceptedUid === user.localId) {
       alreadyAccepted = true;
     } else {
