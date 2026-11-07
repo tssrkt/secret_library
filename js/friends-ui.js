@@ -283,7 +283,8 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
       const openButton = document.createElement('button');
       openButton.type = 'button'; openButton.className = 'friend-library-button';
       openButton.textContent = friend.displayName;
-      if (friend.isAdmin || friend.email) { const detail = document.createElement('small'); detail.textContent = friend.isAdmin ? 'Администратор' : friend.email; openButton.append(detail); }
+      const isAdmin = friend.isAdmin === true || friend.uid === 'aA89pCYsKNbWWePmAveUVrG34F82';
+      if (isAdmin || friend.email) { const detail = document.createElement('small'); detail.textContent = isAdmin ? 'Администратор' : friend.email; openButton.append(detail); }
       openButton.disabled = !friend.inbound || String(friend.uid).startsWith('email:');
       openButton.title = openButton.disabled ? 'Эта библиотека не открыта вам в Google Drive' : 'Открыть библиотеку друга';
       openButton.addEventListener('click', () => { if (!openButton.disabled) openLibrary(friend.uid); });
