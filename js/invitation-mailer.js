@@ -77,3 +77,12 @@ export function getInvitationStatuses({ emails, idToken }) {
   if (!Array.isArray(emails) || !emails.length) return Promise.resolve({});
   return submitMailerPayload({ action: 'getInvitationStatuses', emails, idToken }, true);
 }
+
+export function acceptInvitation({ token, idToken }) {
+  try { validateMailerRequest(idToken); }
+  catch (error) { return Promise.reject(error); }
+  if (typeof token !== 'string' || !/^[a-f0-9-]{32,100}$/i.test(token)) {
+    return Promise.reject(new Error('Ссылка приглашения недействительна. Попросите отправить приглашение ещё раз.'));
+  }
+  return submitMailerPayload({ action: 'acceptInvitation', token, idToken }, true);
+}

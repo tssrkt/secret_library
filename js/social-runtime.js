@@ -1,9 +1,9 @@
 import { startFirebaseSession, endFirebaseSession } from './firebase-session.js';
-import { createSocialStore } from './social-store.js?v=20261106-root-discovery';
+import { createSocialStore } from './social-store.js?v=20261107-invitation-flow';
 import { createSharedLibraryStore } from './shared-library.js?v=20261106-root-discovery';
 import { discoverDriveFriends, grantRootFolderAccess } from './drive-sharing.js?v=20261106-root-discovery';
 import { findDriveCatalogFile, downloadDriveJsonFile, getCurrentDriveUser } from './drive.js';
-import { sendInvitationEmail, getInvitationStatuses as fetchInvitationStatuses } from './invitation-mailer.js';
+import { sendInvitationEmail, getInvitationStatuses as fetchInvitationStatuses, acceptInvitation as acceptInvitationToken } from './invitation-mailer.js?v=20261107-invitation-flow';
 import { createInvitationLedger } from './invitation-ledger.js';
 
 export function socialError(error) {
@@ -40,6 +40,7 @@ const invitationLedger = createInvitationLedger();
 const knownContactsSyncs = new Map();
 const FRIEND_CACHE_PREFIX = 'secret-library-social-friends-v1:';
 let driveFriends = [];
+let acceptedInviteFriends = [];
 let lastDriveFriendEmailSignature = '';
 let configuredRootFolderId = '';
 let connectionReadyPromise = Promise.resolve(false);
@@ -56,6 +57,24 @@ function readFriendCache(uid) {
       && typeof friend.displayName === 'string'
       && friend.inbound === true && typeof friend.outbound === 'boolean');
   } catch { return null; }
+}
+function combineFriendRows() {
+  const friends = [...driveFriends];
+  const byUid = new Map(friends.map((friend) => [friend.uid, friend]));
+  const byEmail = new Map(friends.map((friend) => [String(friend.email || '').trim().toLowerCase(), friend]).filter(([email]) => email));
+  for (const accepted of acceptedInviteFriends) {
+    const email = String(accepted.email || '').trim().toLowerCase();
+    const existing = byUid.get(accepted.uid) || byEmail.get(email);
+    if (existing) {
+      existing.outbound = true;
+      continue;
+    }
+    const friend = { uid: accepted.uid, email, displayName: accepted.displayName || email, inbound: false, outbound: true, isAdmin: false, catalogId: '' };
+    friends.push(friend);
+    byUid.set(friend.uid, friend);
+    if (email) byEmail.set(email, friend);
+  }
+  return friends;
 }
 function writeFriendCache(uid, friends) {
   if (!uid || !Array.isArray(friends)) return;
@@ -125,7 +144,7 @@ async function refreshDriveFriends(user, currentGeneration = generation, knownFr
       : (cachedFriends?.length ? cachedFriends : (knownFriends || []));
     const discoveryMessage = result.errors?.join(' ') || '';
     const usedFriendFallback = result.friends.length === 0 && driveFriends.length > 0;
-    emit({ friends: driveFriends, notifications: buildDriveNotifications(driveFriends), ownRootFolderId: result.rootFolderId || configuredRootFolderId, driveDiscoveryMessage: usedFriendFallback ? `Не удалось повторно обнаружить библиотеки в Google Drive; временно показан последний сохранённый список друзей. ${discoveryMessage}` : discoveryMessage, driveDiscoveryStatus: usedFriendFallback ? 'error' : (result.discoveryStatus || 'ready') });
+    emit({ friends: combineFriendRows(), notifications: buildDriveNotifications(driveFriends), ownRootFolderId: result.rootFolderId || configuredRootFolderId, driveDiscoveryMessage: usedFriendFallback ? `Не удалось повторно обнаружить библиотеки в Google Drive; временно показан последний сохранённый список друзей. ${discoveryMessage}` : discoveryMessage, driveDiscoveryStatus: usedFriendFallback ? 'error' : (result.discoveryStatus || 'ready') });
     watchCatalogs(driveFriends);
   } catch (error) {
     // Keep the last confirmed Drive-derived list when Drive is temporarily unavailable.
@@ -147,7 +166,7 @@ export const social = {
     }
   },
   subscribe(listener) { listeners.add(listener); listener(state); return () => listeners.delete(listener); },
-  async connect(token, rootFolderId = '') {
+  async connect(token, rootFolderId = '', invitationToken = '') {
     settleConnectionReady(false);
     connectionReadyPromise = new Promise((resolve) => { resolveConnectionReady = resolve; });
     if (rootFolderId) configuredRootFolderId = rootFolderId;
@@ -165,6 +184,7 @@ export const social = {
       driveReader?.dispose();
       driveReader = createSharedLibraryStore({ user: { uid: '' } });
       driveFriends = [];
+      acceptedInviteFriends = [];
       emit({ friends: [], libraries: [], status: 'loading', message: 'Ищем библиотеки друзей в Google Drive…' });
       void refreshDriveFriends(driveUser, current, []);
       const session = await startFirebaseSession(token);
@@ -187,6 +207,14 @@ export const social = {
         disableFirestoreAfterQuota(current);
         return;
       }
+      if (invitationToken) {
+        const idToken = await session.user.getIdToken();
+        await acceptInvitationToken({ token: invitationToken, idToken });
+        // Remove the one-time secret from the address bar only after registration and acceptance.
+        const cleanUrl = new URL(window.location.href);
+        cleanUrl.searchParams.delete('invite');
+        window.history.replaceState({}, '', cleanUrl);
+      }
       if (current !== generation) return;
       emit({ status: 'ready', message: '' });
       settleConnectionReady(true);
@@ -195,7 +223,8 @@ export const social = {
         // Firestore snapshots supply invitation-management data only.
         // Friend rows, library tabs and notifications are all derived from Google Drive;
         // notification read state is stored locally in this browser.
-        emit({ ...snapshot, friends: driveFriends, libraries: driveFriends
+        acceptedInviteFriends = Array.isArray(snapshot.acceptedInvitations) ? snapshot.acceptedInvitations : [];
+        emit({ ...snapshot, friends: combineFriendRows(), libraries: driveFriends
           .filter((friend) => friend.inbound && !String(friend.uid).startsWith('email:'))
           .map((friend) => ({ uid: friend.uid, displayName: friend.displayName, revision: 'drive', catalogId: friend.catalogId || '' })) });
       },
@@ -217,6 +246,7 @@ export const social = {
     shared?.dispose(); shared = null;
     driveReader?.dispose(); driveReader = null;
     driveFriends = [];
+    acceptedInviteFriends = [];
     configuredRootFolderId = '';
     emit({ status: 'idle', message: 'Войдите через Google.', friends: [], notifications: [], libraries: [], ownRootFolderId: null });
     void endFirebaseSession().catch(() => {});
@@ -263,7 +293,7 @@ export const social = {
     if (known?.inbound) known.outbound = true;
     // Do not add a recipient to Friends merely because a Drive permission was granted.
     // Only a completed registration should create the friend relationship.
-    emit({ friends: driveFriends, notifications: buildDriveNotifications(driveFriends), ownRootFolderId: rootFolderId });
+    emit({ friends: combineFriendRows(), notifications: buildDriveNotifications(driveFriends), ownRootFolderId: rootFolderId });
     watchCatalogs(driveFriends);
     void refreshDriveFriends(invitationUser, generation, driveFriends);
     return result;

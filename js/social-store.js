@@ -84,7 +84,7 @@ export function createSocialStore({ db, sdk, user }) {
       const existing = data(await tx.get(share));
       ensureCurrent();
       if (!existing?.active) tx.set(share, newShare(invite.ownerUid, uid, invite.ownerEmail || ''));
-      tx.update(invitationRef, { claimedUid: uid, claimedAt: serverTimestamp() });
+      tx.update(invitationRef, { claimedUid: uid, claimedAt: serverTimestamp(), claimedDisplayName: (user.displayName || 'Пользователь').slice(0, 160) });
       return true;
     });
   }
@@ -144,6 +144,8 @@ export function createSocialStore({ db, sdk, user }) {
     const emit = () => {
       if (!stopped && !disposed) listener({
         invitations: invitations.filter((item) => item.active === true && !item.claimedUid && item.inviteeEmail),
+        acceptedInvitations: invitations.filter((item) => item.active === true && item.claimedUid && item.inviteeEmail)
+          .map((item) => ({ uid: item.claimedUid, email: item.inviteeEmail, displayName: item.claimedDisplayName || item.inviteeEmail })),
       });
     };
     const incomingInvites = query(collectionGroup(db, 'shares'), where('inviteeEmail', '==', email));

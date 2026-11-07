@@ -418,7 +418,8 @@ async function afterAuthorization() {
   ui.setAuthorized(true);
   // The optional checkLibraryAccess callable is not deployed in the free Firebase project.
   // Admin display labels are resolved from the registered administrator UID in social-store.
-  void social.connect(getAccessToken(), activeRootFolderId);
+  const invitationToken = new URLSearchParams(window.location.search).get('invite') || '';
+  void social.connect(getAccessToken(), activeRootFolderId, invitationToken);
   void ui.setUserAvatar(user);
   ui.clearError();
   if (sameOwner && currentIndex) {

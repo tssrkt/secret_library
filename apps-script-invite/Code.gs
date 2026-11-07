@@ -19,6 +19,7 @@ function doPost(e) {
   let stage = 'parse-request';
   let reservation = null;
   let emailSent = false;
+  let invitationTokenRecord = null;
   let adminRequest = false;
   try {
     const raw = e && e.parameter && e.parameter.payload;
@@ -29,6 +30,10 @@ function doPost(e) {
     if (input.action === 'getInvitationStatuses') {
       stage = 'invitation-status-request';
       return responsePage(requestId, true, '', handleInvitationStatuses(input));
+    }
+    if (input.action === 'acceptInvitation') {
+      stage = 'accept-invitation-request';
+      return responsePage(requestId, true, '', handleAcceptInvitation(input));
     }
     if (input.action) {
       adminRequest = true;
@@ -77,10 +82,12 @@ function doPost(e) {
 
     stage = 'send-email';
     const inviterName = String(user.displayName || 'Пользователь').trim().slice(0, 160) || 'Пользователь';
+    invitationTokenRecord = issueInvitationAcceptanceToken(user.localId, normalizeEmail(user.email), email);
+    const acceptanceUrl = SITE_ORIGIN + '/secret_library/index.html?invite=' + encodeURIComponent(invitationTokenRecord.token);
     MailApp.sendEmail({
       to: email,
       subject: 'Приглашение в «Тайную Библиотеку»',
-      body: renderInvitationEmailTemplate(inviterName) + '\n\nЕсли вы уже участвуете в Тайной Библиотеке, просто откройте её — приглашение появится автоматически.',
+      body: renderInvitationEmailTemplate(inviterName) + '\n\nЧтобы принять приглашение, войдите через Google по этой ссылке:\n' + acceptanceUrl + '\n\nЕсли вы уже участвуете в Тайной Библиотеке, просто откройте её — приглашение появится автоматически.',
       name: 'Тайная Библиотека'
     });
     emailSent = true;
@@ -90,6 +97,9 @@ function doPost(e) {
     reservation = null;
     return responsePage(requestId, true, invitationSuccessMessage(user.localId, invitationCount));
   } catch (error) {
+    if (invitationTokenRecord && !emailSent) {
+      try { revokeInvitationAcceptanceToken(invitationTokenRecord); } catch (_) {}
+    }
     if (reservation && reservation.status === 'reserved' && !emailSent) {
       try { finishSend(reservation.uid, reservation.email, false, reservation.reservationId); } catch (_) {}
     }
@@ -272,6 +282,102 @@ function decodePendingInvitationResponse(status, text, email, uid) {
     emailSentAt: value('emailSentAt', 'timestampValue'),
     createdAt: value('createdAt', 'timestampValue')
   };
+}
+
+function acceptanceDigest(value) {
+  const digest = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, value, Utilities.Charset.UTF_8);
+  return digest.map(function (byte) {
+    return ('0' + ((byte + 256) % 256).toString(16)).slice(-2);
+  }).join('');
+}
+
+function acceptanceCurrentKey(uid, email) {
+  return 'invite_current_' + acceptanceDigest(uid + '\n' + normalizeEmail(email));
+}
+
+function issueInvitationAcceptanceToken(ownerUid, ownerEmail, inviteeEmail) {
+  const properties = PropertiesService.getScriptProperties();
+  const currentKey = acceptanceCurrentKey(ownerUid, inviteeEmail);
+  const previousHash = properties.getProperty(currentKey);
+  if (previousHash) properties.deleteProperty('invite_accept_' + previousHash);
+
+  const token = Utilities.getUuid() + Utilities.getUuid().replace(/-/g, '');
+  const tokenHash = acceptanceDigest(token);
+  const now = Date.now();
+  const record = {
+    ownerUid: ownerUid,
+    ownerEmail: normalizeEmail(ownerEmail),
+    inviteeEmail: normalizeEmail(inviteeEmail),
+    createdAt: now,
+    expiresAt: now + 7 * 24 * 60 * 60 * 1000,
+    status: 'pending'
+  };
+  properties.setProperty('invite_accept_' + tokenHash, JSON.stringify(record));
+  properties.setProperty(currentKey, tokenHash);
+  return { token: token, tokenHash: tokenHash, currentKey: currentKey };
+}
+
+function revokeInvitationAcceptanceToken(tokenRecord) {
+  if (!tokenRecord || !tokenRecord.tokenHash) return;
+  const properties = PropertiesService.getScriptProperties();
+  if (properties.getProperty(tokenRecord.currentKey) === tokenRecord.tokenHash) {
+    properties.deleteProperty(tokenRecord.currentKey);
+  }
+  properties.deleteProperty('invite_accept_' + tokenRecord.tokenHash);
+}
+
+function handleAcceptInvitation(input) {
+  const token = String(input.token || '');
+  const idToken = String(input.idToken || '');
+  if (!/^[a-f0-9-]{32,100}$/i.test(token) || idToken.length < 100 || idToken.length > 5000) {
+    throw new Error('Ссылка приглашения недействительна. Попросите отправить приглашение ещё раз.');
+  }
+  const user = verifyFirebaseUser(idToken);
+  const tokenHash = acceptanceDigest(token);
+  const properties = PropertiesService.getScriptProperties();
+  const recordKey = 'invite_accept_' + tokenHash;
+  const lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+  let record;
+  let alreadyAccepted = false;
+  try {
+    record = JSON.parse(properties.getProperty(recordKey) || 'null');
+    if (!record) throw new Error('Приглашение не найдено или уже недействительно.');
+    if (normalizeEmail(user.email) !== record.inviteeEmail) {
+      throw new Error('Войдите через Google с тем адресом, на который пришло приглашение.');
+    }
+    if (record.status === 'accepted' && record.acceptedUid === user.localId) {
+      alreadyAccepted = true;
+    } else {
+      const currentKey = acceptanceCurrentKey(record.ownerUid, record.inviteeEmail);
+      if (properties.getProperty(currentKey) !== tokenHash || record.status !== 'pending') {
+        throw new Error('Приглашение уже использовано или заменено новым.');
+      }
+      if (Date.now() > Number(record.expiresAt || 0)) {
+        properties.deleteProperty(currentKey);
+        properties.deleteProperty(recordKey);
+        throw new Error('Срок действия приглашения истёк. Попросите отправить его ещё раз.');
+      }
+      record.status = 'accepted';
+      record.acceptedUid = user.localId;
+      record.acceptedAt = Date.now();
+      properties.setProperty(recordKey, JSON.stringify(record));
+      properties.deleteProperty(currentKey);
+    }
+  } finally {
+    lock.releaseLock();
+  }
+
+  if (!record.notifiedAt) {
+    MailApp.sendEmail({
+      to: record.ownerEmail,
+      subject: 'Приглашение принято — Тайная Библиотека',
+      body: 'Пользователь ' + normalizeEmail(user.email) + ' зарегистрировался в Тайной Библиотеке по вашему приглашению.'
+    });
+    record.notifiedAt = Date.now();
+    properties.setProperty(recordKey, JSON.stringify(record));
+  }
+  return { accepted: true, alreadyAccepted: alreadyAccepted };
 }
 
 function handleInvitationStatuses(input) {
