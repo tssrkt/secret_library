@@ -151,6 +151,18 @@ test('invitation status checks use Script Properties and skip the owner email', 
   assert.doesNotMatch(result.content, /owner@gmail.com/);
 });
 
+test('invitation status metadata includes active administrator UIDs and excludes inactive admins', () => {
+  const app = harness();
+  app.context.fsList = path => path === 'adminUsers' ? [
+    { id: 'admin-one', uid: 'admin-one', active: true },
+    { id: 'admin-two', uid: 'admin-two', active: false }
+  ] : [];
+  const result = app.invoke({ action: 'getInvitationStatuses', emails: [] });
+  assert.match(result.content, /"adminUids":\["admin-one"\]/);
+  assert.match(result.content, /"limit":20/);
+  assert.match(result.content, /"used":0/);
+});
+
 test('verifyFirebaseUser caches a successful lookup for the same token', () => {
   const app = harness();
   app.context.verifyFirebaseUser(app.payload.idToken);

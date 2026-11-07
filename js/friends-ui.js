@@ -277,7 +277,8 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
       const openButton = document.createElement('button');
       openButton.type = 'button'; openButton.className = 'friend-library-button';
       openButton.textContent = friend.displayName;
-      const isAdmin = friend.isAdmin === true || friend.uid === 'aA89pCYsKNbWWePmAveUVrG34F82';
+      const knownAdminUids = Array.isArray(invitationQuota?.adminUids) ? invitationQuota.adminUids : [];
+      const isAdmin = friend.isAdmin === true || friend.uid === 'aA89pCYsKNbWWePmAveUVrG34F82' || knownAdminUids.includes(friend.uid);
       if (isAdmin || friend.email) { const detail = document.createElement('small'); detail.textContent = isAdmin ? 'Администратор' : friend.email; openButton.append(detail); }
       openButton.disabled = !friend.inbound || String(friend.uid).startsWith('email:');
       openButton.title = openButton.disabled ? 'Эта библиотека не открыта вам в Google Drive' : 'Открыть библиотеку друга';

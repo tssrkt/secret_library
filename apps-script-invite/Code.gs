@@ -662,9 +662,32 @@ function handleInvitationStatuses(input) {
   statuses.__quota = {
     isAdmin: Boolean(admin && admin.active === true),
     limit: getInvitationLimit(),
-    used: countActiveInvitations(readOwnerInvitationRegistry(user.localId))
+    used: countActiveInvitations(readOwnerInvitationRegistry(user.localId)),
+    adminUids: getActiveAdminUids()
   };
   return statuses;
+}
+
+function getActiveAdminUids() {
+  const cache = CacheService.getScriptCache();
+  const cacheKey = 'active-admin-uids-v1';
+  try {
+    const cached = cache.get(cacheKey);
+    if (cached) return JSON.parse(cached);
+  } catch (_) {}
+  let uids = [];
+  try {
+    uids = fsList('adminUsers')
+      .filter(item => item && item.active === true)
+      .map(item => String(item.uid || item.id || ''))
+      .filter(isValidUid);
+  } catch (error) {
+    if (typeof console !== 'undefined' && typeof console.warn === 'function') {
+      console.warn('Could not load active administrator IDs:', error && error.message ? error.message : error);
+    }
+  }
+  try { cache.put(cacheKey, JSON.stringify(uids), 60); } catch (_) {}
+  return uids;
 }
 
 function reservationKey(uid, email) {
