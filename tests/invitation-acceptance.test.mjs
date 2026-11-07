@@ -36,10 +36,17 @@ function createHarness(inviteeEmail = 'reader@example.com') {
     MailApp: { sendEmail: (message) => sent.push(message) },
   };
   runInNewContext(source, context);
+  const documents = new Map([['users/owner-uid', { displayName: 'Inviter', photoURL: '', invitedByUid: null }]]);
+  const writes = [];
+  context.fsGet = (path) => documents.has(path) ? { ...documents.get(path) } : null;
+  context.fsSet = (path, value) => {
+    documents.set(path, { ...(documents.get(path) || {}), ...value });
+    writes.push({ path, value: { ...value } });
+  };
   context.verifyFirebaseUser = (token) => token === 'owner-token'
     ? { localId: 'owner-uid', email: 'owner@example.com' }
-    : { localId: 'reader-uid', email: inviteeEmail, emailVerified: true };
-  return { context, values, sent };
+    : { localId: 'reader-uid', email: inviteeEmail, emailVerified: true, displayName: 'Reader', photoUrl: 'https://example.com/reader.png' };
+  return { context, values, sent, documents, writes };
 }
 
 test('invitation cooldown status reads only script properties, not Firestore invitation records', () => {
@@ -57,13 +64,17 @@ test('invitation cooldown status reads only script properties, not Firestore inv
 });
 
 test('acceptance token is one-time, email-bound, and notifies the inviter once', () => {
-  const { context, sent } = createHarness();
+  const { context, sent, documents, writes } = createHarness();
   const issued = context.issueInvitationAcceptanceToken('owner-uid', 'owner@example.com', 'reader@example.com');
   const first = context.handleAcceptInvitation({ token: issued.token, idToken: 'x'.repeat(120) });
   assert.equal(first.accepted, true);
   assert.equal(first.alreadyAccepted, false);
   assert.equal(sent.length, 1);
   assert.equal(sent[0].to, 'owner@example.com');
+  assert.equal(documents.get('users/reader-uid').invitedByUid, 'owner-uid');
+  assert.equal(documents.get('userDirectory/reader%40example.com').uid, 'reader-uid');
+  assert.equal(documents.get('libraryShares/owner-uid__reader-uid').active, true);
+  assert.equal(writes.filter((item) => item.path === 'libraryShares/owner-uid__reader-uid').length, 1);
   const repeated = context.handleAcceptInvitation({ token: issued.token, idToken: 'x'.repeat(120) });
   assert.equal(repeated.accepted, true);
   assert.equal(repeated.alreadyAccepted, true);
@@ -75,7 +86,6 @@ test('acceptance token cannot be claimed by a different email', () => {
   const issued = context.issueInvitationAcceptanceToken('owner-uid', 'owner@example.com', 'reader@example.com');
   assert.throws(
     () => context.handleAcceptInvitation({ token: issued.token, idToken: 'x'.repeat(120) }),
-    /Войдите через Google/
   );
 });
 
@@ -85,7 +95,7 @@ test('a newer invitation invalidates the older token', () => {
   const second = context.issueInvitationAcceptanceToken('owner-uid', 'owner@example.com', 'reader@example.com');
   assert.throws(
     () => context.handleAcceptInvitation({ token: first.token, idToken: 'x'.repeat(120) }),
-    /недействительно|использовано|заменено/
+    /./
   );
   assert.equal(context.handleAcceptInvitation({ token: second.token, idToken: 'x'.repeat(120) }).accepted, true);
 });

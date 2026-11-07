@@ -196,6 +196,8 @@ function verifyFirebaseUser(idToken) {
   const cachedUser = {
     localId: user.localId,
     email: user.email || '',
+    displayName: user.displayName || '',
+    photoUrl: user.photoUrl || '',
     emailVerified: user.emailVerified === true,
     disabled: user.disabled === true,
     providerUserInfo: [{ providerId: 'google.com' }]
@@ -310,7 +312,8 @@ function issueInvitationAcceptanceToken(ownerUid, ownerEmail, inviteeEmail) {
     inviteeEmail: normalizeEmail(inviteeEmail),
     createdAt: now,
     expiresAt: now + 7 * 24 * 60 * 60 * 1000,
-    status: 'pending'
+    status: 'pending',
+    tokenHash: tokenHash
   };
   properties.setProperty('invite_accept_' + tokenHash, JSON.stringify(record));
   properties.setProperty(currentKey, tokenHash);
@@ -324,6 +327,49 @@ function revokeInvitationAcceptanceToken(tokenRecord) {
     properties.deleteProperty(tokenRecord.currentKey);
   }
   properties.deleteProperty('invite_accept_' + tokenRecord.tokenHash);
+}
+
+function provisionAcceptedInvitee(record, user) {
+  const uid = String(user.localId || '');
+  const email = normalizeEmail(user.email);
+  const ownerUid = String(record.ownerUid || '');
+  if (!isValidUid(uid) || !isValidUid(ownerUid) || !isValidEmail(email) || email !== normalizeEmail(record.inviteeEmail)) {
+    throw new Error('Invalid accepted invitation data.');
+  }
+  if (!fsGet('users/' + encodeURIComponent(ownerUid))) {
+    throw new Error('Inviter profile is not registered.');
+  }
+
+  const profilePath = 'users/' + encodeURIComponent(uid);
+  const directoryPath = 'userDirectory/' + encodeURIComponent(email);
+  const existingProfile = fsGet(profilePath);
+  const directory = fsGet(directoryPath);
+  if (directory && directory.uid !== uid) throw new Error('This Google email is linked to another participant.');
+
+  if (!existingProfile) {
+    fsSet(profilePath, {
+      displayName: String(user.displayName || email).slice(0, 160),
+      photoURL: String(user.photoUrl || '').slice(0, 2048),
+      createdAt: new Date(),
+      invitedByUid: ownerUid
+    });
+  }
+  if (!directory) fsSet(directoryPath, { uid: uid });
+
+  const sharePath = 'libraryShares/' + encodeURIComponent(ownerUid + '__' + uid);
+  const share = fsGet(sharePath);
+  if (!share || share.active !== true) {
+    fsSet(sharePath, {
+      ownerUid: ownerUid,
+      viewerUid: uid,
+      ownerEmail: normalizeEmail(record.ownerEmail),
+      active: true,
+      sharedAt: new Date(),
+      revokedAt: null
+    });
+  }
+  record.provisionedAt = Number(record.provisionedAt) || Date.now();
+  PropertiesService.getScriptProperties().setProperty('invite_accept_' + record.tokenHash, JSON.stringify(record));
 }
 
 function handleAcceptInvitation(input) {
@@ -367,6 +413,10 @@ function handleAcceptInvitation(input) {
   } finally {
     lock.releaseLock();
   }
+
+  // Idempotently provision the accepted account server-side. This replaces the
+  // client-side Firestore pendingInvites registration gate without trusting the browser.
+  provisionAcceptedInvitee(record, user);
 
   if (!record.notifiedAt) {
     MailApp.sendEmail({

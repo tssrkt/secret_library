@@ -1,5 +1,5 @@
 import { startFirebaseSession, endFirebaseSession } from './firebase-session.js';
-import { createSocialStore } from './social-store.js?v=20261107-invitation-flow3';
+import { createSocialStore } from './social-store.js?v=20261107-server-provisioning';
 import { createSharedLibraryStore } from './shared-library.js?v=20261106-root-discovery';
 import { discoverDriveFriends, grantRootFolderAccess } from './drive-sharing.js?v=20261106-root-discovery';
 import { findDriveCatalogFile, downloadDriveJsonFile, getCurrentDriveUser } from './drive.js';
@@ -206,24 +206,25 @@ export const social = {
         ledgerInvitationRowsCache = [];
         console.warn('Could not load the Drive invitation ledger:', error);
       }
-      // Registration supports unrelated social features only; Drive discovery and
-      // friend-library loading have already started independently above.
+      // Accept the server-verified invitation before client registration. Apps Script
+      // creates the profile, email directory entry and owner->reader relationship using
+      // the verified token; the browser cannot forge an invitation to bypass the gate.
+      if (invitationToken) {
+        const idToken = await session.user.getIdToken();
+        await acceptInvitationToken({ token: invitationToken, idToken });
+        // Remove the one-time secret from the address bar only after server acceptance.
+        const cleanUrl = new URL(window.location.href);
+        cleanUrl.searchParams.delete('invite');
+        window.history.replaceState({}, '', cleanUrl);
+      }
+      // Registration now updates the server-provisioned profile instead of relying on
+      // Firestore pendingInvites as the invitation authority.
       try {
         await store.register();
       } catch (error) {
         if (!isQuotaExceeded(error)) throw error;
-        // Firestore quota exhaustion must not disable Drive-only library features
-        // or leave a misleading reconnect button on the settings page.
         disableFirestoreAfterQuota(current);
         return;
-      }
-      if (invitationToken) {
-        const idToken = await session.user.getIdToken();
-        await acceptInvitationToken({ token: invitationToken, idToken });
-        // Remove the one-time secret from the address bar only after registration and acceptance.
-        const cleanUrl = new URL(window.location.href);
-        cleanUrl.searchParams.delete('invite');
-        window.history.replaceState({}, '', cleanUrl);
       }
       if (current !== generation) return;
       emit({ status: 'ready', message: '' });
