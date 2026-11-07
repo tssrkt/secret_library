@@ -39,10 +39,10 @@ function submitMailerPayload(payload, returnData = false) {
       else resolve(result);
     };
     const onMessage = (event) => {
-      if (event.source !== frame.contentWindow) return;
-      // Apps Script HTMLService commonly redirects iframe responses to a unique
-      // <id>-script.googleusercontent.com hostname. Keep the source-window and
-      // request-ID checks above/below, but accept that documented response origin.
+      // Apps Script HTMLService runs the response in a Google-controlled nested
+      // iframe, so event.source is not necessarily the outer form-target iframe.
+      // The allowlisted Google origin plus this one-time, unguessable requestId
+      // binds the response to this request without rejecting the legitimate reply.
       if (!/^https:\/\/(?:script\.google\.com|script\.googleusercontent\.com|[a-z0-9-]+-script\.googleusercontent\.com)$/.test(event.origin)) return;
       const data = event.data;
       if (!data || data.type !== RESULT_TYPE || data.requestId !== requestId) return;
