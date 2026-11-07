@@ -1,5 +1,5 @@
 import { createPaginator, paginateItems } from './pagination.js';
-import { socialError } from './social-runtime.js?v=20261107-invite-registry-discovery';
+import { socialError } from './social-runtime.js?v=20261107-invite-status-single-place';
 
 const HOUR_MS = 60 * 60 * 1000;
 
@@ -107,7 +107,7 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
         const sentAt = currentStatus ? Number(currentStatus.lastSentAt) || 0 : timestampMillis(invite.emailSentAt || invite.createdAt);
         if (sentAt && Date.now() < sentAt + HOUR_MS) return;
         if (typeof social.resendInvitation !== 'function') {
-          invitationsMessage.textContent = 'Повторная отправка пока недоступна. Обновите страницу и попробуйте снова.';
+          message.textContent = 'Повторная отправка пока недоступна. Обновите страницу и попробуйте снова.';
           return;
         }
         busy.add(email);
@@ -119,7 +119,7 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
           if (invitationWasSent(result)) await refreshInvitationStatuses();
           else message.textContent = result;
         } catch (error) {
-          invitationsMessage.textContent = socialError(error);
+          message.textContent = socialError(error);
         } finally {
           busy.delete(email);
           updateCooldowns();
@@ -160,10 +160,9 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
       invitationStatuses = next;
       renderInvitations();
     } catch (error) {
-      if (!closed && revision === statusRefreshRevision) {
-        invitationsMessage.textContent = socialError(error);
-        renderInvitations();
-      }
+      // Status refresh is secondary to sending. Keep service errors in the single
+      // status line under the email field, never in the sent-invitations section.
+      if (!closed && revision === statusRefreshRevision) renderInvitations();
     }
   }
   const render = () => {
