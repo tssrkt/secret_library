@@ -258,7 +258,9 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
       if (pendingEmails.size) {
         summary += `, и отправлено еще ${pendingEmails.size.toLocaleString('ru-RU')} ${plural(pendingEmails.size, 'приглашение', 'приглашения', 'приглашений')}`;
       }
-      if (invitationQuota) {
+      // Invitation limits apply only to regular participants. Admins have no
+      // invitation cap, even though the server also returns the global limit value.
+      if (invitationQuota && invitationQuota.isAdmin !== true) {
         const limit = Number(invitationQuota.limit);
         const used = Number(invitationQuota.used);
         if (Number.isFinite(limit) && Number.isFinite(used)) {
