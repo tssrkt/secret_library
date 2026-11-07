@@ -161,8 +161,10 @@ function watchCatalogs(friends) {
     .map((friend) => ({ uid: friend.uid, displayName: friend.displayName, revision: 'drive', catalogId: friend.catalogId || '' }));
   emit({ libraries });
 }
-async function refreshDriveFriends(user, currentGeneration = generation, knownFriends = driveFriends) {
-  emit({ driveDiscoveryStatus: 'loading', driveDiscoveryMessage: '' });
+async function refreshDriveFriends(user, currentGeneration = generation, knownFriends = driveFriends, announceLoading = false) {
+  // Only the initial discovery drives the page-level loading message. Background
+  // refreshes after publishing/sharing must not make the finished UI flash again.
+  if (announceLoading) emit({ driveDiscoveryStatus: 'loading', driveDiscoveryMessage: '' });
   try {
     // Folder discovery, catalog reads and library availability are Google Drive-only.
     // Friend tabs are discovered from Drive permissions and Drive catalogs; a prior
@@ -223,7 +225,7 @@ export const social = {
       driveFriends = [];
       acceptedInviteFriends = [];
       emit({ friends: [], libraries: [], status: 'loading', message: 'Ищем библиотеки друзей в Google Drive…' });
-      void refreshDriveFriends(driveUser, current, []);
+      void refreshDriveFriends(driveUser, current, [], true);
       const session = await startFirebaseSession(token);
       if (current !== generation) return;
       if (!session) { settleConnectionReady(false); return; }
