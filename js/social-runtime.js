@@ -241,9 +241,9 @@ export const social = {
         acceptedInviteFriends = [];
         console.warn('Could not load the Drive invitation ledger:', error);
       }
-      // Apps Script is the source of truth, so reconstruct the invitation list and accepted
+      // Apps Script is the source of truth. Always request the full owner registry, not only emails found in the secondary Drive ledger, so invitations missing from that cache are restored. Reconstruct the invitation list and accepted
       // friends even when the secondary Drive appData ledger is unavailable.
-      try { await syncAcceptedInvitationStatuses(knownInvitationEmails, current); }
+      try { await syncAcceptedInvitationStatuses([], current); }
       catch (error) { console.warn('Could not refresh invitation acceptance statuses:', error); }
       // Accept the server-verified invitation before client registration. Apps Script
       // creates the profile, email directory entry and owner->reader relationship using
