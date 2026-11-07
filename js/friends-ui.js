@@ -48,7 +48,7 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
       supportLink.target = '_blank';
       supportLink.rel = 'noopener noreferrer';
       supportLink.textContent = 'техподдержку';
-      const prefix = 'Вы не можете отправлять приглашение одному и тому же человеку чаще чем раз в час. Если ваш друг не получил приглашение, пусть проверит папку «Спам». Если и там нет письма обратитесь в ';
+      const prefix = 'Вы не можете отправлять приглашение одному и тому же человеку чаще чем раз в час. Если ваш друг не получил приглашение, пусть проверит папку «Спам». Если и там нет письма, обратитесь в ';
       message.replaceChildren(document.createTextNode(prefix), supportLink);
       return;
     }
@@ -296,7 +296,7 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
       const email = form.elements.email.value;
       const result = await social.shareWithEmail(email);
       if (!closed) {
-        message.textContent = result;
+        setInvitationMessage(result);
         if (invitationWasSent(result)) {
           const normalizedEmail = String(email || '').trim().toLowerCase();
           if (normalizedEmail && !snapshot.invitations.some((invite) => String(invite.inviteeEmail || '').trim().toLowerCase() === normalizedEmail)) {
