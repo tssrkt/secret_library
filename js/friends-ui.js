@@ -1,5 +1,5 @@
 import { createPaginator, paginateItems } from './pagination.js';
-import { socialError } from './social-runtime.js?v=20261106-clean-friend-status';
+import { socialError } from './social-runtime.js?v=20261107-invitation-flow';
 
 const HOUR_MS = 60 * 60 * 1000;
 
@@ -20,6 +20,10 @@ function formatDuration(milliseconds) {
 function formatDate(value) {
   const time = timestampMillis(value);
   return time ? new Date(time).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—';
+}
+
+function invitationWasSent(result) {
+  return typeof result === 'string' && result.startsWith('Приглашение отправлено');
 }
 
 export function mountFriends(page, social, retry, openLibrary = (uid) => { window.location.href = `?library=${encodeURIComponent(uid)}`; }) {
@@ -110,7 +114,7 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
         try {
           const result = await social.resendInvitation(email);
           invitationsMessage.textContent = '';
-          if (result === 'Приглашение отправлено.') await refreshInvitationStatuses();
+          if (invitationWasSent(result)) await refreshInvitationStatuses();
           else message.textContent = result;
         } catch (error) {
           invitationsMessage.textContent = socialError(error);
@@ -244,7 +248,7 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
       const result = await social.shareWithEmail(email);
       if (!closed) {
         message.textContent = result;
-        if (result === 'Приглашение отправлено.') {
+        if (invitationWasSent(result)) {
           const normalizedEmail = String(email || '').trim().toLowerCase();
           if (normalizedEmail && !snapshot.invitations.some((invite) => String(invite.inviteeEmail || '').trim().toLowerCase() === normalizedEmail)) {
             optimisticInvitations.set(normalizedEmail, {

@@ -4,6 +4,7 @@ import { createSharedLibraryStore } from './shared-library.js?v=20261106-root-di
 import { discoverDriveFriends, grantRootFolderAccess } from './drive-sharing.js?v=20261106-root-discovery';
 import { findDriveCatalogFile, downloadDriveJsonFile, getCurrentDriveUser } from './drive.js';
 import { sendInvitationEmail, getInvitationStatuses as fetchInvitationStatuses } from './invitation-mailer.js';
+import { createInvitationLedger } from './invitation-ledger.js';
 
 export function socialError(error) {
   if (error?.code?.includes('permission-denied')) return 'Нет доступа к социальным данным. Проверьте настройки Firebase и повторите попытку.';
@@ -35,6 +36,7 @@ let generation = 0;
 let shared;
 let driveReader;
 let invitationUser = null;
+const invitationLedger = createInvitationLedger();
 const knownContactsSyncs = new Map();
 const FRIEND_CACHE_PREFIX = 'secret-library-social-friends-v1:';
 let driveFriends = [];
@@ -220,10 +222,14 @@ export const social = {
     void endFirebaseSession().catch(() => {});
   },
   async shareWithEmail(email) {
+    if (!store || !invitationUser || state.status !== 'ready') throw new Error(state.message || 'Сначала подключите библиотеку.');
+    const normalizedEmail = String(email || '').trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) throw new Error('Укажите корректный адрес электронной почты.');
+    if (normalizedEmail === String(invitationUser.email || '').trim().toLowerCase()) throw new Error('Нельзя пригласить собственный адрес.');
     let rootFolderId = configuredRootFolderId || state.ownRootFolderId || '';
     // The selected root is already represented by the published Drive catalog.
     // Recover it from Drive if the in-memory setting has not caught up yet.
-    if (!rootFolderId && invitationUser?.uid) {
+    if (!rootFolderId) {
       const catalogFile = await findDriveCatalogFile(invitationUser.uid);
       if (catalogFile) {
         const catalog = await downloadDriveJsonFile(catalogFile.id);
@@ -234,18 +240,33 @@ export const social = {
       }
     }
     if (!rootFolderId) throw new Error('Не удалось определить корневую папку из опубликованного каталога Google Drive. Обновите библиотеку и повторите попытку.');
-    const access = await grantRootFolderAccess(rootFolderId, email);
-    const normalizedEmail = String(email || '').trim().toLowerCase();
+
+    // Create the authenticated invitation record first: the mail endpoint checks it
+    // before sending, and it is the current registration gate until migration is complete.
+    await store.shareWithEmail(normalizedEmail);
+    await grantRootFolderAccess(rootFolderId, normalizedEmail);
+    try {
+      await invitationLedger.upsert(invitationUser.uid, {
+        inviteeEmail: normalizedEmail,
+        status: 'pending',
+        createdAt: Date.now(),
+      });
+    } catch (error) {
+      // Drive appData is the migration ledger, not the registration authority yet.
+      // Keep the existing invitation flow working if this secondary write fails.
+      console.warn('Could not save the Drive invitation ledger:', error);
+    }
+
+    const idToken = await invitationUser.getIdToken();
+    const result = await sendInvitationEmail({ email: normalizedEmail, idToken });
     const known = driveFriends.find((friend) => String(friend.email || '').trim().toLowerCase() === normalizedEmail);
     if (known?.inbound) known.outbound = true;
     // Do not add a recipient to Friends merely because a Drive permission was granted.
-    // The invitation remains in Sent invitations until registration is confirmed.
+    // Only a completed registration should create the friend relationship.
     emit({ friends: driveFriends, notifications: buildDriveNotifications(driveFriends), ownRootFolderId: rootFolderId });
     watchCatalogs(driveFriends);
-    if (invitationUser) void refreshDriveFriends(invitationUser, generation, driveFriends);
-    return access.created
-      ? `Папка Google Drive предоставлена пользователю ${normalizedEmail}. Она появится у него на главной после обновления страницы.`
-      : `У пользователя ${normalizedEmail} уже есть доступ к корневой папке Google Drive.`;
+    void refreshDriveFriends(invitationUser, generation, driveFriends);
+    return result;
   },
   async resendInvitation(email) {
     if (!store || !invitationUser || state.status !== 'ready') throw new Error(state.message);
