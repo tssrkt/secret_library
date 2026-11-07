@@ -104,18 +104,12 @@ export function createAuthAttemptGuard() {
 
 export async function recoverAuthSession({
   restore = restoreAuthSession,
-  previous = hadPreviousSignIn,
-  request = requestAccessToken,
 } = {}) {
+  // Never start an OAuth popup/silent request during page initialization.
+  // A startup request can remain pending in Google Identity Services and then
+  // be accidentally reused by the user's explicit sign-in click.
   const restored = restore();
-  if (restored) return { mode: 'session', ...restored };
-  if (!previous()) return null;
-  try {
-    await request({ prompt: '' });
-    return { mode: 'silent', user: null };
-  } catch {
-    return null;
-  }
+  return restored ? { mode: 'session', ...restored } : null;
 }
 
 export class AuthError extends Error {

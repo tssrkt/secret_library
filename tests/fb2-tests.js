@@ -65,29 +65,30 @@ await test('valid Google session restores token and account after reload', async
   const restored = restoreAuthSession({ session, now: 10_000 });
   equal([getAccessToken(), restored.user.displayName, restored.user.emailAddress], ['valid-token', 'Ada', 'ada@example.com'], 'restored session');
   let requests = 0;
-  const recovery = await recoverAuthSession({ restore: () => restored, previous: () => true, request: async () => { requests += 1; } });
+  const recovery = await recoverAuthSession({ restore: () => restored, request: async () => { requests += 1; } });
   equal([recovery.mode, requests], ['session', 0], 'valid session skips GIS request');
 });
 
-await test('expired token is discarded and triggers silent GIS recovery', async () => {
+await test('expired token is discarded without starting a background GIS request', async () => {
   const session = memoryStorage({
     [AUTH_SESSION_KEY]: JSON.stringify({ accessToken: 'expired', expiresAt: 9_000, user: { displayName: 'Old' } }),
   });
   equal(restoreAuthSession({ session, now: 10_000 }), null, 'expired session rejected');
   equal(getAccessToken(), null, 'expired token not installed');
-  let prompt = null;
+  let requests = 0;
   const recovered = await recoverAuthSession({
     restore: () => null, previous: () => true,
-    request: async (options) => { prompt = options.prompt; },
+    request: async () => { requests += 1; },
   });
-  equal([recovered.mode, prompt], ['silent', ''], 'silent request uses empty prompt');
+  equal([recovered, requests], [null, 0], 'startup leaves manual sign-in available');
 });
 
-await test('failed silent recovery returns unauthenticated state without throwing', async () => {
+await test('missing session returns unauthenticated state without a background request', async () => {
+  let requests = 0;
   const recovered = await recoverAuthSession({
-    restore: () => null, previous: () => true, request: async () => { throw new Error('silent denied'); },
+    restore: () => null, previous: () => true, request: async () => { requests += 1; },
   });
-  equal(recovered, null, 'normal sign-in screen fallback');
+  equal([recovered, requests], [null, 0], 'normal sign-in screen without silent GIS request');
 });
 
 await test('session persists account data and manual logout clears all state', () => {
