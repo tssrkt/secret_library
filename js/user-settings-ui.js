@@ -36,62 +36,81 @@ export function createUserSettingsController({ container, index, onError, clearE
       // Reopening during a write waits for its file ID, so it cannot create a duplicate.
       if (saving) await saving;
       if (!isCurrent()) return;
-      // The in-memory value is only a cache, not the source of truth. Revalidate it
-      // against Drive whenever the page opens so changes made elsewhere cannot leave
-      // this form displaying stale sharing settings. Keep the loading state visible
-      // until the fresh snapshot is ready instead of briefly rendering old controls.
-      loading ||= load(index).finally(() => { loading = null; });
-      saved = await loading;
-      if (!isCurrent()) return;
-      status.textContent = '';
       const folders = sharingFolders(index);
-      if (!folders.length) {
-        description.hidden = true;
-        status.textContent = 'В корневой папке библиотеки нет папок.';
-        return;
-      }
-      const excluded = new Set(saved.settings.sharing.excludedFolderIds);
-      const form = element('form', '', 'sharing-settings-form');
-      const list = element('div', '', 'sharing-folder-list');
-      for (const folder of folders) {
-        const label = element('label');
-        const checkbox = element('input');
-        checkbox.type = 'checkbox';
-        checkbox.value = folder.id;
-        checkbox.checked = !excluded.has(folder.id);
-        label.append(checkbox, element('span', folder.name));
-        list.append(label);
-      }
-      const button = element('button', 'СОХРАНИТЬ', 'settings-save-button');
-      button.type = 'submit';
-      form.append(list, button);
-      section.insertBefore(form, status);
-      form.addEventListener('input', () => { status.textContent = ''; });
-      form.addEventListener('submit', async (event) => {
-        event.preventDefault();
-        if (saving || !isCurrent()) return;
-        const settings = { ...saved.settings, version: 1, rootFolderId: index.rootFolderId,
-          sharing: { excludedFolderIds: [...list.querySelectorAll('input')].filter((field) => !field.checked).map((field) => field.value) } };
-        const fields = [...list.querySelectorAll('input')];
-        button.disabled = true;
-        fields.forEach((field) => { field.disabled = true; });
+      const renderForm = () => {
+        if (!isCurrent()) return;
         status.textContent = '';
-        clearError();
-        saving = (async () => {
-          try {
-            const fileId = await save(settings, index, saved.fileId);
-            saved = { fileId, settings };
-            if (isCurrent()) status.textContent = 'Настройки сохранены.';
-          } catch (error) {
-            if (isCurrent() || error?.status === 401 || error?.code === 'unauthorized') onError(error);
-          } finally {
-            fields.forEach((field) => { field.disabled = false; });
-            button.disabled = false;
-          }
-        })();
-        await saving;
-        saving = null;
-      });
+        if (!folders.length) {
+          description.hidden = true;
+          status.textContent = 'В корневой папке библиотеки нет папок.';
+          return;
+        }
+        const previousForm = section.querySelector('.sharing-settings-form');
+        const hadDraft = Boolean(previousForm?.dataset.dirty === 'true');
+        const draft = hadDraft ? new Map([...previousForm.querySelectorAll('input')].map((field) => [field.value, field.checked])) : null;
+        const excluded = new Set(saved.settings.sharing.excludedFolderIds);
+        const form = element('form', '', 'sharing-settings-form');
+        const list = element('div', '', 'sharing-folder-list');
+        for (const folder of folders) {
+          const label = element('label');
+          const checkbox = element('input');
+          checkbox.type = 'checkbox';
+          checkbox.value = folder.id;
+          checkbox.checked = draft?.has(folder.id) ? draft.get(folder.id) : !excluded.has(folder.id);
+          label.append(checkbox, element('span', folder.name));
+          list.append(label);
+        }
+        const button = element('button', 'СОХРАНИТЬ', 'settings-save-button');
+        button.type = 'submit';
+        form.append(list, button);
+        if (previousForm) previousForm.replaceWith(form);
+        else section.insertBefore(form, status);
+        form.addEventListener('input', () => {
+          form.dataset.dirty = 'true';
+          status.textContent = '';
+        });
+        form.addEventListener('submit', async (event) => {
+          event.preventDefault();
+          if (saving || !isCurrent()) return;
+          const settings = { ...saved.settings, version: 1, rootFolderId: index.rootFolderId,
+            sharing: { excludedFolderIds: [...list.querySelectorAll('input')].filter((field) => !field.checked).map((field) => field.value) } };
+          const fields = [...list.querySelectorAll('input')];
+          button.disabled = true;
+          fields.forEach((field) => { field.disabled = true; });
+          status.textContent = '';
+          clearError();
+          saving = (async () => {
+            try {
+              const fileId = await save(settings, index, saved.fileId);
+              saved = { fileId, settings };
+              form.dataset.dirty = 'false';
+              if (isCurrent()) status.textContent = 'Настройки сохранены.';
+            } catch (error) {
+              if (isCurrent() || error?.status === 401 || error?.code === 'unauthorized') onError(error);
+            } finally {
+              fields.forEach((field) => { field.disabled = false; });
+              button.disabled = false;
+            }
+          })();
+          await saving;
+          saving = null;
+        });
+      };
+      // Render the in-memory snapshot immediately. Refresh it in the background;
+      // never make the user wait for Drive just to see the last known settings.
+      if (saved) renderForm();
+      loading ||= load(index).finally(() => { loading = null; });
+      try {
+        const fresh = await loading;
+        if (!isCurrent()) return;
+        const changed = !saved || JSON.stringify(fresh) !== JSON.stringify(saved);
+        saved = fresh;
+        if (changed && section.querySelector('.sharing-settings-form')?.dataset.dirty !== 'true') renderForm();
+        else if (!section.querySelector('.sharing-settings-form')) renderForm();
+      } catch (error) {
+        if (!saved) throw error;
+        if (isCurrent()) onError(error);
+      }
     } catch (error) {
       if (!isCurrent()) return;
       status.textContent = '';

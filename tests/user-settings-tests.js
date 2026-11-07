@@ -170,9 +170,13 @@ export async function runUserSettingsTests(test, assert, equal) {
         }
         return new Response(JSON.stringify({ id: 'settings-id' }), { status: 200 });
       }
+      if (parsed.pathname.endsWith('/settings-id') && parsed.searchParams.get('alt') === 'media') {
+        assert(stored, 'settings refresh downloads only the known settings file');
+        return new Response(JSON.stringify(stored), { status: 200 });
+      }
       assert(parsed.searchParams.get('spaces') === 'appDataFolder' && parsed.searchParams.get('q').includes(USER_SETTINGS_FILE_NAME), 'only settings lookup is allowed; no scan, book or permissions calls');
       if (++lookups === 1) return new Response('{}', { status: 403 });
-      return new Response(JSON.stringify({ files: [] }), { status: 200 });
+      return new Response(JSON.stringify({ files: stored ? [{ id: 'settings-id' }] : [] }), { status: 200 });
     };
     ui.renderLibrary(index);
     ui.setAuthorized(true);
