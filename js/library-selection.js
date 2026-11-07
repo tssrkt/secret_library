@@ -11,7 +11,11 @@ export function createLibrarySelection({ tabs, service, show, unavailable, locat
     tabs.update(libraries, selected);
     if (!own) return;
     const target = libraries.find((library) => library.uid === selected);
-    const key = `${selected}:${target?.revision || ''}:${snapshot.status}:${snapshot.driveDiscoveryMessage || ''}`;
+    // Social status changes are unrelated to the selected home library. Including them
+    // in this key remounts the whole book tree (and makes folder notes flicker).
+    const key = selected
+      ? `${selected}:${target?.revision || ''}:${snapshot.status}:${snapshot.driveDiscoveryMessage || ''}`
+      : 'own-library';
     if (!force && key === renderedKey) return;
     renderedKey = key;
     const request = ++version;
