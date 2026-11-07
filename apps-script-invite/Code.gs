@@ -538,6 +538,12 @@ function handleInvitationStatuses(input) {
       invitationStatus: invitation?.status || '', createdAt: Number(invitation?.createdAt) || 0,
       ...(invitation?.status === 'accepted' ? { accepted: true, acceptedUid: invitation.acceptedUid, acceptedDisplayName: invitation.acceptedDisplayName, acceptedAt: invitation.acceptedAt } : {}) };
   });
+  const admin = fsGet('adminUsers/' + user.localId);
+  statuses.__quota = {
+    isAdmin: Boolean(admin && admin.active === true),
+    limit: getInvitationLimit(),
+    used: Object.keys(readOwnerInvitationRegistry(user.localId)).length
+  };
   return statuses;
 }
 
