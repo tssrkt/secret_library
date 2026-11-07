@@ -81,6 +81,45 @@ async function listPermissions(folderId, request = driveFetch) {
   return listPages(`/files/${encodeURIComponent(folderId)}/permissions`, params, request);
 }
 
+// Make the folder checkbox control real Google Drive access as well as catalog visibility.
+// Limited access blocks permissions inherited from the shared root; direct grants remain separate.
+export async function syncFolderSharingAccess(index, settings, api = {}) {
+  const request = api.driveFetch || driveFetch;
+  const excluded = new Set(settings?.sharing?.excludedFolderIds || []);
+  const changed = [];
+  try {
+    for (const folder of index.folders.filter((item) => item.parentId === index.rootFolderId)) {
+      const desired = excluded.has(folder.id);
+      const params = new URLSearchParams({ fields: 'id,mimeType,inheritedPermissionsDisabled,capabilities(canDisableInheritedPermissions,canEnableInheritedPermissions)', supportsAllDrives: 'true' });
+      const current = await request(`/files/${encodeURIComponent(folder.id)}?${params}`, { readJson: true });
+      if (current.mimeType !== FOLDER_MIME_TYPE) throw new Error(`«${folder.name}» больше не является папкой Google Drive.`);
+      const previous = current.inheritedPermissionsDisabled === true;
+      if (previous === desired) continue;
+      const canChange = desired ? current.capabilities?.canDisableInheritedPermissions : current.capabilities?.canEnableInheritedPermissions;
+      if (canChange === false) throw new Error(`Google Drive не разрешает изменить наследование доступа к папке «${folder.name}». Проверьте права владельца папки.`);
+      const updateParams = new URLSearchParams({ fields: 'id,inheritedPermissionsDisabled', supportsAllDrives: 'true' });
+      await request(`/files/${encodeURIComponent(folder.id)}?${updateParams}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ inheritedPermissionsDisabled: desired }), readJson: true,
+      });
+      changed.push({ id: folder.id, previous });
+    }
+  } catch (error) {
+    // Do not leave a partially applied settings change if Drive rejects one folder.
+    for (const item of changed.reverse()) {
+      try {
+        const params = new URLSearchParams({ supportsAllDrives: 'true' });
+        await request(`/files/${encodeURIComponent(item.id)}?${params}`, {
+          method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ inheritedPermissionsDisabled: item.previous }), readJson: true,
+        });
+      } catch { /* preserve the original failure; the next save can reconcile access */ }
+    }
+    throw new Error(`Не удалось применить ограничения доступа в Google Drive. Настройки не сохранены. ${error?.message || error}`);
+  }
+  return changed;
+}
+
 // Grant access to the owner's selected root folder before sending an invitation.
 // Existing permissions are preserved; rollback only removes a permission created by this attempt.
 export async function grantRootFolderAccess(rootFolderId, email, api = {}) {

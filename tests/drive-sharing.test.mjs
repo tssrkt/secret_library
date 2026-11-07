@@ -218,3 +218,34 @@ test('discovers a shared catalog from Drive owner metadata without Firebase UID 
   assert.ok(result.friends.some((friend) => friend.uid === 'friend-uid' && friend.inbound && friend.email === 'friend@example.com' && friend.displayName === 'Olya Shustrik'));
   assert.match(result.errors.join(' '), /владелец сопоставлен по данным Google Drive/);
 });
+
+test('folder sharing settings enable and disable real Drive limited access', async () => {
+  const calls = [];
+  const state = new Map([
+    ['private-folder', { id: 'private-folder', mimeType: 'application/vnd.google-apps.folder', inheritedPermissionsDisabled: false, capabilities: { canDisableInheritedPermissions: true, canEnableInheritedPermissions: true } }],
+    ['public-folder', { id: 'public-folder', mimeType: 'application/vnd.google-apps.folder', inheritedPermissionsDisabled: true, capabilities: { canDisableInheritedPermissions: true, canEnableInheritedPermissions: true } }],
+  ]);
+  const request = async (path, options = {}) => {
+    calls.push({ path, options });
+    const id = decodeURIComponent(path.match(/\/files\/([^/?]+)/)?.[1] || '');
+    if (options.method === 'PATCH') {
+      const patch = JSON.parse(options.body);
+      state.get(id).inheritedPermissionsDisabled = patch.inheritedPermissionsDisabled;
+      return { id, ...patch };
+    }
+    return state.get(id);
+  };
+  const { syncFolderSharingAccess } = await import('../js/drive-sharing.js');
+  const index = { rootFolderId: 'root', folders: [
+    { id: 'root', parentId: null, name: 'Root' },
+    { id: 'private-folder', parentId: 'root', name: 'Private' },
+    { id: 'public-folder', parentId: 'root', name: 'Public' },
+    { id: 'nested', parentId: 'private-folder', name: 'Nested' },
+  ] };
+  await syncFolderSharingAccess(index, { sharing: { excludedFolderIds: ['private-folder'] } }, { driveFetch: request });
+  assert.equal(state.get('private-folder').inheritedPermissionsDisabled, true);
+  assert.equal(state.get('public-folder').inheritedPermissionsDisabled, false);
+  assert.equal(calls.filter((call) => call.options.method === 'PATCH').length, 2);
+  await syncFolderSharingAccess(index, { sharing: { excludedFolderIds: [] } }, { driveFetch: request });
+  assert.equal(state.get('private-folder').inheritedPermissionsDisabled, false);
+});

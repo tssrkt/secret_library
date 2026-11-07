@@ -7,6 +7,7 @@ import { loadCover as loadOwnCover } from './cover-cache.js';
 import { loadGenreDictionary } from './genre-labels.js';
 import { createPaginator, paginateItems } from './pagination.js';
 import { metadataActionLabels } from './indexing-state.js';
+import { syncFolderSharingAccess } from './drive-sharing.js';
 import { filterBooksByDirectValue, russianBookCount } from './direct-filter.js';
 import { createSearchController } from './search-ui.js';
 import { createIndexingErrorsController } from './indexing-errors-ui.js';
@@ -300,6 +301,8 @@ export function renderLibrary(index, onDownload = async () => {}, { ownerIndex =
       };
       try {
         await beforeSettingsSave();
+        // Apply real Drive restrictions before publishing the new catalog settings.
+        await syncFolderSharingAccess(settingsIndex, settings);
       } catch (error) {
         await restorePreviousPublication();
         throw error;
@@ -308,6 +311,11 @@ export function renderLibrary(index, onDownload = async () => {}, { ownerIndex =
       try {
         saved = await saveUserSettings(settings, settingsIndex, fileId);
       } catch (error) {
+        // Keep Drive access aligned with the settings that were actually saved.
+        if (savedUserSettings?.settings) {
+          try { await syncFolderSharingAccess(settingsIndex, savedUserSettings.settings); }
+          catch (rollbackError) { reportSettingsError(rollbackError); }
+        }
         await restorePreviousPublication();
         throw error;
       }
