@@ -133,6 +133,7 @@ async function syncAcceptedInvitationStatuses(emails, currentGeneration = genera
   const acceptedEmails = [];
   const serverPendingRows = [];
   for (const [rawEmail, status] of Object.entries(statuses || {})) {
+    if (rawEmail === '__quota') continue;
     const email = String(rawEmail).trim().toLowerCase();
     if (!email) continue;
     if (status?.invitationStatus === 'pending') serverPendingRows.push({ inviteeEmail: email, ownerUid: invitationUser.uid, active: true, createdAt: Number(status.createdAt) || Date.now(), emailSentAt: Number(status.lastSentAt) || 0, source: 'apps-script' });
