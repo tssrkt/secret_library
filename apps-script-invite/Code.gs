@@ -530,6 +530,11 @@ function markOtherInvitationsAcceptedLocked(acceptedRecord, user, properties) {
     try { record = JSON.parse(all[key] || 'null'); } catch (_) { return; }
     if (!record || normalizeEmail(record.inviteeEmail) !== email || !isValidUid(String(record.ownerUid || ''))) return;
     const tokenHash = String(record.tokenHash || key.slice('invite_accept_'.length));
+    if (record.status === 'accepted' && record.acceptedUid === user.localId &&
+        (!record.provisionedAt || !record.notifiedAt)) {
+      accepted.push(record);
+      return;
+    }
     if (record.status !== 'pending') return;
     const currentKey = acceptanceCurrentKey(record.ownerUid, email);
     if (properties.getProperty(currentKey) !== tokenHash || now > Number(record.expiresAt || 0)) return;
