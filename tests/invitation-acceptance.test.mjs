@@ -106,6 +106,7 @@ test('acceptance token is one-time, email-bound, and notifies the inviter once',
   assert.equal(documents.get('libraryShares/owner-uid__reader-uid').active, true);
   assert.equal(writes.filter((item) => item.path === 'libraryShares/owner-uid__reader-uid').length, 1);
   assert.equal(writes.some((item) => item.path.includes('pendingInvites')), false, 'accepted registration never depends on Firestore invitation records');
+  context.isBlockedInvitationEmail = () => { throw new Error('Accepted-token retry must not query the email ban registry'); };
   const repeated = context.handleAcceptInvitation({ token: issued.token, idToken: 'x'.repeat(120) });
   assert.equal(repeated.accepted, true);
   assert.equal(repeated.alreadyAccepted, true);
