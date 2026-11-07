@@ -56,6 +56,7 @@ export async function runSocialUiTests(test, assert, equal) {
       social.update({ driveDiscoveryStatus: 'ready', friends: [{ uid: 'friend', displayName: 'Administrator', isAdmin: true, email: '', inbound: true, outbound: true }] });
       assert(page.querySelector('.friends-table').textContent.includes('Administrator'), 'fresh friend identity appears after Drive discovery');
       assert(!page.querySelector('.friends-table').textContent.includes('Old Name'), 'old friend identity never flashes');
+      assert(!page.querySelector('.friends-count').textContent.includes('отправлено еще'), 'provisional invitation count does not flash before authoritative statuses load');
       finishStatuses({ 'friend@gmail.com': { invitationStatus: 'accepted', accepted: true } });
       await tick(); await tick();
       assert(page.querySelector('.sent-invitations-section').hidden, 'accepted invitation is not rendered after authoritative status arrives');

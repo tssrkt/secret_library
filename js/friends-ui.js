@@ -261,7 +261,10 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
     else if (snapshot.driveDiscoveryStatus === 'error' && count === 0) countLabel.textContent = 'Не удалось загрузить список друзей. Проверьте подключение к Google Drive и попробуйте снова.';
     else {
       const friendEmails = new Set((snapshot.friends || []).map((friend) => String(friend.email || '').trim().toLowerCase()).filter(Boolean));
-      const pendingEmails = new Set((snapshot.invitations || [])
+      // The local invitation ledger may contain already-accepted invitations.
+      // Never include those provisional rows in the summary until the server's
+      // authoritative invitation statuses have loaded.
+      const pendingEmails = new Set((invitationStatusesLoaded ? snapshot.invitations || [] : [])
         .map((invite) => String(invite.inviteeEmail || '').trim().toLowerCase())
         .filter((email) => email && !friendEmails.has(email)
           && invitationStatuses[email]?.invitationStatus !== 'accepted'
