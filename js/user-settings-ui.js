@@ -1,7 +1,24 @@
-import { loadUserSettings, saveUserSettings, sharingFolders } from './user-settings.js';
+import { loadUserSettings, saveUserSettings, sharingFolders, normalizeUserSettings } from './user-settings.js';
 
 export function createUserSettingsController({ container, index, onError, clearError,
-  load = loadUserSettings, save = saveUserSettings, documentRef = document, mountSections = () => () => {} }) {
+  load = loadUserSettings, save = saveUserSettings, documentRef = document, storage = null, mountSections = () => () => {} }) {
+  const cacheKey = `secret-library:user-settings:v1:${index.rootFolderId}`;
+  const getStorage = () => {
+    if (storage) return storage;
+    try { return documentRef.defaultView?.localStorage || globalThis.localStorage || null; }
+    catch { return null; }
+  };
+  const readCache = () => {
+    try {
+      const value = JSON.parse(getStorage()?.getItem(cacheKey) || 'null');
+      if (!value || !value.settings || value.settings.rootFolderId !== index.rootFolderId) return null;
+      return { fileId: typeof value.fileId === 'string' ? value.fileId : null,
+        settings: normalizeUserSettings(value.settings, index) };
+    } catch { return null; }
+  };
+  const writeCache = (value) => {
+    try { getStorage()?.setItem(cacheKey, JSON.stringify(value)); } catch { /* cache is optional */ }
+  };
   let active = false;
   let revision = 0;
   let saved = null;
@@ -16,6 +33,7 @@ export function createUserSettingsController({ container, index, onError, clearE
   };
   const open = async () => {
     unmount();
+    if (!saved) saved = readCache();
     active = true;
     documentRef.body?.classList.add('settings-page-open');
     const current = ++revision;
@@ -83,6 +101,7 @@ export function createUserSettingsController({ container, index, onError, clearE
             try {
               const fileId = await save(settings, index, saved.fileId);
               saved = { fileId, settings };
+              writeCache(saved);
               form.dataset.dirty = 'false';
               if (isCurrent()) status.textContent = 'Настройки сохранены.';
             } catch (error) {
@@ -105,6 +124,7 @@ export function createUserSettingsController({ container, index, onError, clearE
         if (!isCurrent()) return;
         const changed = !saved || JSON.stringify(fresh) !== JSON.stringify(saved);
         saved = fresh;
+        writeCache(saved);
         if (changed && section.querySelector('.sharing-settings-form')?.dataset.dirty !== 'true') renderForm();
         else if (!section.querySelector('.sharing-settings-form')) renderForm();
       } catch (error) {
