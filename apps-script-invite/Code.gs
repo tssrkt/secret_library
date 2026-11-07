@@ -54,21 +54,18 @@ function doPost(e) {
     stage = 'verify-owner-profile';
     user.displayName = readOwnerDisplayName(idToken, user.localId);
 
-    stage = 'verify-pending-invitation';
-    const invitation = readPendingInvitation(idToken, email, user.localId);
-    if (!invitation) throw new Error('Приглашение не найдено. Повторите попытку из библиотеки.');
+    stage = 'verify-server-invitation';
+    const invitation = readOwnerInvitationRecord(user.localId, email);
+    if (invitation && invitation.status === 'accepted') return responsePage(requestId, true, 'Invitation has already been accepted.');
     stage = 'check-blocked-recipient';
     if (isBlockedInvitationEmail(email)) {
       deactivateBlockedInvitation(email, user.localId);
       throw new Error('Данный емейл заблокирован');
     }
-    if (invitation.claimedUid) {
-      return responsePage(requestId, true, 'Запрос обработан. Если получателю нужно приглашение, письмо отправлено.');
-    }
     stage = 'check-unique-invitation-limit';
     const invitationCount = enforceUniqueInvitationLimit(user.localId, email, invitation);
     stage = 'reserve-send';
-    reservation = reserveSend(user.localId, email, invitation.emailSentAt || (invitation.emailStatus === 'sent' ? invitation.createdAt : null));
+    reservation = reserveSend(user.localId, email, null);
     if (reservation.status === 'cooldown' || reservation.status === 'sending') {
       // Do not reveal whether an address belongs to an existing member.
       return responsePage(requestId, true, 'Запрос обработан. Если получателю нужно приглашение, письмо отправлено.');
@@ -150,10 +147,13 @@ function isBlockedInvitationEmail(email) {
 }
 
 function deactivateBlockedInvitation(email, ownerUid) {
-  const path = 'pendingInvites/' + encodeURIComponent(email) + '/shares/' + encodeURIComponent(ownerUid);
-  const invitation = fsGet(path);
-  if (!invitation || invitation.ownerUid !== ownerUid || invitation.active !== true || invitation.claimedUid) return;
-  fsSet(path, { active: false, revokedAt: new Date(), revokedBy: 'system' });
+  const invitation = readOwnerInvitationRecord(ownerUid, email);
+  if (!invitation || invitation.status === 'accepted') return;
+  const properties = PropertiesService.getScriptProperties();
+  if (invitation.tokenHash) properties.deleteProperty('invite_accept_' + invitation.tokenHash);
+  properties.deleteProperty(acceptanceCurrentKey(ownerUid, email));
+  invitation.status = 'revoked';
+  saveOwnerInvitationRecord(invitation);
 }
 
 function verifyFirebaseUser(idToken) {
@@ -297,6 +297,40 @@ function acceptanceCurrentKey(uid, email) {
   return 'invite_current_' + acceptanceDigest(uid + '\n' + normalizeEmail(email));
 }
 
+function ownerInvitationRegistryKey(uid) {
+  return 'invite_owner_' + acceptanceDigest(String(uid || ''));
+}
+
+function readOwnerInvitationRegistry(uid) {
+  const value = PropertiesService.getScriptProperties().getProperty(ownerInvitationRegistryKey(uid));
+  if (!value) return {};
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch (_) { return {}; }
+}
+
+function saveOwnerInvitationRecord(record) {
+  const properties = PropertiesService.getScriptProperties();
+  const registry = readOwnerInvitationRegistry(record.ownerUid);
+  registry[normalizeEmail(record.inviteeEmail)] = {
+    ownerUid: record.ownerUid,
+    ownerEmail: normalizeEmail(record.ownerEmail),
+    inviteeEmail: normalizeEmail(record.inviteeEmail),
+    tokenHash: record.tokenHash,
+    status: record.status,
+    createdAt: Number(record.createdAt) || Date.now(),
+    acceptedUid: record.acceptedUid || '',
+    acceptedDisplayName: String(record.acceptedDisplayName || '').slice(0, 160),
+    acceptedAt: Number(record.acceptedAt) || 0
+  };
+  properties.setProperty(ownerInvitationRegistryKey(record.ownerUid), JSON.stringify(registry));
+}
+
+function readOwnerInvitationRecord(uid, email) {
+  return readOwnerInvitationRegistry(uid)[normalizeEmail(email)] || null;
+}
+
 function issueInvitationAcceptanceToken(ownerUid, ownerEmail, inviteeEmail) {
   const properties = PropertiesService.getScriptProperties();
   const currentKey = acceptanceCurrentKey(ownerUid, inviteeEmail);
@@ -317,6 +351,7 @@ function issueInvitationAcceptanceToken(ownerUid, ownerEmail, inviteeEmail) {
   };
   properties.setProperty('invite_accept_' + tokenHash, JSON.stringify(record));
   properties.setProperty(currentKey, tokenHash);
+  saveOwnerInvitationRecord(record);
   return { token: token, tokenHash: tokenHash, currentKey: currentKey };
 }
 
@@ -327,6 +362,12 @@ function revokeInvitationAcceptanceToken(tokenRecord) {
     properties.deleteProperty(tokenRecord.currentKey);
   }
   properties.deleteProperty('invite_accept_' + tokenRecord.tokenHash);
+  const registry = readOwnerInvitationRegistry(tokenRecord.ownerUid);
+  const email = normalizeEmail(tokenRecord.inviteeEmail);
+  if (registry[email] && registry[email].tokenHash === tokenRecord.tokenHash) {
+    delete registry[email];
+    properties.setProperty(ownerInvitationRegistryKey(tokenRecord.ownerUid), JSON.stringify(registry));
+  }
 }
 
 function provisionAcceptedInvitee(record, user) {
@@ -334,17 +375,17 @@ function provisionAcceptedInvitee(record, user) {
   const email = normalizeEmail(user.email);
   const ownerUid = String(record.ownerUid || '');
   if (!isValidUid(uid) || !isValidUid(ownerUid) || !isValidEmail(email) || email !== normalizeEmail(record.inviteeEmail)) {
-    throw new Error('Invalid accepted invitation data.');
+    throw new Error('\u0414\u0430\u043d\u043d\u044b\u0435 \u043f\u0440\u0438\u043d\u044f\u0442\u043e\u0433\u043e \u043f\u0440\u0438\u0433\u043b\u0430\u0448\u0435\u043d\u0438\u044f \u043d\u0435\u0434\u0435\u0439\u0441\u0442\u0432\u0438\u0442\u0435\u043b\u044c\u043d\u044b.');
   }
   if (!fsGet('users/' + encodeURIComponent(ownerUid))) {
-    throw new Error('Inviter profile is not registered.');
+    throw new Error('\u041f\u0440\u043e\u0444\u0438\u043b\u044c \u043f\u0440\u0438\u0433\u043b\u0430\u0441\u0438\u0432\u0448\u0435\u0433\u043e \u043d\u0435 \u0437\u0430\u0440\u0435\u0433\u0438\u0441\u0442\u0440\u0438\u0440\u043e\u0432\u0430\u043d.');
   }
 
   const profilePath = 'users/' + encodeURIComponent(uid);
   const directoryPath = 'userDirectory/' + encodeURIComponent(email);
   const existingProfile = fsGet(profilePath);
   const directory = fsGet(directoryPath);
-  if (directory && directory.uid !== uid) throw new Error('This Google email is linked to another participant.');
+  if (directory && directory.uid !== uid) throw new Error('\u042d\u0442\u043e\u0442 Google email \u0443\u0436\u0435 \u0441\u0432\u044f\u0437\u0430\u043d \u0441 \u0434\u0440\u0443\u0433\u0438\u043c \u0443\u0447\u0430\u0441\u0442\u043d\u0438\u043a\u043e\u043c.');
 
   if (!existingProfile) {
     fsSet(profilePath, {
@@ -389,6 +430,7 @@ function handleAcceptInvitation(input) {
   try {
     record = JSON.parse(properties.getProperty(recordKey) || 'null');
     if (!record) throw new Error('Приглашение не найдено или уже недействительно.');
+    if (!record.tokenHash) record.tokenHash = tokenHash;
     if (normalizeEmail(user.email) !== record.inviteeEmail) {
       throw new Error('Войдите через Google с тем адресом, на который пришло приглашение.');
     }
@@ -406,9 +448,11 @@ function handleAcceptInvitation(input) {
       }
       record.status = 'accepted';
       record.acceptedUid = user.localId;
+      record.acceptedDisplayName = String(user.displayName || user.email).slice(0, 160);
       record.acceptedAt = Date.now();
       properties.setProperty(recordKey, JSON.stringify(record));
       properties.deleteProperty(currentKey);
+      saveOwnerInvitationRecord(record);
     }
   } finally {
     lock.releaseLock();
@@ -418,6 +462,7 @@ function handleAcceptInvitation(input) {
   // client-side Firestore pendingInvites registration gate without trusting the browser.
   provisionAcceptedInvitee(record, user);
 
+  saveOwnerInvitationRecord(record);
   if (!record.notifiedAt) {
     MailApp.sendEmail({
       to: record.ownerEmail,
@@ -442,9 +487,10 @@ function handleInvitationStatuses(input) {
   emails.forEach(function (email) {
     if (email === normalizeEmail(user.email)) return;
     const current = JSON.parse(properties.getProperty(reservationKey(user.localId, email)) || 'null');
-    if (!current) return;
-    const lastSentAt = current.status === 'sent' ? Number(current.at) || 0 : Number(current.lastSentAt) || 0;
-    statuses[email] = { lastSentAt: lastSentAt, cooldownUntil: lastSentAt ? lastSentAt + RESEND_COOLDOWN_MS : 0 };
+    const invitation = readOwnerInvitationRecord(user.localId, email);
+    const lastSentAt = current ? (current.status === 'sent' ? Number(current.at) || 0 : Number(current.lastSentAt) || 0) : 0;
+    if (current || invitation) statuses[email] = { lastSentAt: lastSentAt, cooldownUntil: lastSentAt ? lastSentAt + RESEND_COOLDOWN_MS : 0,
+      ...(invitation?.status === 'accepted' ? { accepted: true, acceptedUid: invitation.acceptedUid, acceptedDisplayName: invitation.acceptedDisplayName, acceptedAt: invitation.acceptedAt } : {}) };
   });
   return statuses;
 }
@@ -462,24 +508,20 @@ function reservationKey(uid, email) {
 function invitationSuccessMessage(uid, invitationCount) {
   const admin = fsGet('adminUsers/' + uid);
   if (admin && admin.active === true) return 'Приглашение отправлено.';
-  const count = Number.isInteger(invitationCount) ? invitationCount : 0;
+  const count = Number.isInteger(invitationCount) ? invitationCount : Object.keys(readOwnerInvitationRegistry(uid)).length;
   return 'Приглашение отправлено (' + count + ' из ' + getInvitationLimit() + ').';
 }
 
 function enforceUniqueInvitationLimit(uid, email, invitation) {
   const admin = fsGet('adminUsers/' + uid);
   if (admin && admin.active === true) return null;
-
   const limit = getInvitationLimit();
-  const count = fsListInviteSharesByOwner(uid).length;
+  const registry = readOwnerInvitationRegistry(uid);
+  const count = Object.keys(registry).length;
   const current = JSON.parse(PropertiesService.getScriptProperties().getProperty(reservationKey(uid, email)) || 'null');
-  const previouslySent = Boolean(invitation.emailSentAt || invitation.emailStatus === 'sent' || current?.status === 'sent');
-  // The pending share is created before this endpoint is called, so the current
-  // recipient is included in the count. Previously sent recipients remain eligible for retries.
-  if (count > limit && !previouslySent) {
-    throw new Error('Ваш лимит на приглашения исчерпан.');
-  }
-  return count;
+  const previouslySent = Boolean(registry[email] || invitation || current?.status === 'sent');
+  if (!previouslySent && count >= limit) throw new Error('\u0412\u0430\u0448 \u043b\u0438\u043c\u0438\u0442 \u043d\u0430 \u043f\u0440\u0438\u0433\u043b\u0430\u0448\u0435\u043d\u0438\u044f \u0438\u0441\u0447\u0435\u0440\u043f\u0430\u043d.');
+  return count + (previouslySent ? 0 : 1);
 }
 
 function reserveSend(uid, email, firestoreSentAt) {

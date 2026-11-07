@@ -79,6 +79,10 @@ test('acceptance token is one-time, email-bound, and notifies the inviter once',
   assert.equal(repeated.accepted, true);
   assert.equal(repeated.alreadyAccepted, true);
   assert.equal(sent.length, 1);
+  context.verifyFirebaseUser = () => ({ localId: 'owner-uid', email: 'owner@example.com', emailVerified: true });
+  const statuses = context.handleInvitationStatuses({ idToken: 'x'.repeat(120), emails: ['reader@example.com'] });
+  assert.equal(statuses['reader@example.com'].accepted, true);
+  assert.equal(statuses['reader@example.com'].acceptedUid, 'reader-uid');
 });
 
 test('acceptance token cannot be claimed by a different email', () => {

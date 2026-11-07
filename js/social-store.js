@@ -24,11 +24,13 @@ export function createSocialStore({ db, sdk, user }) {
   async function register() {
     ensureCurrent();
     if (!email || !user.emailVerified) throw new Error('Для социальной части нужен подтверждённый Google email.');
+    let createdNewProfile = false;
     await runTransaction(db, async (tx) => {
       const own = data(await tx.get(profileRef));
       const directory = ref('userDirectory', email);
       const existing = data(await tx.get(directory));
-      const first = data(await tx.get(ref('pendingInvites', email)));
+      const first = (!own && uid !== founderUid) ? data(await tx.get(ref('pendingInvites', email))) : null;
+      createdNewProfile = !own;
       ensureCurrent();
       if (existing && existing.uid !== uid) throw new Error('Этот адрес уже связан с другим пользователем.');
       if (!own && uid !== founderUid && typeof first?.firstOwnerUid !== 'string') {
@@ -39,9 +41,12 @@ export function createSocialStore({ db, sdk, user }) {
       else tx.set(profileRef, { ...safe, createdAt: own.createdAt, invitedByUid: own.invitedByUid, ...(typeof own.isAdmin === 'boolean' ? { isAdmin: own.isAdmin } : {}) });
       if (!existing) tx.set(directory, { uid });
     });
-    // The founder UID is fixed in the security model; no email-directory lookup is needed.
-    const pending = await getDocs(collection(db, 'pendingInvites', email, 'shares'));
-    await forEachConcurrent(pending.docs, 10, (snapshot) => claimInvitation(snapshot.ref));
+    // Existing accounts and server-provisioned invitees do not need invitation-tree reads.
+    // Keep the claim path only for accounts completing an older, pre-migration invitation.
+    if (createdNewProfile) {
+      const pending = await getDocs(collection(db, 'pendingInvites', email, 'shares'));
+      await forEachConcurrent(pending.docs, 10, (snapshot) => claimInvitation(snapshot.ref));
+    }
   }
 
   async function shareWithEmail(value) {
@@ -84,7 +89,7 @@ export function createSocialStore({ db, sdk, user }) {
       const existing = data(await tx.get(share));
       ensureCurrent();
       if (!existing?.active) tx.set(share, newShare(invite.ownerUid, uid, invite.ownerEmail || ''));
-      tx.update(invitationRef, { claimedUid: uid, claimedAt: serverTimestamp(), claimedDisplayName: (user.displayName || 'Пользователь').slice(0, 160) });
+      tx.update(invitationRef, { claimedUid: uid, claimedAt: serverTimestamp() });
       return true;
     });
   }
@@ -138,31 +143,11 @@ export function createSocialStore({ db, sdk, user }) {
       if (!existing.exists()) tx.set(contact, { email: contactEmail });
     }));
   }
-  function subscribe(listener, onError) {
-    let invitations = [];
+  function subscribe(listener) {
     let stopped = false;
-    const emit = () => {
-      if (!stopped && !disposed) listener({
-        invitations: invitations.filter((item) => item.active === true && !item.claimedUid && item.inviteeEmail),
-        acceptedInvitations: invitations.filter((item) => item.active === true && item.claimedUid && item.inviteeEmail)
-          .map((item) => ({ uid: item.claimedUid, email: item.inviteeEmail, displayName: item.claimedDisplayName || item.inviteeEmail })),
-      });
-    };
-    const incomingInvites = query(collectionGroup(db, 'shares'), where('inviteeEmail', '==', email));
-    const stopIncomingInvites = onSnapshot(incomingInvites, (snapshot) => {
-      for (const item of snapshot.docs) {
-        const invite = item.data();
-        if (invite.active === true && !invite.claimedUid) void claimInvitation(item.ref).catch(onError);
-      }
-    }, onError);
-    const outgoingInvites = query(collectionGroup(db, 'shares'), where('ownerUid', '==', uid));
-    const stopOutgoingInvites = onSnapshot(outgoingInvites, (snapshot) => {
-      if (snapshot.metadata?.hasPendingWrites) return;
-      invitations = snapshot.docs.map((item) => item.data());
-      emit();
-    }, onError);
-    emit();
-    return () => { stopped = true; stopIncomingInvites(); stopOutgoingInvites(); };
+    if (!disposed) listener({ invitations: [], acceptedInvitations: [] });
+    return () => { stopped = true; void stopped; };
   }
+
   return { uid, register, shareWithEmail, setSharing, syncShareEmails, syncKnownContacts, subscribe, dispose() { disposed = true; } };
 }

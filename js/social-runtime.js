@@ -1,5 +1,5 @@
 import { startFirebaseSession, endFirebaseSession } from './firebase-session.js';
-import { createSocialStore } from './social-store.js?v=20261107-server-provisioning';
+import { createSocialStore } from './social-store.js?v=20261107-invite-registry-final';
 import { createSharedLibraryStore } from './shared-library.js?v=20261106-root-discovery';
 import { discoverDriveFriends, grantRootFolderAccess } from './drive-sharing.js?v=20261106-root-discovery';
 import { findDriveCatalogFile, downloadDriveJsonFile, getCurrentDriveUser } from './drive.js';
@@ -123,6 +123,35 @@ const emit = (change) => {
   if (invitationUser && Array.isArray(change.friends)) writeFriendCache(invitationUser.uid, change.friends);
   listeners.forEach((listener) => listener(state));
 };
+async function syncAcceptedInvitationStatuses(emails, currentGeneration = generation) {
+  if (!invitationUser || !Array.isArray(emails) || !emails.length) return {};
+  const idToken = await invitationUser.getIdToken();
+  const statuses = await fetchInvitationStatuses({ emails, idToken });
+  if (currentGeneration !== generation) return statuses;
+  const acceptedEmails = [];
+  for (const [rawEmail, status] of Object.entries(statuses || {})) {
+    if (status?.accepted !== true || !status.acceptedUid) continue;
+    const email = String(rawEmail).trim().toLowerCase();
+    if (!email) continue;
+    acceptedEmails.push(email);
+    const accepted = { uid: String(status.acceptedUid), email, displayName: String(status.acceptedDisplayName || email) };
+    const index = acceptedInviteFriends.findIndex((friend) => String(friend.email || "").trim().toLowerCase() === email);
+    if (index >= 0) acceptedInviteFriends[index] = { ...acceptedInviteFriends[index], ...accepted };
+    else acceptedInviteFriends.push(accepted);
+    const syncKey = String(invitationUser.uid) + ":" + email;
+    if (!acceptedLedgerSyncs.has(syncKey)) {
+      acceptedLedgerSyncs.add(syncKey);
+      void invitationLedger.setStatus(invitationUser.uid, email, "accepted", { acceptedUid: accepted.uid, acceptedAt: Number(status.acceptedAt) || Date.now() })
+        .catch((error) => { acceptedLedgerSyncs.delete(syncKey); console.warn("Could not update the Drive invitation ledger:", error); });
+    }
+  }
+  if (acceptedEmails.length) {
+    ledgerInvitationRowsCache = mergeInvitationRows(ledgerInvitationRowsCache, [], acceptedEmails);
+    emit({ friends: combineFriendRows(), invitations: mergeInvitationRows(state.invitations, ledgerInvitationRowsCache, acceptedEmails) });
+  }
+  return statuses;
+}
+
 function watchCatalogs(friends) {
   // Friend relationships and access direction are determined by live Google Drive permissions.
   const libraries = friends.filter((friend) => friend.inbound && !String(friend.uid).startsWith('email:'))
@@ -202,6 +231,10 @@ export const social = {
         const savedLedger = await invitationLedger.load(invitationUser.uid);
         ledgerInvitationRowsCache = invitationLedgerRows(savedLedger.ledger);
         emit({ invitations: mergeInvitationRows([], ledgerInvitationRowsCache) });
+        if (ledgerInvitationRowsCache.length) {
+          try { await syncAcceptedInvitationStatuses(ledgerInvitationRowsCache.map((item) => item.inviteeEmail), current); }
+          catch (error) { console.warn("Could not refresh invitation acceptance statuses:", error); }
+        }
       } catch (error) {
         ledgerInvitationRowsCache = [];
         console.warn('Could not load the Drive invitation ledger:', error);
@@ -231,10 +264,12 @@ export const social = {
       settleConnectionReady(true);
       stop = store.subscribe((snapshot) => {
         if (current !== generation) return;
-        // Firestore snapshots supply invitation-management data only.
-        // Friend rows, library tabs and notifications are all derived from Google Drive;
+        // Invitation acceptance comes from the Apps Script registry. Legacy Firestore
+        // snapshots are tolerated during migration, while friend tabs and notifications
+        // remain derived from Google Drive;
         // notification read state is stored locally in this browser.
-        acceptedInviteFriends = Array.isArray(snapshot.acceptedInvitations) ? snapshot.acceptedInvitations : [];
+        const liveAcceptedInvitations = Array.isArray(snapshot.acceptedInvitations) ? snapshot.acceptedInvitations : [];
+        if (liveAcceptedInvitations.length) acceptedInviteFriends = liveAcceptedInvitations;
         for (const accepted of acceptedInviteFriends) {
           const email = String(accepted.email || '').trim().toLowerCase();
           const syncKey = `${invitationUser?.uid || ''}:${email}`;
@@ -296,9 +331,8 @@ export const social = {
     }
     if (!rootFolderId) throw new Error('Не удалось определить корневую папку из опубликованного каталога Google Drive. Обновите библиотеку и повторите попытку.');
 
-    // Create the authenticated invitation record first: the mail endpoint checks it
-    // before sending, and it is the current registration gate until migration is complete.
-    await store.shareWithEmail(normalizedEmail);
+    // The Apps Script invitation registry is the invitation authority; no pendingInvites
+    // document is created in Firestore. Registration is provisioned after token acceptance.
     await grantRootFolderAccess(rootFolderId, normalizedEmail);
     try {
       const savedLedger = await invitationLedger.upsert(invitationUser.uid, {
@@ -331,19 +365,11 @@ export const social = {
   },
   async getInvitationStatuses(emails) {
     if (!store || !invitationUser || state.status !== 'ready') throw new Error(state.message);
-    const idToken = await invitationUser.getIdToken();
-    return fetchInvitationStatuses({ emails, idToken });
+    return syncAcceptedInvitationStatuses(emails, generation);
   },
   setSharing(uid, active) { if (!store || state.status !== 'ready') return Promise.reject(new Error(state.message)); return store.setSharing(uid, active); },
   markSeen(items) { markDriveNotificationsSeen(items); return Promise.resolve(); },
-  syncKnownContacts(signature = '') {
-    if (!store || state.status !== 'ready') return Promise.resolve();
-    const key = `${invitationUser?.uid || ''}:${signature}`;
-    if (knownContactsSyncs.has(key)) return knownContactsSyncs.get(key);
-    const pending = store.syncKnownContacts().catch((error) => { knownContactsSyncs.delete(key); throw error; });
-    knownContactsSyncs.set(key, pending);
-    return pending;
-  },
+  syncKnownContacts() { return Promise.resolve(); },
   async publishLibrary(index, settings) {
     if (!shared && state.status === 'loading') await connectionReadyPromise;
     if (!shared) throw new Error(state.message || 'Google Drive session is not ready; the friend catalog was not synchronized.');

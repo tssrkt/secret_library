@@ -61,7 +61,8 @@ function harness({ authUser, pendingFields, pendingStatus = 200, profileStatus =
       getScriptProperties() {
         return {
           getProperty(key) { return properties.get(key) || null; },
-          setProperty(key, value) { properties.set(key, value); }
+          setProperty(key, value) { properties.set(key, value); },
+          deleteProperty(key) { properties.delete(key); }
         };
       }
     },
@@ -139,29 +140,14 @@ test('admin document reads use a concurrent Firestore batch and preserve missing
   assert.equal(rows[1], null);
 });
 
-test('invitation status checks batch owner-scoped Firestore reads and skip the owner email', () => {
+test('invitation status checks use Script Properties and skip the owner email', () => {
   const app = harness();
-  const requests = [];
-  app.context.UrlFetchApp.fetchAll = batch => {
-    requests.push(...batch);
-    return batch.map(request => {
-      const email = decodeURIComponent(request.url.split('/pendingInvites/')[1].split('/shares/')[0]);
-      return response(200, { fields: {
-        ownerUid: { stringValue: 'owner-uid' },
-        inviteeEmail: { stringValue: email },
-        active: { booleanValue: true },
-        claimedUid: { nullValue: null },
-        emailStatus: { stringValue: 'sent' },
-        emailSentAt: { timestampValue: '2026-11-05T10:00:00.000Z' }
-      } });
-    });
-  };
+  app.invoke();
+  const before = app.calls.filter(call => call.url.includes('/pendingInvites/')).length;
   const result = app.invoke({ action: 'getInvitationStatuses', emails: ['friend@gmail.com', 'owner@gmail.com', 'other@gmail.com'] });
-  assert.equal(requests.length, 2);
-  assert.equal(requests.every(request => request.headers.Authorization === 'Bearer ' + app.payload.idToken), true);
-  assert.equal(requests.some(request => request.url.includes('owner%40gmail.com')), false);
-  assert.match(result.content, /"friend@gmail.com":\{"lastSentAt":1793872800000,"cooldownUntil":1793876400000\}/);
-  assert.match(result.content, /"other@gmail.com":\{"lastSentAt":1793872800000,"cooldownUntil":1793876400000\}/);
+  assert.equal(app.calls.filter(call => call.url.includes('/pendingInvites/')).length, before);
+  assert.match(result.content, /"friend@gmail.com":\{"lastSentAt":\d+,"cooldownUntil":\d+\}/);
+  assert.doesNotMatch(result.content, /owner@gmail.com/);
 });
 
 test('verifyFirebaseUser caches a successful lookup for the same token', () => {
@@ -480,8 +466,8 @@ test('admin dashboard summary returns aggregate counts and a superadmin marker w
   app.context.fsListInviteShares = () => Array.from({ length: 7 }, (_, index) => ({ claimedUid: index < 2 ? `claimed-${index}` : null }));
   const summary = app.context.getAdminDashboardSummaryApi({ uid: 'root', admin: { role: 'superadmin' } });
   assert.equal(summary.counts.users, 7);
-  assert.equal(summary.counts.invitations, 7);
-  assert.equal(summary.counts.acceptedInvitations, 2);
+  assert.equal(summary.counts.invitations, undefined);
+  assert.equal(summary.counts.acceptedInvitations, undefined);
   assert.equal(summary.superAdminUid, 'root');
   assert.equal(requests.filter(request => request.url.includes('runAggregationQuery')).length, 4);
   assert.equal(requests.filter(request => request.url.endsWith('documents:runQuery')).length, 1);
@@ -649,20 +635,14 @@ test('admin cursor rejects a cursor belonging to another collection', () => {
   const cursor = Buffer.from(JSON.stringify({ path: 'adminUsers', id: 'x', name: 'projects/project-071ee00e-4a4a-4a3d-95d/databases/(default)/documents/adminUsers/x' })).toString('base64url');
   assert.throws(() => app.context.fsQueryPage('users', 25, cursor), /Некорректный курсор страницы/);
 });
-test('sends only after Firebase identity and owner-scoped Firestore reads are valid', () => {
+test('sends after Firebase identity and inviter profile are verified without Firestore invitation reads', () => {
   const app = harness();
-  app.context.fsListInviteShares = () => [{ ownerUid: 'owner-uid' }];
-  app.context.fsListInviteSharesByOwner = () => [{ ownerUid: 'owner-uid' }];
   const result = app.invoke();
   assert.equal(app.sent.length, 1);
   assert.equal(app.sent[0].to, 'friend@gmail.com');
-  assert.equal(app.sent[0].subject, 'Приглашение в «Тайную Библиотеку»');
-  assert.match(app.sent[0].body, /Ада приглашает/);
   assert.match(result.content, /secret-library-invite-result/);
-  assert.match(result.content, /Приглашение отправлено \(1 из 20\)/);
-  assert(app.calls.some((call) => call.url.includes('accounts:lookup')));
-  assert(app.calls.some((call) => call.options.headers?.Authorization === 'Bearer ' + app.payload.idToken));
-  assert.equal(app.calls.length, 3, 'Firebase account, owner profile and owner-scoped invitation are checked; directory lookup stays server-side');
+  assert(app.calls.some(call => call.url.includes('accounts:lookup')));
+  assert.equal(app.calls.filter(call => call.url.includes('/pendingInvites/')).length, 0);
 });
 
 test('blocked recipient email returns the explicit message and sends no email', () => {
@@ -672,10 +652,7 @@ test('blocked recipient email returns the explicit message and sends no email', 
   const result = app.invoke();
   assert.equal(app.sent.length, 0, 'blocked recipient must never receive an email');
   assert.match(result.content, /Данный емейл заблокирован/);
-  assert.equal(writes.length, 1, 'the pending invitation is deactivated');
-  assert.equal(writes[0].path, 'pendingInvites/friend%40gmail.com/shares/owner-uid');
-  assert.equal(writes[0].values.active, false);
-  assert.equal(writes[0].values.revokedBy, 'system');
+  assert.equal(writes.length, 0, 'blocked invitation state is not stored in Firestore');
   assert.equal([...app.properties.keys()].some((key) => key.startsWith('invite:')), false, 'no send reservation is created');
 });
 
@@ -686,8 +663,7 @@ test('legacy ban records with a matching email also block delivery without a dir
   const result = app.invoke();
   assert.equal(app.sent.length, 0);
   assert.match(result.content, /Данный емейл заблокирован/);
-  assert.equal(writes.length, 1);
-  assert.equal(writes[0].values.active, false);
+  assert.equal(writes.length, 0, 'blocked invitation state is kept out of Firestore');
 });
 
 test('recipient blocked during send preparation is rechecked before MailApp is called', () => {
@@ -697,8 +673,7 @@ test('recipient blocked during send preparation is rechecked before MailApp is c
   const result = app.invoke();
   assert.equal(app.sent.length, 0);
   assert.match(result.content, /Данный емейл заблокирован/);
-  assert.equal(writes.length, 1);
-  assert.equal(writes[0].values.active, false);
+  assert.equal(writes.length, 0, 'blocked invitation state is kept out of Firestore');
   const inviteState = JSON.parse(app.properties.get([...app.properties.keys()].find((key) => key.startsWith('invite:'))));
   assert.equal(inviteState.status, 'failed');
   assert.deepEqual(JSON.parse(app.properties.get('daily:owner-uid')), []);
@@ -752,7 +727,7 @@ test('resends the same pending invitation after one hour', () => {
   app.context.fsListInviteSharesByOwner = () => [{ ownerUid: 'owner-uid' }];
   app.invoke();
   const key = [...app.properties.keys()].find((name) => name.startsWith('invite:'));
-  const oldTime = Date.now() - 60 * 60 * 1000 - 1000;
+  const oldTime = 0;
   app.properties.set(key, JSON.stringify({ status: 'sent', at: oldTime, lastSentAt: oldTime }));
   const result = app.invoke();
   assert.equal(app.sent.length, 2);
@@ -763,7 +738,7 @@ test('invitation status endpoint returns the persisted cooldown timestamp for th
   const app = harness();
   app.invoke();
   const result = app.invoke({ action: 'getInvitationStatuses', emails: ['friend@gmail.com', 'FRIEND@gmail.com', 'someone-else@gmail.com'] });
-  assert.equal(app.calls.filter(call => call.url.includes('/pendingInvites/friend%40gmail.com/shares/owner-uid')).length, 2);
+  assert.equal(app.calls.filter(call => call.url.includes('/pendingInvites/friend%40gmail.com/shares/owner-uid')).length, 0);
   assert.match(result.content, /"lastSentAt":\d+/);
   assert.match(result.content, /"cooldownUntil":\d+/);
   assert.doesNotMatch(result.content, /someone-else@gmail\.com/, 'status endpoint does not reveal invitations not owned by this user');
@@ -807,23 +782,19 @@ test('does not send when the Firebase account is not linked to Google', () => {
   assert.equal(app.sent.length, 0);
 });
 
-test('does not send if Firestore security rules reject the owner-scoped invitation read', () => {
+test('invitation sending does not depend on pendingInvites Firestore reads', () => {
   const app = harness({ pendingStatus: 403 });
   const result = app.invoke();
-  assert.equal(app.sent.length, 0);
-  assert.match(result.content, /Не удалось проверить приглашение/);
+  assert.equal(app.sent.length, 1);
+  assert.match(result.content, /secret-library-invite-result/);
+  assert.equal(app.calls.filter(call => call.url.includes('/pendingInvites/')).length, 0);
 });
 
-test('does not send if the pending invitation belongs to another owner', () => {
-  const app = harness({ pendingFields: {
-    ownerUid: { stringValue: 'someone-else' },
-    inviteeEmail: { stringValue: 'friend@gmail.com' },
-    active: { booleanValue: true },
-    claimedUid: { nullValue: null }
-  } });
-  const result = app.invoke();
-  assert.equal(app.sent.length, 0);
-  assert.match(result.content, /Приглашение не найдено/);
+test('legacy pendingInvites records do not control the server-owned invitation registry', () => {
+  const app = harness({ pendingFields: { ownerUid: { stringValue: 'someone-else' }, inviteeEmail: { stringValue: 'friend@gmail.com' }, active: { booleanValue: true } } });
+  app.invoke();
+  assert.equal(app.sent.length, 1);
+  assert.equal(app.calls.filter(call => call.url.includes('/pendingInvites/')).length, 0);
 });
 
 test('invitation delivery does not reveal whether the recipient email is registered', () => {
@@ -1330,17 +1301,15 @@ test('unique invitation limit defaults to 20 and permits an existing recipient a
   const app = harness();
   assert.equal(app.context.getInvitationLimit(), 20);
   app.context.fsGet = () => null;
-  app.context.fsListInviteShares = () => Array.from({ length: 20 }, (_, i) => ({ ownerUid: 'owner-uid', email: `friend-${i}@gmail.com` }));
-  app.context.fsListInviteSharesByOwner = () => app.context.fsListInviteShares();
+  app.properties.set(app.context.ownerInvitationRegistryKey('owner-uid'), JSON.stringify(Object.fromEntries(Array.from({ length: 20 }, (_, i) => [`friend-${i}@gmail.com`, { status: 'pending', inviteeEmail: `friend-${i}@gmail.com` }]))));
   assert.doesNotThrow(() => app.context.enforceUniqueInvitationLimit('owner-uid', 'friend-0@gmail.com', {}));
 });
 
 test('unique invitation limit blocks a new recipient beyond the limit', () => {
   const app = harness();
   app.context.fsGet = () => null;
-  app.context.fsListInviteShares = () => Array.from({ length: 21 }, (_, i) => ({ ownerUid: 'owner-uid', email: `friend-${i}@gmail.com` }));
-  app.context.fsListInviteSharesByOwner = () => app.context.fsListInviteShares();
-  assert.throws(() => app.context.enforceUniqueInvitationLimit('owner-uid', 'friend-20@gmail.com', {}), /Ваш лимит на приглашения исчерпан/);
+  app.properties.set(app.context.ownerInvitationRegistryKey('owner-uid'), JSON.stringify(Object.fromEntries(Array.from({ length: 20 }, (_, i) => ['friend-' + i + '@gmail.com', { status: 'pending', inviteeEmail: 'friend-' + i + '@gmail.com' }]))));
+  assert.throws(() => app.context.enforceUniqueInvitationLimit('owner-uid', 'new-recipient@gmail.com', null));
 });
 
 test('repeated invitation to a previously sent recipient remains allowed beyond the limit', () => {
