@@ -146,11 +146,15 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
     if (typeof social.getInvitationStatuses !== 'function') return;
     const revision = ++statusRefreshRevision;
     const emails = [...new Set([...(snapshot.invitations || []).map((invite) => String(invite.inviteeEmail || '').trim().toLowerCase()), ...extraEmails.map((email) => String(email || '').trim().toLowerCase())].filter(Boolean))];
-    if (!emails.length) { invitationStatuses = {}; renderInvitations(); return; }
     try {
       const next = {};
-      for (let offset = 0; offset < emails.length; offset += 100) {
-        Object.assign(next, await social.getInvitationStatuses(emails.slice(offset, offset + 100)));
+      // An empty list is meaningful: ask the server for the full owner invitation registry.
+      // Do not return early, or invitations missing from the local Drive ledger stay invisible.
+      if (!emails.length) Object.assign(next, await social.getInvitationStatuses([]));
+      else {
+        for (let offset = 0; offset < emails.length; offset += 100) {
+          Object.assign(next, await social.getInvitationStatuses(emails.slice(offset, offset + 100)));
+        }
       }
       if (closed || revision !== statusRefreshRevision) return;
       invitationStatuses = next;
