@@ -580,7 +580,7 @@ dd { margin: 0; color: #000; font-weight: 400; font-variant-numeric: tabular-num
 
 .social-section { margin-top: 2rem; }
 .social-share-form { display: flex; align-items: stretch; gap: .75rem; flex-wrap: wrap; }
-.social-share-form .invitation-send-status { flex: 0 0 100%; width: 100%; max-width: 100%; margin: 0; font-size: .9rem; overflow-wrap: anywhere; }
+.social-share-form .invitation-send-status { flex: 0 0 100%; width: 100%; max-width: 100%; margin: 0; font: inherit; color: inherit; overflow-wrap: anywhere; }
 .invitation-send-status a { color: #684629; text-decoration: underline; }
 
 .social-section [data-social-retry] { padding-inline: 1rem; white-space: nowrap; }
