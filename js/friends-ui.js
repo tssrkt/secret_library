@@ -36,7 +36,7 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
   const invitationsSection = document.createElement('section');
   invitationsSection.className = 'social-section sent-invitations-section';
   invitationsSection.hidden = true;
-  invitationsSection.innerHTML = '<h3>Отправленные приглашения</h3><p>Если друг не видит приглашения, пусть проверит папку «Спам».</p><p class="sent-invitations-message" role="status"></p><div class="sent-invitations-table-container"></div>';
+  invitationsSection.innerHTML = '<h3>Отправленные приглашения</h3><p>Если друг не видит приглашения, пусть проверит папку «Спам».</p><div class="sent-invitations-table-container"></div><p class="sent-invitations-message" role="status" aria-live="polite"></p>';
   page.append(shareSection, friendsSection, invitationsSection);
   const form = shareSection.querySelector('form');
   const submit = form.querySelector('button');
