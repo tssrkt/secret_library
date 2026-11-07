@@ -1,10 +1,10 @@
 import { startFirebaseSession, endFirebaseSession } from './firebase-session.js';
-import { createSocialStore } from './social-store.js?v=20261107-invite-registry-final';
+import { createSocialStore } from './social-store.js?v=20261107-invite-registry-discovery';
 import { createSharedLibraryStore } from './shared-library.js?v=20261106-root-discovery';
 import { discoverDriveFriends, grantRootFolderAccess } from './drive-sharing.js?v=20261106-root-discovery';
 import { findDriveCatalogFile, downloadDriveJsonFile, getCurrentDriveUser } from './drive.js';
-import { sendInvitationEmail, getInvitationStatuses as fetchInvitationStatuses, acceptInvitation as acceptInvitationToken } from './invitation-mailer.js?v=20261107-invitation-flow3';
-import { createInvitationLedger, invitationLedgerRows, mergeInvitationRows } from './invitation-ledger.js?v=20261107-ledger-ui';
+import { sendInvitationEmail, getInvitationStatuses as fetchInvitationStatuses, acceptInvitation as acceptInvitationToken } from './invitation-mailer.js?v=20261107-invite-registry-discovery';
+import { createInvitationLedger, acceptedInvitationFriends, invitationLedgerRows, mergeInvitationRows } from './invitation-ledger.js?v=20261107-ledger-server-discovery';
 
 export function socialError(error) {
   if (error?.code?.includes('permission-denied')) return 'Нет доступа к социальным данным. Проверьте настройки Firebase и повторите попытку.';
@@ -124,15 +124,17 @@ const emit = (change) => {
   listeners.forEach((listener) => listener(state));
 };
 async function syncAcceptedInvitationStatuses(emails, currentGeneration = generation) {
-  if (!invitationUser || !Array.isArray(emails) || !emails.length) return {};
+  if (!invitationUser || !Array.isArray(emails)) return {};
   const idToken = await invitationUser.getIdToken();
   const statuses = await fetchInvitationStatuses({ emails, idToken });
   if (currentGeneration !== generation) return statuses;
   const acceptedEmails = [];
+  const serverPendingRows = [];
   for (const [rawEmail, status] of Object.entries(statuses || {})) {
-    if (status?.accepted !== true || !status.acceptedUid) continue;
     const email = String(rawEmail).trim().toLowerCase();
     if (!email) continue;
+    if (status?.invitationStatus === 'pending') serverPendingRows.push({ inviteeEmail: email, ownerUid: invitationUser.uid, active: true, createdAt: Number(status.createdAt) || Date.now(), emailSentAt: Number(status.lastSentAt) || 0, source: 'apps-script' });
+    if (status?.accepted !== true || !status.acceptedUid) continue;
     acceptedEmails.push(email);
     const accepted = { uid: String(status.acceptedUid), email, displayName: String(status.acceptedDisplayName || email) };
     const index = acceptedInviteFriends.findIndex((friend) => String(friend.email || "").trim().toLowerCase() === email);
@@ -141,14 +143,13 @@ async function syncAcceptedInvitationStatuses(emails, currentGeneration = genera
     const syncKey = String(invitationUser.uid) + ":" + email;
     if (!acceptedLedgerSyncs.has(syncKey)) {
       acceptedLedgerSyncs.add(syncKey);
-      void invitationLedger.setStatus(invitationUser.uid, email, "accepted", { acceptedUid: accepted.uid, acceptedAt: Number(status.acceptedAt) || Date.now() })
+      void invitationLedger.setStatus(invitationUser.uid, email, "accepted", { acceptedUid: accepted.uid, acceptedDisplayName: accepted.displayName, acceptedAt: Number(status.acceptedAt) || Date.now() })
         .catch((error) => { acceptedLedgerSyncs.delete(syncKey); console.warn("Could not update the Drive invitation ledger:", error); });
     }
   }
-  if (acceptedEmails.length) {
-    ledgerInvitationRowsCache = mergeInvitationRows(ledgerInvitationRowsCache, [], acceptedEmails);
-    emit({ friends: combineFriendRows(), invitations: mergeInvitationRows(state.invitations, ledgerInvitationRowsCache, acceptedEmails) });
-  }
+  if (serverPendingRows.length) ledgerInvitationRowsCache = mergeInvitationRows(ledgerInvitationRowsCache, serverPendingRows, acceptedEmails);
+  if (acceptedEmails.length) ledgerInvitationRowsCache = mergeInvitationRows(ledgerInvitationRowsCache, [], acceptedEmails);
+  if (acceptedEmails.length || serverPendingRows.length) emit({ friends: combineFriendRows(), invitations: mergeInvitationRows(state.invitations, ledgerInvitationRowsCache, acceptedEmails) });
   return statuses;
 }
 
@@ -227,18 +228,22 @@ export const social = {
       shared = createSharedLibraryStore({ user: session.user });
       settleConnectionReady(true);
       invitationUser = session.user;
+      let knownInvitationEmails = [];
       try {
         const savedLedger = await invitationLedger.load(invitationUser.uid);
         ledgerInvitationRowsCache = invitationLedgerRows(savedLedger.ledger);
-        emit({ invitations: mergeInvitationRows([], ledgerInvitationRowsCache) });
-        if (ledgerInvitationRowsCache.length) {
-          try { await syncAcceptedInvitationStatuses(ledgerInvitationRowsCache.map((item) => item.inviteeEmail), current); }
-          catch (error) { console.warn("Could not refresh invitation acceptance statuses:", error); }
-        }
+        acceptedInviteFriends = acceptedInvitationFriends(savedLedger.ledger);
+        knownInvitationEmails = [...new Set((savedLedger.ledger.invitations || []).map((item) => String(item.inviteeEmail || '').trim().toLowerCase()).filter(Boolean))];
+        emit({ friends: combineFriendRows(), invitations: mergeInvitationRows([], ledgerInvitationRowsCache) });
       } catch (error) {
         ledgerInvitationRowsCache = [];
+        acceptedInviteFriends = [];
         console.warn('Could not load the Drive invitation ledger:', error);
       }
+      // Apps Script is the source of truth, so reconstruct the invitation list and accepted
+      // friends even when the secondary Drive appData ledger is unavailable.
+      try { await syncAcceptedInvitationStatuses(knownInvitationEmails, current); }
+      catch (error) { console.warn('Could not refresh invitation acceptance statuses:', error); }
       // Accept the server-verified invitation before client registration. Apps Script
       // creates the profile, email directory entry and owner->reader relationship using
       // the verified token; the browser cannot forge an invitation to bypass the gate.
@@ -276,7 +281,7 @@ export const social = {
           if (!email || acceptedLedgerSyncs.has(syncKey)) continue;
           acceptedLedgerSyncs.add(syncKey);
           void invitationLedger.setStatus(invitationUser.uid, email, 'accepted', {
-            acceptedUid: String(accepted.uid || ''), acceptedAt: Date.now(),
+            acceptedUid: String(accepted.uid || ''), acceptedDisplayName: String(accepted.displayName || accepted.email || ''), acceptedAt: Date.now(),
           }).catch((error) => {
             acceptedLedgerSyncs.delete(syncKey);
             console.warn('Could not update the Drive invitation ledger:', error);

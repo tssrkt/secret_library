@@ -477,12 +477,14 @@ function handleAcceptInvitation(input) {
 
 function handleInvitationStatuses(input) {
   const idToken = String(input.idToken || '');
-  const emails = Array.isArray(input.emails) ? [...new Set(input.emails.slice(0, 500).map(normalizeEmail))].slice(0, 100) : [];
-  if (idToken.length < 100 || idToken.length > 5000 || !emails.length || emails.some(function (email) { return !isValidEmail(email); })) {
-    throw new Error('Не удалось обновить состояние приглашений. Обновите страницу.');
+  const requestedEmails = Array.isArray(input.emails) ? [...new Set(input.emails.slice(0, 500).map(normalizeEmail))].slice(0, 100) : [];
+  if (idToken.length < 100 || idToken.length > 5000 || requestedEmails.some(function (email) { return !isValidEmail(email); })) {
+    throw new Error('?? ??????? ???????? ????????? ???????????. ???????? ????????.');
   }
   const user = verifyFirebaseUser(idToken);
   const properties = PropertiesService.getScriptProperties();
+  // An empty email list means: return the current user's server-owned invitation registry.
+  const emails = requestedEmails.length ? requestedEmails : Object.keys(readOwnerInvitationRegistry(user.localId)).slice(0, 100);
   const statuses = {};
   emails.forEach(function (email) {
     if (email === normalizeEmail(user.email)) return;
@@ -490,6 +492,7 @@ function handleInvitationStatuses(input) {
     const invitation = readOwnerInvitationRecord(user.localId, email);
     const lastSentAt = current ? (current.status === 'sent' ? Number(current.at) || 0 : Number(current.lastSentAt) || 0) : 0;
     if (current || invitation) statuses[email] = { lastSentAt: lastSentAt, cooldownUntil: lastSentAt ? lastSentAt + RESEND_COOLDOWN_MS : 0,
+      invitationStatus: invitation?.status || '', createdAt: Number(invitation?.createdAt) || 0,
       ...(invitation?.status === 'accepted' ? { accepted: true, acceptedUid: invitation.acceptedUid, acceptedDisplayName: invitation.acceptedDisplayName, acceptedAt: invitation.acceptedAt } : {}) };
   });
   return statuses;

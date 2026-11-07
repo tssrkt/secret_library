@@ -12,6 +12,17 @@ function normalizeEmail(value) {
   return typeof value === 'string' ? value.trim().toLowerCase() : '';
 }
 
+export function acceptedInvitationFriends(ledger) {
+  return (Array.isArray(ledger?.invitations) ? ledger.invitations : [])
+    .filter((item) => item && item.status === 'accepted' && typeof item.acceptedUid === 'string' && item.acceptedUid)
+    .map((item) => ({
+      uid: item.acceptedUid,
+      email: normalizeEmail(item.inviteeEmail),
+      displayName: String(item.acceptedDisplayName || item.inviteeEmail || ''),
+    }))
+    .filter((item) => item.email);
+}
+
 export function invitationLedgerRows(ledger, acceptedEmails = []) {
   const accepted = new Set((acceptedEmails || []).map((email) => String(email || '').trim().toLowerCase()).filter(Boolean));
   return (Array.isArray(ledger?.invitations) ? ledger.invitations : [])
@@ -52,6 +63,7 @@ function normalizeRecord(record) {
     updatedAt: Number.isFinite(record.updatedAt) ? record.updatedAt : Date.now(),
     ...(typeof record.invitationId === 'string' ? { invitationId: record.invitationId } : {}),
     ...(typeof record.acceptedUid === 'string' ? { acceptedUid: record.acceptedUid } : {}),
+    ...(typeof record.acceptedDisplayName === 'string' ? { acceptedDisplayName: record.acceptedDisplayName.slice(0, 160) } : {}),
     ...(typeof record.acceptedAt === 'number' && Number.isFinite(record.acceptedAt) ? { acceptedAt: record.acceptedAt } : {}),
   };
 }

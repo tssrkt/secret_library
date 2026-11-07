@@ -146,7 +146,7 @@ test('invitation status checks use Script Properties and skip the owner email', 
   const before = app.calls.filter(call => call.url.includes('/pendingInvites/')).length;
   const result = app.invoke({ action: 'getInvitationStatuses', emails: ['friend@gmail.com', 'owner@gmail.com', 'other@gmail.com'] });
   assert.equal(app.calls.filter(call => call.url.includes('/pendingInvites/')).length, before);
-  assert.match(result.content, /"friend@gmail.com":\{"lastSentAt":\d+,"cooldownUntil":\d+\}/);
+  assert.match(result.content, /"friend@gmail.com":\{"lastSentAt":\d+,"cooldownUntil":\d+,"invitationStatus":"pending"/);
   assert.doesNotMatch(result.content, /owner@gmail.com/);
 });
 

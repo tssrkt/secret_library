@@ -63,6 +63,17 @@ test('invitation cooldown status reads only script properties, not Firestore inv
   assert.equal(statuses[email].cooldownUntil, 123456 + 60 * 60 * 1000);
 });
 
+
+test('empty status request enumerates the owner registry without Firestore invitation reads', () => {
+  const { context } = createHarness();
+  context.issueInvitationAcceptanceToken('owner-uid', 'owner@example.com', 'reader@example.com');
+  context.verifyFirebaseUser = () => ({ localId: 'owner-uid', email: 'owner@example.com', emailVerified: true });
+  context.readPendingInvitationsMany = () => { throw new Error('Firestore invitation reads are forbidden'); };
+  const statuses = context.handleInvitationStatuses({ idToken: 'x'.repeat(120), emails: [] });
+  assert.equal(statuses['reader@example.com'].invitationStatus, 'pending');
+  assert.ok(statuses['reader@example.com'].createdAt > 0);
+});
+
 test('acceptance token is one-time, email-bound, and notifies the inviter once', () => {
   const { context, sent, documents, writes } = createHarness();
   const issued = context.issueInvitationAcceptanceToken('owner-uid', 'owner@example.com', 'reader@example.com');
@@ -75,6 +86,7 @@ test('acceptance token is one-time, email-bound, and notifies the inviter once',
   assert.equal(documents.get('userDirectory/reader%40example.com').uid, 'reader-uid');
   assert.equal(documents.get('libraryShares/owner-uid__reader-uid').active, true);
   assert.equal(writes.filter((item) => item.path === 'libraryShares/owner-uid__reader-uid').length, 1);
+  assert.equal(writes.some((item) => item.path.includes('pendingInvites')), false, 'accepted registration never depends on Firestore invitation records');
   const repeated = context.handleAcceptInvitation({ token: issued.token, idToken: 'x'.repeat(120) });
   assert.equal(repeated.accepted, true);
   assert.equal(repeated.alreadyAccepted, true);
@@ -83,6 +95,7 @@ test('acceptance token is one-time, email-bound, and notifies the inviter once',
   const statuses = context.handleInvitationStatuses({ idToken: 'x'.repeat(120), emails: ['reader@example.com'] });
   assert.equal(statuses['reader@example.com'].accepted, true);
   assert.equal(statuses['reader@example.com'].acceptedUid, 'reader-uid');
+  assert.equal(statuses['reader@example.com'].acceptedDisplayName, 'Reader');
 });
 
 test('acceptance token cannot be claimed by a different email', () => {

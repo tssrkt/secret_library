@@ -4,9 +4,19 @@ import {
   createInvitationLedger,
   normalizeInvitationLedger,
   invitationLedgerRows,
+  acceptedInvitationFriends,
   mergeInvitationRows,
   INVITATION_LEDGER_FILE,
 } from '../js/invitation-ledger.js';
+
+test('accepted ledger records restore friends after reconnect without exposing them as pending invitations', () => {
+  const ledger = { ownerUid: 'owner-1', invitations: [
+    { inviteeEmail: 'friend@example.com', status: 'accepted', acceptedUid: 'friend-uid', acceptedDisplayName: 'Reader' },
+    { inviteeEmail: 'pending@example.com', status: 'pending' },
+  ] };
+  assert.deepEqual(acceptedInvitationFriends(ledger), [{ uid: 'friend-uid', email: 'friend@example.com', displayName: 'Reader' }]);
+  assert.deepEqual(invitationLedgerRows(ledger).map((row) => row.inviteeEmail), ['pending@example.com']);
+});
 
 test('ledger rows expose only pending invitations and omit accepted emails', () => {
   const rows = invitationLedgerRows({
@@ -44,7 +54,7 @@ test('ledger normalizes email, drops invalid entries, and keeps newest duplicate
     updatedAt: 10,
     invitations: [
       { inviteeEmail: ' Friend@Example.com ', status: 'pending', createdAt: 1, updatedAt: 2 },
-      { inviteeEmail: 'friend@example.com', status: 'accepted', createdAt: 1, updatedAt: 3, acceptedUid: 'friend-1' },
+      { inviteeEmail: 'friend@example.com', status: 'accepted', createdAt: 1, updatedAt: 3, acceptedUid: 'friend-1', acceptedDisplayName: 'Friend' },
       { inviteeEmail: '', status: 'pending' },
       { inviteeEmail: 'other@example.com', status: 'unknown' },
     ],
@@ -53,6 +63,7 @@ test('ledger normalizes email, drops invalid entries, and keeps newest duplicate
   assert.equal(result.invitations.length, 2);
   assert.equal(result.invitations.find((item) => item.inviteeEmail === 'friend@example.com').status, 'accepted');
   assert.equal(result.invitations.find((item) => item.inviteeEmail === 'friend@example.com').acceptedUid, 'friend-1');
+  assert.equal(result.invitations.find((item) => item.inviteeEmail === 'friend@example.com').acceptedDisplayName, 'Friend');
   assert.equal(result.invitations.find((item) => item.inviteeEmail === 'other@example.com').status, 'pending');
   assert.equal(normalizeInvitationLedger({ version: 1, ownerUid: 'another-owner', invitations: [] }, 'owner-1').invitations.length, 0);
 });
@@ -92,10 +103,11 @@ test('ledger creates, updates, and reads a private Drive appData file', async ()
   await ledger.upsert('owner-1', { inviteeEmail: 'friend@example.com', status: 'pending', createdAt: 2 });
   assert.equal((await ledger.load('owner-1')).ledger.invitations.length, 1);
 
-  await ledger.setStatus('owner-1', 'FRIEND@example.com', 'accepted', { acceptedUid: 'friend-uid' });
+  await ledger.setStatus('owner-1', 'FRIEND@example.com', 'accepted', { acceptedUid: 'friend-uid', acceptedDisplayName: 'Reader' });
   const accepted = (await ledger.load('owner-1')).ledger.invitations[0];
   assert.equal(accepted.status, 'accepted');
   assert.equal(accepted.acceptedUid, 'friend-uid');
+  assert.equal(accepted.acceptedDisplayName, 'Reader');
   assert.ok(accepted.acceptedAt > 0);
   assert.equal(calls.filter(([kind]) => kind === 'create').length, 1);
   assert.ok(calls.some(([kind]) => kind === 'update'));
