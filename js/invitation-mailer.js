@@ -74,6 +74,15 @@ export function sendInvitationEmail({ email, idToken }) {
   return submitMailerPayload({ email, idToken });
 }
 
+export function cancelInvitation({ email, idToken }) {
+  try { validateMailerRequest(idToken); }
+  catch (error) { return Promise.reject(error); }
+  if (typeof email !== 'string' || !email.trim()) {
+    return Promise.reject(new Error('Не указан адрес приглашённого участника.'));
+  }
+  return submitMailerPayload({ action: 'cancelInvitation', email: email.trim().toLowerCase(), idToken }, true);
+}
+
 export function getInvitationStatuses({ emails, idToken }) {
   try { validateMailerRequest(idToken); }
   catch (error) { return Promise.reject(error); }
