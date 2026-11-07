@@ -5,6 +5,7 @@ import { INVITATION_MAILER_URL } from './config.js';
 const $ = (selector) => document.querySelector(selector);
 const authPanel = $('#auth'), dashboard = $('#dashboard'), status = $('#status'), stats = $('#stats'), tabs = $('#tabs'), content = $('#content');
 let session, call, data, activeTab = 'users';
+let relationshipSharesCache = null;
 const adminPageState = Object.create(null);
 const adminPageFields = { users: 'users', relationships: 'users', invites: 'invitations', shares: 'shares', events: 'events', banned: 'banned', admins: 'admins' };
 function invalidateAdminPages(...keys) {
@@ -142,7 +143,7 @@ function renderUserCard(uid) {
   const byUid = new Map([...(data.users || []), ...Object.values(data.userProfiles || {})].map(u => [u.uid, u]));
   const invitedBy = byUid.get(user.invitedByUid);
   const invitedUsers = (data.users || []).filter(u => u.invitedByUid === uid);
-  const shares = (data.shares || []).filter(s => s.ownerUid === uid || s.viewerUid === uid);
+  const shares = (relationshipSharesCache || data.shares || []).filter(s => s.ownerUid === uid || s.viewerUid === uid);
   const bannedUids = new Set((data.banned || []).map(u => u.uid));
   const personLabel = (personUid) => {
     const person = byUid.get(personUid) || (data.banned || []).find(u => u.uid === personUid) || (data.admins || []).find(a => a.uid === personUid);
@@ -181,7 +182,7 @@ async function loadAdminPage(key, cursor = '', shouldRender = true, forceReload 
   if (cached && !forceReload) {
     data[field] = cached.items;
     if (cached.userProfiles) data.userProfiles = { ...(data.userProfiles || {}), ...cached.userProfiles };
-    if (key === 'relationships' && cached.shares) data.shares = cached.shares;
+    if (key === 'relationships' && cached.shares) relationshipSharesCache = cached.shares;
     state.cursor = cursor;
     state.nextCursor = cached.nextCursor;
     state.hasMore = cached.hasMore;
@@ -191,11 +192,11 @@ async function loadAdminPage(key, cursor = '', shouldRender = true, forceReload 
   }
   const knownProfileUids = Object.keys(data.userProfiles || {}).slice(-1000);
   let result;
-  if (key === 'relationships') result = await call('getAdminRelationshipRoots')({ cursor, includeShares: !Array.isArray(data.shares), knownProfileUids });
+  if (key === 'relationships') result = await call('getAdminRelationshipRoots')({ cursor, includeShares: !Array.isArray(relationshipSharesCache), knownProfileUids });
   else result = await call('getAdminCollectionPage')({ section: key, cursor, knownProfileUids });
   const profileDelta = result.userProfiles && typeof result.userProfiles === 'object' ? result.userProfiles : null;
   if (profileDelta) data.userProfiles = { ...(data.userProfiles || {}), ...profileDelta };
-  if (key === 'relationships' && Array.isArray(result.shares)) data.shares = result.shares;
+  if (key === 'relationships' && Array.isArray(result.shares)) relationshipSharesCache = result.shares;
   const items = result.items || [];
   const shares = key === 'relationships' && Array.isArray(result.shares) ? result.shares : null;
   state.pages[cursor] = { items, nextCursor: result.nextCursor || '', hasMore: Boolean(result.hasMore), userProfiles: profileDelta, shares };
@@ -438,7 +439,7 @@ function renderRelations() {
   roots.sort((a,b)=>(a.displayName||'').localeCompare(b.displayName||'','ru')).forEach(u=>tree.append(branch(u)));
   content.append(tree);
   content.append(node('h3','Алфавитный список и типы отношений'));
-  const active = (data.shares||[]).filter(s=>s.active);
+  const active = (relationshipSharesCache || []).filter(s=>s.active);
   const users = data.users || [];
   const invitedByUid = new Map();
   const outgoingByUid = new Map();
@@ -472,7 +473,7 @@ function renderRelations() {
   content.append(paginatedTable(['Участник','Пригласитель','Приглашённые','Связи доступа'],alphabeticRows,25,['','inviter-column','invited-column','']));
   content.append(node('h3','Отдельные связи доступа'));
   const ownerName = uid => resolveAdminUser(uid)?.displayName || resolveAdminUser(uid)?.email || uid || '';
-  const sortedShares = [...(data.shares || [])].sort((a,b) => ownerName(a.ownerUid).localeCompare(ownerName(b.ownerUid),'ru') || ownerName(a.viewerUid).localeCompare(ownerName(b.viewerUid),'ru') || String(a.id || '').localeCompare(String(b.id || '')));
+  const sortedShares = [...(relationshipSharesCache || [])].sort((a,b) => ownerName(a.ownerUid).localeCompare(ownerName(b.ownerUid),'ru') || ownerName(a.viewerUid).localeCompare(ownerName(b.viewerUid),'ru') || String(a.id || '').localeCompare(String(b.id || '')));
   const ownerColors = new Map();
   const shareRows = sortedShares.map(s=>{
     if (!ownerColors.has(s.ownerUid)) ownerColors.set(s.ownerUid, ownerColors.size % 2 === 0 ? 'share-owner-green' : 'share-owner-yellow');
@@ -536,7 +537,7 @@ function renderShares() {
       userLink(users.get(s.ownerUid),s.ownerUid),
       userLink(users.get(s.viewerUid),s.viewerUid),
       node('span',s.active?'Активен':'Закрыт',s.active?'':'share-closed'),
-      s.ownerUid === superAdminUid || s.viewerUid === superAdminUid ? '—' : button(s.active?'Закрыть доступ':'Доступ закрыт',async()=>{if(!s.active)return;const sure=confirm('Закрыть доступ к этой библиотеке?');if(!sure)return;await call('adminSetLibraryShare')({id:s.id,active:false});invalidateAdminPages('shares', 'relationships');await refresh();},s.active?'danger':'')
+      s.ownerUid === superAdminUid || s.viewerUid === superAdminUid ? '—' : button(s.active?'Закрыть доступ':'Доступ закрыт',async()=>{if(!s.active)return;const sure=confirm('Закрыть доступ к этой библиотеке?');if(!sure)return;await call('adminSetLibraryShare')({id:s.id,active:false});relationshipSharesCache = null;invalidateAdminPages('shares', 'relationships');await refresh();},s.active?'danger':'')
     ];
   });
   const rowClasses = shares.map(s => ownerColors.get(s.ownerUid));

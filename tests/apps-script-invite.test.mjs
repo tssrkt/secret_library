@@ -392,6 +392,9 @@ test('relationship root page batches users and shared-library reads in one Fires
 });
 
 test('relationship pages fetch shared-library records only on the initial request', () => {
+  assert.match(adminClientSource, /relationshipSharesCache = null/);
+  assert.match(adminClientSource, /includeShares: !Array\.isArray\(relationshipSharesCache\)/);
+  assert.match(adminClientSource, /relationshipSharesCache = null;invalidateAdminPages\('shares', 'relationships'\)/);
   const app = harness();
   let shareReads = 0;
   app.context.requireAdminApi = () => ({ uid: 'root', admin: { role: 'superadmin' } });
