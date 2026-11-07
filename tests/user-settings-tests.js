@@ -75,25 +75,28 @@ export async function runUserSettingsTests(test, assert, equal) {
     await saveUserSettings(normalizeUserSettings({ ...file, folderNotes: { chosen: 'note' } }, makeIndex()), makeIndex(), 'settings-id', api);
     equal([file.activeRootFolderId, file.activeRootFolderResourceKey], ['chosen-folder', 'folder-key'], 'ordinary settings saves preserve root and resource key');
   });
-  await test('settings cache survives controller recreation and renders before Drive refresh', async () => {
+  await test('settings page never flashes the previous snapshot on repeat visits', async () => {
     const index = makeIndex();
     const container = document.createElement('div');
-    const values = new Map();
-    const storage = { getItem: (key) => values.get(key) || null, setItem: (key, value) => values.set(key, value) };
+    const stale = { fileId: 'settings-id', settings: normalizeUserSettings(null, index) };
     const fresh = { fileId: 'settings-id', settings: normalizeUserSettings(settings(), index) };
-    const first = createUserSettingsController({ container, index, storage, clearError: () => {}, onError: (error) => { throw error; },
-      load: async () => fresh, save: async () => 'settings-id' });
-    await first.open();
-    first.leave();
+    let calls = 0;
     let finish;
-    const second = createUserSettingsController({ container, index, storage, clearError: () => {}, onError: (error) => { throw error; },
-      load: () => new Promise((resolve) => { finish = resolve; }), save: async () => 'settings-id' });
-    const opened = second.open();
-    assert(container.querySelector('.sharing-settings-form'), 'persistent cached settings render before remote refresh resolves');
-    equal([...container.querySelectorAll('input')].map((field) => [field.value, field.checked]), [['sf', false], ['history', true], ['new', true]], 'cached choices survive controller recreation');
+    const controller = createUserSettingsController({ container, index, clearError: () => {}, onError: (error) => { throw error; },
+      load: () => {
+        calls++;
+        return calls === 1 ? Promise.resolve(stale) : new Promise((resolve) => { finish = resolve; });
+      }, save: async () => 'settings-id' });
+    await controller.open();
+    equal([...container.querySelectorAll('input')].map((field) => field.checked), [true, true, true], 'first visit renders first snapshot');
+    controller.leave();
+    const opened = controller.open();
+    assert(!container.querySelector('.sharing-settings-form'), 'previous snapshot is not shown while the next load is pending');
     finish(fresh);
     await opened;
-    second.leave();
+    assert(container.querySelector('.sharing-settings-form'), 'form renders after fresh settings arrive');
+    equal([...container.querySelectorAll('input')].map((field) => [field.value, field.checked]), [['sf', false], ['history', true], ['new', true]], 'latest choices render without stale flash');
+    controller.leave();
     container.remove();
   });
 

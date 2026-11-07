@@ -11,7 +11,7 @@ import { syncFolderSharingAccess } from './drive-sharing.js';
 import { filterBooksByDirectValue, russianBookCount } from './direct-filter.js';
 import { createSearchController } from './search-ui.js';
 import { createIndexingErrorsController } from './indexing-errors-ui.js';
-import { createUserSettingsController } from './user-settings-ui.js?v=20261107-persistent-settings-cache';
+import { createUserSettingsController } from './user-settings-ui.js?v=20261107-settings-authoritative-refresh';
 import { mountFriends } from './friends-ui.js?v=20261107-cancelled-invites-count';
 import { createNotificationsController } from './notifications-ui.js?v=20261106-drive-notifications';
 import { social } from './social-runtime.js?v=20261107-cancel-invitation-response';
@@ -289,9 +289,18 @@ export function renderLibrary(index, onDownload = async () => {}, { ownerIndex =
   settingsController = createUserSettingsController({
     container: elements.tree, index: ownerIndex, clearError,
     load: async () => {
-      const saved = await loadSettings();
-      if (saved) return saved;
-      throw settingsLoadError || new Error('Не удалось загрузить настройки.');
+      // Settings must be re-read from Drive when this page opens. The startup
+      // loadSettings() promise is intentionally memoized for folder-note rendering
+      // and can otherwise keep returning an old snapshot on every later visit.
+      const saved = await loadUserSettings(ownerIndex);
+      savedUserSettings = saved;
+      settingsLoadError = null;
+      if (!readOnly) {
+        for (const [folderId, nodes] of noteNodes) {
+          for (const node of nodes) setFolderNote(node, saved.settings.folderNotes[folderId] || '');
+        }
+      }
+      return saved;
     },
     save: async (settings, settingsIndex, fileId) => {
       const restorePreviousPublication = async () => {
