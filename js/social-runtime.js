@@ -336,9 +336,16 @@ export const social = {
     }
     if (!rootFolderId) throw new Error('Не удалось определить корневую папку из опубликованного каталога Google Drive. Обновите библиотеку и повторите попытку.');
 
-    // The Apps Script invitation registry is the invitation authority; no pendingInvites
-    // document is created in Firestore. Registration is provisioned after token acceptance.
-    await grantRootFolderAccess(rootFolderId, normalizedEmail);
+    // Validate and send through the server-owned registry before granting Drive access.
+    // This prevents rejected/over-limit invitations from receiving the root folder.
+    const idToken = await invitationUser.getIdToken();
+    const result = await sendInvitationEmail({ email: normalizedEmail, idToken });
+    try {
+      await grantRootFolderAccess(rootFolderId, normalizedEmail);
+    } catch (error) {
+      const detail = String(error?.message || error || '').trim();
+      throw new Error('Invitation email was sent, but Google Drive folder access could not be granted. Do not resend the invitation; check the folder permissions. ' + detail);
+    }
     try {
       const savedLedger = await invitationLedger.upsert(invitationUser.uid, {
         inviteeEmail: normalizedEmail,
@@ -347,13 +354,11 @@ export const social = {
       });
       ledgerInvitationRowsCache = invitationLedgerRows(savedLedger.ledger, acceptedInviteFriends.map((friend) => friend.email));
     } catch (error) {
-      // Drive appData is the migration ledger, not the registration authority yet.
-      // Keep the existing invitation flow working if this secondary write fails.
+      // Drive appData is a secondary cache; the Apps Script registry can reconstruct
+      // the pending row on the next status refresh even if this write fails.
       console.warn('Could not save the Drive invitation ledger:', error);
     }
 
-    const idToken = await invitationUser.getIdToken();
-    const result = await sendInvitationEmail({ email: normalizedEmail, idToken });
     const known = driveFriends.find((friend) => String(friend.email || '').trim().toLowerCase() === normalizedEmail);
     if (known?.inbound) known.outbound = true;
     // Do not add a recipient to Friends merely because a Drive permission was granted.
