@@ -177,8 +177,10 @@ async function refreshDriveFriends(user, currentGeneration = generation, knownFr
     // confirmed friend list from this browser instead of showing a false zero.
     // This fallback is local-only and does not add Firestore reads.
     const cachedFriends = invitationUser ? readFriendCache(invitationUser.uid) : null;
+    // On initial discovery, do not present a persisted friend cache as if it were current.
+    // Background refreshes may retain the last confirmed list to avoid disruptive false-zero states.
     driveFriends = result.friends.length ? result.friends
-      : (cachedFriends?.length ? cachedFriends : (knownFriends || []));
+      : (!announceLoading && cachedFriends?.length ? cachedFriends : (knownFriends || []));
     const discoveryMessage = result.errors?.join(' ') || '';
     const usedFriendFallback = result.friends.length === 0 && driveFriends.length > 0;
     emit({ friends: combineFriendRows(), notifications: buildDriveNotifications(driveFriends), ownRootFolderId: result.rootFolderId || configuredRootFolderId, driveDiscoveryMessage: usedFriendFallback ? `Не удалось повторно обнаружить библиотеки в Google Drive; временно показан последний сохранённый список друзей. ${discoveryMessage}` : discoveryMessage, driveDiscoveryStatus: usedFriendFallback ? 'error' : (result.discoveryStatus || 'ready') });

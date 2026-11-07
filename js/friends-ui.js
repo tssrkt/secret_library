@@ -1,5 +1,5 @@
 import { createPaginator, paginateItems } from './pagination.js';
-import { socialError } from './social-runtime.js?v=20261107-cancel-invitation-response';
+import { socialError } from './social-runtime.js?v=20261107-authoritative-social-state';
 
 const HOUR_MS = 60 * 60 * 1000;
 
@@ -72,6 +72,7 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
   let invitationStatusSignature = null;
   let statusRefreshRevision = 0;
   let invitationStatuses = {};
+  let invitationStatusesLoaded = false;
   let invitationQuota = null;
   let quotaMetadataRetryUsed = false;
   // Keep a just-sent invitation visible while Firestore's live query catches up.
@@ -92,6 +93,13 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
   const renderInvitations = () => {
     const container = invitationsSection.querySelector('.sent-invitations-table-container');
     cooldownButtons = [];
+    // Invitation rows in the Drive ledger are only a provisional snapshot. Do not
+    // display them until the server-owned registry confirms their current status.
+    if (!invitationStatusesLoaded) {
+      invitationsSection.hidden = true;
+      container.replaceChildren();
+      return;
+    }
     const lastSentTime = (invite) => {
       const email = String(invite.inviteeEmail || '').trim().toLowerCase();
       return invitationStatuses[email] ? Number(invitationStatuses[email].lastSentAt) || 0 : timestampMillis(invite.emailSentAt || invite.createdAt);
@@ -212,6 +220,7 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
       const next = await social.getInvitationStatuses([]);
       if (closed || revision !== statusRefreshRevision) return;
       invitationStatuses = next;
+      invitationStatusesLoaded = true;
       invitationQuota = next.__quota || invitationQuota;
       render();
       if (!next.__quota && !invitationQuota && !quotaMetadataRetryUsed) {
@@ -235,7 +244,8 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
     }
   }
   const render = () => {
-    const paged = paginateItems(snapshot.friends, pageNumber, 50);
+    const discoveryPending = snapshot.driveDiscoveryStatus === 'loading' || snapshot.driveDiscoveryStatus === 'idle';
+    const paged = paginateItems(discoveryPending ? [] : snapshot.friends, pageNumber, 50);
     pageNumber = paged.currentPage;
     const count = paged.totalItems;
     const plural = (value, one, few, many) => {
@@ -247,7 +257,7 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
       return many;
     };
     const countLabel = friendsSection.querySelector('.friends-count');
-    if (snapshot.driveDiscoveryStatus === 'loading' && count === 0) countLabel.textContent = 'Список друзей загружается…';
+    if (discoveryPending && count === 0) countLabel.textContent = 'Список друзей загружается…';
     else if (snapshot.driveDiscoveryStatus === 'error' && count === 0) countLabel.textContent = 'Не удалось загрузить список друзей. Проверьте подключение к Google Drive и попробуйте снова.';
     else {
       const friendEmails = new Set((snapshot.friends || []).map((friend) => String(friend.email || '').trim().toLowerCase()).filter(Boolean));
@@ -337,7 +347,7 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
       const row = document.createElement('tr');
       const cell = document.createElement('td');
       cell.colSpan = 4;
-      cell.textContent = snapshot.driveDiscoveryStatus === 'loading' ? 'Список друзей загружается…'
+      cell.textContent = (snapshot.driveDiscoveryStatus === 'loading' || snapshot.driveDiscoveryStatus === 'idle') ? 'Список друзей загружается…'
         : snapshot.driveDiscoveryStatus === 'error' ? 'Не удалось загрузить список друзей.' : 'Друзей пока нет.';
       row.append(cell);
       table.querySelector('tbody').append(row);
@@ -362,6 +372,9 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
     const inviteSignature = (snapshot.invitations || []).map((invite) => String(invite.inviteeEmail || '').toLowerCase()).sort().join('|');
     if (inviteSignature !== invitationStatusSignature) {
       invitationStatusSignature = inviteSignature;
+      // A response for the previous invitation set cannot validate newly arrived ledger rows.
+      // Keep the section hidden until the status request for this exact set completes.
+      invitationStatusesLoaded = false;
       void refreshInvitationStatuses();
     }
     updateShareButton();

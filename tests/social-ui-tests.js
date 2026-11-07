@@ -39,6 +39,29 @@ export async function runSocialUiTests(test, assert, equal) {
       assert(social.calls.filter((call) => call === 'syncKnownContacts').length === 2, 'new friend triggers another contact sync');
     } finally { cleanup(); page.remove(); }
   });
+  await test('does not flash cached friends or invitations before authoritative refresh', async () => {
+    const page = document.createElement('div'); document.body.append(page);
+    const social = stub({
+      driveDiscoveryStatus: 'loading',
+      friends: [{ uid: 'friend', displayName: 'Old Name', email: 'friend@gmail.com', inbound: true, outbound: true }],
+      invitations: [{ inviteeEmail: 'friend@gmail.com', active: true, createdAt: Date.now() - 1000 }],
+    });
+    let finishStatuses;
+    social.getInvitationStatuses = () => new Promise((resolve) => { finishStatuses = resolve; });
+    const cleanup = mountFriends(page, social, () => {});
+    try {
+      await tick();
+      assert(!page.querySelector('.friends-table').textContent.includes('Old Name'), 'cached friend is not rendered while Drive discovery is loading');
+      assert(page.querySelector('.sent-invitations-section').hidden, 'provisional invitation ledger row is hidden until server status loads');
+      social.update({ driveDiscoveryStatus: 'ready', friends: [{ uid: 'friend', displayName: 'Administrator', isAdmin: true, email: '', inbound: true, outbound: true }] });
+      assert(page.querySelector('.friends-table').textContent.includes('Administrator'), 'fresh friend identity appears after Drive discovery');
+      assert(!page.querySelector('.friends-table').textContent.includes('Old Name'), 'old friend identity never flashes');
+      finishStatuses({ 'friend@gmail.com': { invitationStatus: 'accepted', accepted: true } });
+      await tick(); await tick();
+      assert(page.querySelector('.sent-invitations-section').hidden, 'accepted invitation is not rendered after authoritative status arrives');
+    } finally { cleanup(); page.remove(); }
+  });
+
   await test('shows the sending status directly below the email field while the request is pending', async () => {
     const page = document.createElement('div'); document.body.append(page);
     const social = stub({ invitations: [] });
