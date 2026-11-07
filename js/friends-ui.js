@@ -29,7 +29,7 @@ function invitationWasSent(result) {
 export function mountFriends(page, social, retry, openLibrary = (uid) => { window.location.href = `?library=${encodeURIComponent(uid)}`; }) {
   const shareSection = document.createElement('section');
   shareSection.className = 'social-section';
-  shareSection.innerHTML = '<h3>Пригласить участника</h3><form class="social-share-form"><label><input type="email" name="email" autocomplete="off" required aria-label="Gmail" placeholder="Gmail нового участника"></label><button class="settings-save-button" type="submit">ПОДЕЛИТЬСЯ</button></form><p role="status"></p><button class="settings-save-button" type="button" data-social-retry hidden>ПОВТОРИТЬ ПОДКЛЮЧЕНИЕ</button>';
+  shareSection.innerHTML = '<h3>Пригласить участника</h3><form class="social-share-form"><label><input type="email" name="email" autocomplete="off" required aria-label="Gmail" placeholder="Gmail нового участника"><p class="invitation-send-status" role="status" aria-live="polite"></p></label><button class="settings-save-button" type="submit">ПОДЕЛИТЬСЯ</button></form><button class="settings-save-button" type="button" data-social-retry hidden>ПОВТОРИТЬ ПОДКЛЮЧЕНИЕ</button>';
   const friendsSection = document.createElement('section');
   friendsSection.className = 'social-section friends-section';
   friendsSection.innerHTML = '<h3>Друзья</h3><p class="friends-count" role="status"></p><p class="friends-access-message" role="status"></p><div class="friends-table-container"></div>';
@@ -277,7 +277,8 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
     if (sending || !form.elements.email.value.trim() || !form.elements.email.validity.valid) return;
-    sending = true; updateShareButton(); message.textContent = '';
+    sending = true; updateShareButton(); message.textContent = 'Отправляем приглашение…';
+    submit.textContent = 'ОТПРАВЛЯЕМ…';
     try {
       const email = form.elements.email.value;
       const result = await social.shareWithEmail(email);
@@ -303,7 +304,7 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
       }
     }
     catch (error) { if (!closed) message.textContent = socialError(error); }
-    finally { sending = false; if (!closed) updateShareButton(); }
+    finally { sending = false; submit.textContent = 'ПОДЕЛИТЬСЯ'; if (!closed) updateShareButton(); }
   });
   const timer = setInterval(updateCooldowns, 1000);
   return () => { closed = true; clearInterval(timer); unsubscribe(); };

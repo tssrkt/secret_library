@@ -39,6 +39,28 @@ export async function runSocialUiTests(test, assert, equal) {
       assert(social.calls.filter((call) => call === 'syncKnownContacts').length === 2, 'new friend triggers another contact sync');
     } finally { cleanup(); page.remove(); }
   });
+  await test('shows the sending status directly below the email field while the request is pending', async () => {
+    const page = document.createElement('div'); document.body.append(page);
+    const social = stub({ invitations: [] });
+    let finishSend;
+    social.shareWithEmail = () => new Promise((resolve) => { finishSend = resolve; });
+    const cleanup = mountFriends(page, social, () => {});
+    try {
+      const form = page.querySelector('.social-share-form');
+      const input = form.elements.email;
+      input.value = 'pending@gmail.com';
+      form.requestSubmit();
+      await tick();
+      const status = page.querySelector('.invitation-send-status');
+      assert(status.textContent === 'Отправляем приглашение…', 'sending status appears immediately');
+      assert(status.parentElement === input.parentElement, 'sending status is below the input in its label');
+      assert(form.querySelector('button').disabled, 'submit button is disabled while sending');
+      finishSend('Приглашение отправлено.');
+      await tick(); await tick();
+      assert(status.textContent === 'Приглашение отправлено.', 'success replaces sending status');
+    } finally { cleanup(); page.remove(); }
+  });
+
   await test('newly sent invitation appears immediately without waiting for Firestore refresh', async () => {
     const page = document.createElement('div'); document.body.append(page);
     const social = stub({ invitations: [] });

@@ -40,7 +40,10 @@ function submitMailerPayload(payload, returnData = false) {
     };
     const onMessage = (event) => {
       if (event.source !== frame.contentWindow) return;
-      if (event.origin !== 'https://script.google.com' && event.origin !== 'https://script.googleusercontent.com') return;
+      // Apps Script HTMLService commonly redirects iframe responses to a unique
+      // <id>-script.googleusercontent.com hostname. Keep the source-window and
+      // request-ID checks above/below, but accept that documented response origin.
+      if (!/^https:\/\/(?:script\.google\.com|script\.googleusercontent\.com|[a-z0-9-]+-script\.googleusercontent\.com)$/.test(event.origin)) return;
       const data = event.data;
       if (!data || data.type !== RESULT_TYPE || data.requestId !== requestId) return;
       if (data.ok === true) finish(null, returnData ? (data.data || {}) : String(data.message || 'Приглашение отправлено.'));
