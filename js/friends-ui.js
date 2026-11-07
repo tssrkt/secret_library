@@ -101,6 +101,8 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
     for (const invite of invitations) {
       const email = String(invite.inviteeEmail || '').trim().toLowerCase();
       if (!email) continue;
+      const invitationState = invitationStatuses[email]?.invitationStatus;
+      if (invitationState === 'revoked' || invitationState === 'accepted') continue;
       const row = document.createElement('tr');
       const user = document.createElement('td');
       user.textContent = email;
@@ -142,6 +144,36 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
       });
       wrapper.append(button);
       action.append(wrapper);
+      const cancelButton = document.createElement('button');
+      cancelButton.type = 'button';
+      cancelButton.className = 'settings-save-button';
+      cancelButton.textContent = 'ОТМЕНИТЬ';
+      cancelButton.addEventListener('click', async () => {
+        if (busy.has(email) || snapshot.status !== 'ready') return;
+        if (typeof social.cancelInvitation !== 'function') {
+          setInvitationMessage('Отмена приглашения пока недоступна. Обновите страницу и попробуйте снова.');
+          return;
+        }
+        if (!window.confirm(`Отменить приглашение для ${email}? Ссылка регистрации перестанет работать, а доступ к вашей корневой папке будет закрыт.`)) return;
+        busy.add(email);
+        cancelButton.disabled = true;
+        button.disabled = true;
+        invitationsMessage.textContent = '';
+        try {
+          await social.cancelInvitation(email);
+          invitationsMessage.textContent = 'Приглашение отменено.';
+          await refreshInvitationStatuses([email]);
+        } catch (error) {
+          setInvitationMessage(socialError(error));
+          // Keep the row available for a retry if Drive permission cleanup needs another attempt.
+          await refreshInvitationStatuses([email]);
+        } finally {
+          busy.delete(email);
+          updateCooldowns();
+          cancelButton.disabled = false;
+        }
+      });
+      action.append(cancelButton);
       row.append(user, sentDate, action);
       table.querySelector('tbody').append(row);
       cooldownButtons.push({ email, sentAt, button, wrapper });
