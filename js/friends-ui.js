@@ -204,17 +204,11 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
   async function refreshInvitationStatuses(extraEmails = []) {
     if (typeof social.getInvitationStatuses !== 'function') return;
     const revision = ++statusRefreshRevision;
-    const emails = [...new Set([...(snapshot.invitations || []).map((invite) => String(invite.inviteeEmail || '').trim().toLowerCase()), ...extraEmails.map((email) => String(email || '').trim().toLowerCase())].filter(Boolean))];
     try {
-      const next = {};
-      // An empty list is meaningful: ask the server for the full owner invitation registry.
-      // Do not return early, or invitations missing from the local Drive ledger stay invisible.
-      if (!emails.length) Object.assign(next, await social.getInvitationStatuses([]));
-      else {
-        for (let offset = 0; offset < emails.length; offset += 100) {
-          Object.assign(next, await social.getInvitationStatuses(emails.slice(offset, offset + 100)));
-        }
-      }
+      // Always ask for the full server-owned registry in one request. The empty
+      // email list is also the canonical path for invitation quota metadata, so
+      // quota display must not depend on whether local invitation rows exist.
+      const next = await social.getInvitationStatuses([]);
       if (closed || revision !== statusRefreshRevision) return;
       invitationStatuses = next;
       invitationQuota = next.__quota || invitationQuota;
