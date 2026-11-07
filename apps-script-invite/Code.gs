@@ -878,7 +878,8 @@ function handleAdminRequest(input) {
   }
   const actor = requireAdminApi(user.localId);
   switch (action) {
-    case 'getAdminDashboard': return getAdminDashboardApi(actor);
+    // The unbounded legacy dashboard is intentionally not exposed. The live admin
+    // client uses the summary + cursor-paginated APIs below.
     case 'getAdminDashboardSummary': return getAdminDashboardSummaryApi(actor);
     case 'getAdminCollectionPage': return getAdminCollectionPageApi(actor, data);
     case 'getAdminBranch': return getAdminBranchApi(actor, data);
@@ -959,9 +960,12 @@ function getAdminDashboardSummaryApi(actor) {
   // The dashboard summary deliberately excludes invitations: enumerating
   // pendingInvites here caused extra Firestore reads on every admin refresh.
   const counts = Object.fromEntries(countSpecs.map(spec => [spec.key, null]));
-  const summary = fsCountMany(countSpecs.filter(spec => spec.enabled), true);
-  Object.assign(counts, summary.counts);
-  const superadminUid = summary.superAdminUid;
+  // Only the users and shares screens use this marker. Avoid an extra
+  // superadmin lookup for moderators who can access unrelated sections only.
+  const needsSuperadminUid = Boolean(p.users || p.shares);
+  const summary = fsCountMany(countSpecs.filter(spec => spec.enabled), needsSuperadminUid);
+  Object.assign(counts, summary.counts || {});
+  const superadminUid = summary.superAdminUid || null;
   return { permissions: p, counts, superAdminUid: superadminUid, invitationEmailTemplate: p.texts ? getInvitationEmailTemplate() : null, invitationLimit: p.invites ? getInvitationLimit() : null };
 }
 

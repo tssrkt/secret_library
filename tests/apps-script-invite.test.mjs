@@ -485,6 +485,31 @@ test('admin dashboard summary returns aggregate counts and a superadmin marker w
   assert.equal(requests.filter(request => request.url.includes('runAggregationQuery')).length, 4);
   assert.equal(requests.filter(request => request.url.endsWith('documents:runQuery')).length, 1);
 });
+
+test('legacy unbounded dashboard action is not exposed by the admin request router', () => {
+  const app = harness();
+  app.context.verifyFirebaseUser = () => ({ localId: 'root', email: 'root@example.com' });
+  app.context.requireAdminApi = uid => ({ uid, admin: { role: 'superadmin' } });
+  assert.throws(() => app.context.handleAdminRequest({ idToken: 'x'.repeat(120), action: 'getAdminDashboard', data: {} }));
+});
+
+test('admin summary skips superadmin lookup when the moderator cannot access users or shares', () => {
+  const app = harness();
+  const requests = [];
+  app.context.fsFetch = (url, method, body) => {
+    requests.push({ url, method, body });
+    return { code: 200, text: '[]' };
+  };
+  const summary = app.context.getAdminDashboardSummaryApi({
+    uid: 'moderator',
+    admin: { role: 'moderator', permissions: { invites: true, events: true } }
+  });
+  assert.equal(summary.superAdminUid, null);
+  assert.equal(requests.length, 0);
+  assert.equal(summary.counts.users, null);
+  assert.equal(summary.counts.shares, null);
+});
+
 test('admin dashboard counters use Firestore aggregation without downloading collection documents', () => {
   const app = harness();
   let request;
