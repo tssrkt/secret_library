@@ -15,7 +15,7 @@ import {
   canResumeBuildingIndex, prepareBuildingIndex, updateBuildProgress, validateCompletedIndex,
 } from './index-build.js';
 import { prepareIndexingRun, createRetryEligibilityCheck } from './indexing-run.js';
-import * as ui from './ui.js?v=20261107-friends-quota-and-empty-folders';
+import * as ui from './ui.js?v=20261107-settings-cache-fix';
 import { errorDetails, recordIndexingError } from './indexing-errors.js';
 import { social, socialError } from './social-runtime.js?v=20261107-cancel-invitation-response';
 import { getAccessToken } from './auth.js';
