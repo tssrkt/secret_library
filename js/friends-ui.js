@@ -29,7 +29,7 @@ function invitationWasSent(result) {
 export function mountFriends(page, social, retry, openLibrary = (uid) => { window.location.href = `?library=${encodeURIComponent(uid)}`; }) {
   const shareSection = document.createElement('section');
   shareSection.className = 'social-section';
-  shareSection.innerHTML = '<h3>Пригласить участника</h3><form class="social-share-form"><label><input type="email" name="email" autocomplete="off" required aria-label="Gmail" placeholder="Gmail нового участника"></label><button class="settings-save-button" type="submit">ПОДЕЛИТЬСЯ</button><p class="invitation-send-status" role="status" aria-live="polite"></p></form><button class="settings-save-button" type="button" data-social-retry hidden>ПОВТОРИТЬ ПОДКЛЮЧЕНИЕ</button>';
+  shareSection.innerHTML = '<h3>Пригласить участника</h3><form class="social-share-form"><label><input type="email" name="email" autocomplete="off" required aria-label="Gmail" placeholder="Gmail нового участника"></label><p class="invitation-send-status" role="status" aria-live="polite"></p><button class="settings-save-button" type="submit">ПОДЕЛИТЬСЯ</button></form><button class="settings-save-button" type="button" data-social-retry hidden>ПОВТОРИТЬ ПОДКЛЮЧЕНИЕ</button>';
   const friendsSection = document.createElement('section');
   friendsSection.className = 'social-section friends-section';
   friendsSection.innerHTML = '<h3>Друзья</h3><p class="friends-count" role="status"></p><p class="friends-access-message" role="status"></p><div class="friends-table-container"></div>';
