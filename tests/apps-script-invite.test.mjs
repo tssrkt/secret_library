@@ -201,7 +201,9 @@ test('admin summary batches independent Firestore aggregation counts', () => {
 });
 
 test('admin page requests reuse profiles already loaded by the client', () => {
-  assert.match(adminClientSource, /knownProfileUids = Object\.keys\(data\.userProfiles \|\| \{\}\)\.slice\(-1000\)/);
+  assert.match(adminClientSource, /function knownAdminProfileUids\(\)/);
+  assert.match(adminClientSource, /adminPageState\.users\?\.pages/);
+  assert.match(adminClientSource, /knownProfileUids = knownAdminProfileUids\(\)/);
   assert.match(adminClientSource, /getAdminCollectionPage'\)\(\{ section: key, cursor, knownProfileUids \}\)/);
   const app = harness();
   let request;

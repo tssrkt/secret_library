@@ -11,6 +11,15 @@ const adminPageFields = { users: 'users', relationships: 'users', invites: 'invi
 function invalidateAdminPages(...keys) {
   for (const key of keys) delete adminPageState[key];
 }
+function knownAdminProfileUids() {
+  const known = new Set(Object.keys(data?.userProfiles || {}));
+  // User-list pages already contain full user documents; reuse those UIDs on other tabs.
+  const pages = adminPageState.users?.pages || {};
+  Object.values(pages).forEach(page => (page.items || []).forEach(user => {
+    if (user?.uid || user?.id) known.add(user.uid || user.id);
+  }));
+  return [...known].slice(-1000);
+}
 const sections = [
   ['users','Участники'],['relationships','Связи'],
   ['shares','Доступ к библиотекам'],['events','Журнал событий'],['banned','Забаненные'],['admins','Администраторы'],['texts','Тексты']
@@ -190,7 +199,7 @@ async function loadAdminPage(key, cursor = '', shouldRender = true, forceReload 
     if (shouldRender) render();
     return;
   }
-  const knownProfileUids = Object.keys(data.userProfiles || {}).slice(-1000);
+  const knownProfileUids = knownAdminProfileUids();
   let result;
   if (key === 'relationships') result = await call('getAdminRelationshipRoots')({ cursor, includeShares: !Array.isArray(relationshipSharesCache), knownProfileUids });
   else result = await call('getAdminCollectionPage')({ section: key, cursor, knownProfileUids });
