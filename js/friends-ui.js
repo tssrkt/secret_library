@@ -1,5 +1,5 @@
 import { createPaginator, paginateItems } from './pagination.js';
-import { socialError } from './social-runtime.js?v=20261107-cancel-invitation';
+import { socialError } from './social-runtime.js?v=20261107-cancel-invitation-response';
 
 const HOUR_MS = 60 * 60 * 1000;
 
@@ -171,13 +171,14 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
         busy.add(email);
         cancelButton.disabled = true;
         button.disabled = true;
-        invitationsMessage.textContent = '';
+        invitationsMessage.textContent = `Отменяем приглашение для ${email}...`;
         try {
           await social.cancelInvitation(email);
-          invitationsMessage.textContent = 'Приглашение отменено.';
+          invitationsMessage.textContent = `Приглашение для ${email} отменено.`;
           await refreshInvitationStatuses([email]);
         } catch (error) {
-          setInvitationMessage(socialError(error));
+          invitationsMessage.textContent = socialError(error);
+          // Cancellation feedback belongs below the sent-invitations table, not under the email input.
           // Keep the row available for a retry if Drive permission cleanup needs another attempt.
         } finally {
           busy.delete(email);

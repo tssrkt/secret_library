@@ -45,7 +45,12 @@ function submitMailerPayload(payload, returnData = false) {
       // binds the response to this request without rejecting the legitimate reply.
       if (!/^https:\/\/(?:script\.google\.com|script\.googleusercontent\.com|[a-z0-9-]+-script\.googleusercontent\.com)$/.test(event.origin)) return;
       const data = event.data;
-      if (!data || data.type !== RESULT_TYPE || data.requestId !== requestId) return;
+      if (!data || data.requestId !== requestId) return;
+      if (data.type === 'secret-library-admin-result') {
+        finish(new Error(String(data.message || 'Сервис приглашений не поддерживает эту операцию. Обновите развёртывание Apps Script до последней версии.')));
+        return;
+      }
+      if (data.type !== RESULT_TYPE) return;
       if (data.ok === true) finish(null, returnData ? (data.data || {}) : String(data.message || 'Приглашение отправлено.'));
       else finish(new Error(String(data.message || 'Не удалось выполнить операцию с приглашением.')));
     };
