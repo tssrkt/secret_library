@@ -669,9 +669,10 @@ function handleInvitationStatuses(input) {
 }
 
 function getActiveAdminUids() {
-  const cache = CacheService.getScriptCache();
+  let cache = null;
   const cacheKey = 'active-admin-uids-v1';
   try {
+    cache = CacheService.getScriptCache();
     const cached = cache.get(cacheKey);
     if (cached) return JSON.parse(cached);
   } catch (_) {}

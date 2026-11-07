@@ -81,7 +81,8 @@ test('empty status discovery restores more than one hundred admin invitations', 
   for (let i = 0; i < 125; i++) context.issueInvitationAcceptanceToken('owner-uid', 'owner@example.com', 'reader' + i + '@example.com');
   context.verifyFirebaseUser = () => ({ localId: 'owner-uid', email: 'owner@example.com', emailVerified: true });
   const statuses = context.handleInvitationStatuses({ idToken: 'x'.repeat(120), emails: [] });
-  assert.equal(Object.keys(statuses).length, 125);
+  assert.equal(Object.keys(statuses).filter((email) => email !== '__quota').length, 125);
+  assert.equal(statuses.__quota.limit, 20);
 });
 
 test('owner invitation registry migrates legacy storage and stores recipients separately', () => {
