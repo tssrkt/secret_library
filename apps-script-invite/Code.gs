@@ -1000,6 +1000,7 @@ function fsCount(collectionId, filter, allDescendants) {
   return Number(value || 0);
 }
 const ADMIN_COUNT_CACHE_TTL_SECONDS = 60;
+const ADMIN_USER_FLAGS_CACHE_TTL_SECONDS = 60;
 function fsCountMany(specs, includeSuperAdmin) {
   const cache = CacheService.getScriptCache();
   const cachedSuperAdmin = includeSuperAdmin ? cache.get('superadmin_uid') : null;
@@ -1204,7 +1205,7 @@ function fsGetAdminUserFlags(uids, profileUids, knownProfileUids) {
   });
   requested.forEach(uid => cache.put('admin_user_flags_v1_' + uid, JSON.stringify({
     banned: result.banned.has(uid), admin: result.admins.has(uid), emailId: result.emailByUid.get(uid) || ''
-  }), 15));
+  }), ADMIN_USER_FLAGS_CACHE_TTL_SECONDS));
   return result;
 }
 function fsInvalidateAdminUserFlags(uid) {

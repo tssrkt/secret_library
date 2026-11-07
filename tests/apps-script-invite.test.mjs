@@ -471,7 +471,9 @@ test('invitation dashboard reads only nested shares under pendingInvites', () =>
   assert.equal(invites[0].ownerUid, 'owner-uid');
 });
 
-test('admin participant flags are cached briefly and mutations invalidate the participant entry', () => {
+test('admin participant flags use a 60-second cache and mutations invalidate the participant entry', () => {
+  assert.match(source, /const ADMIN_USER_FLAGS_CACHE_TTL_SECONDS = 60/);
+  assert.match(source, /ADMIN_USER_FLAGS_CACHE_TTL_SECONDS\)\);/);
   const app = harness();
   let requests = 0;
   app.context.ScriptApp = { getOAuthToken: () => 'test-token' };
