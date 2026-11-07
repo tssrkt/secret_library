@@ -7,6 +7,9 @@ const authPanel = $('#auth'), dashboard = $('#dashboard'), status = $('#status')
 let session, call, data, activeTab = 'users';
 const adminPageState = Object.create(null);
 const adminPageFields = { users: 'users', relationships: 'users', invites: 'invitations', shares: 'shares', events: 'events', banned: 'banned', admins: 'admins' };
+function invalidateAdminPages(...keys) {
+  for (const key of keys) delete adminPageState[key];
+}
 const sections = [
   ['users','Участники'],['relationships','Связи'],
   ['shares','Доступ к библиотекам'],['events','Журнал событий'],['banned','Забаненные'],['admins','Администраторы'],['texts','Тексты']
@@ -278,9 +281,11 @@ function renderTabs() {
     tabs.append(button(title, async () => {
       activeTab = key;
       try {
-        if (key !== 'texts' && !adminPageState[key]) {
-          await loadAdminPage(key, '', false);
-          if (adminPageState[key]) adminPageState[key].history = [''];
+        if (key !== 'texts') {
+          const page = adminPageState[key];
+          const cursor = page?.cursor || '';
+          await loadAdminPage(key, cursor, false);
+          if (adminPageState[key] && !page) adminPageState[key].history = [''];
         }
         render();
       } catch (error) { say(error?.message || 'Не удалось загрузить раздел админки.', true); }
@@ -354,8 +359,8 @@ function renderUsers() {
       const actions = node('div',null,'actions');
       if (u.uid !== superAdminUid) {
         if (u.banned) {
-          if (data.permissions?.banned) actions.append(button('Восстановить', async()=>{await call('restoreLibraryUser')({uid:u.uid}); await refresh();}));
-        } else actions.append(button('Заблокировать',async()=>{const reason=window.prompt('Причина блокировки (необязательно):','');if(reason===null)return;await call('banLibraryUser')({uid:u.uid,reason});await refresh();},'danger'));
+          if (data.permissions?.banned) actions.append(button('Восстановить', async()=>{await call('restoreLibraryUser')({uid:u.uid}); invalidateAdminPages('users', 'banned', 'admins', 'relationships'); await refresh();}));
+        } else actions.append(button('Заблокировать',async()=>{const reason=window.prompt('Причина блокировки (необязательно):','');if(reason===null)return;await call('banLibraryUser')({uid:u.uid,reason});invalidateAdminPages('users', 'banned', 'admins', 'relationships');await refresh();},'danger'));
       }
       if (data.permissions?.admins && u.admin && u.uid !== superAdminUid) {
         actions.style.flexDirection = 'column';
@@ -531,7 +536,7 @@ function renderShares() {
       userLink(users.get(s.ownerUid),s.ownerUid),
       userLink(users.get(s.viewerUid),s.viewerUid),
       node('span',s.active?'Активен':'Закрыт',s.active?'':'share-closed'),
-      s.ownerUid === superAdminUid || s.viewerUid === superAdminUid ? '—' : button(s.active?'Закрыть доступ':'Доступ закрыт',async()=>{if(!s.active)return;const sure=confirm('Закрыть доступ к этой библиотеке?');if(!sure)return;await call('adminSetLibraryShare')({id:s.id,active:false});await refresh();},s.active?'danger':'')
+      s.ownerUid === superAdminUid || s.viewerUid === superAdminUid ? '—' : button(s.active?'Закрыть доступ':'Доступ закрыт',async()=>{if(!s.active)return;const sure=confirm('Закрыть доступ к этой библиотеке?');if(!sure)return;await call('adminSetLibraryShare')({id:s.id,active:false});invalidateAdminPages('shares', 'relationships');await refresh();},s.active?'danger':'')
     ];
   });
   const rowClasses = shares.map(s => ownerColors.get(s.ownerUid));
@@ -546,7 +551,7 @@ function renderEvents() {
 function renderBanned() {
   const rows = (data.banned||[]).map(u=>[
     userLink(u),u.reason,u.bannedBy,dateLabel(u.bannedAt),
-    button('Восстановить',async()=>{await call('restoreLibraryUser')({uid:u.uid});await refresh();})
+    button('Восстановить',async()=>{await call('restoreLibraryUser')({uid:u.uid});invalidateAdminPages('users', 'banned', 'admins', 'relationships');await refresh();})
   ]);
   content.append(paginatedTable(['Участник','Причина','Кем заблокирован','Дата','Действие'],rows));
 }
@@ -559,7 +564,7 @@ function renderAdminEditor(user=null) {
     const checks=[];
     sections.forEach(([key,title])=>{const labelEl=node('label');labelEl.style.display='block';const input=node('input');input.type='checkbox';input.checked=existing?.permissions?.[key]===true;labelEl.append(input,document.createTextNode(' '+title));form.append(labelEl);checks.push([key,input]);});
     const activeLabel=node('label');activeLabel.style.display='block';const activeInput=node('input');activeInput.type='checkbox';activeInput.checked=existing ? existing.active===true : true;activeLabel.append(activeInput,document.createTextNode(' Учётная запись администратора активна'));form.append(activeLabel);
-    form.append(button('Сохранить права',async()=>{try{const permissions=Object.fromEntries(checks.map(([k,i])=>[k,i.checked]));await call('setAdminPermissions')({uid:user.uid,email:existing?.email||'',permissions,active:activeInput.checked});await refresh();}catch(e){say(e?.message||'Не удалось сохранить права.',true);}},'primary'));
+    form.append(button('Сохранить права',async()=>{try{const permissions=Object.fromEntries(checks.map(([k,i])=>[k,i.checked]));await call('setAdminPermissions')({uid:user.uid,email:existing?.email||'',permissions,active:activeInput.checked});invalidateAdminPages('users', 'admins', 'relationships');await refresh();}catch(e){say(e?.message||'Не удалось сохранить права.',true);}},'primary'));
     form.append(button('Отмена',()=>render()));content.append(form);return;
   }
   const rows = (data.admins||[]).map(a=>[
