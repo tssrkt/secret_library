@@ -35,6 +35,7 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
   friendsSection.innerHTML = '<h3>Друзья</h3><p class="friends-count" role="status"></p><p class="friends-access-message" role="status"></p><div class="friends-table-container"></div>';
   const invitationsSection = document.createElement('section');
   invitationsSection.className = 'social-section sent-invitations-section';
+  invitationsSection.hidden = true;
   invitationsSection.innerHTML = '<h3>Отправленные приглашения</h3><p>Если друг не видит приглашения, пусть проверит папку «Спам».</p><p class="sent-invitations-message" role="status"></p><div class="sent-invitations-table-container"></div>';
   page.append(shareSection, friendsSection, invitationsSection);
   const form = shareSection.querySelector('form');
@@ -72,6 +73,7 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
   let statusRefreshRevision = 0;
   let invitationStatuses = {};
   let invitationQuota = null;
+  let quotaMetadataRetryUsed = false;
   // Keep a just-sent invitation visible while Firestore's live query catches up.
   const optimisticInvitations = new Map();
   let serviceMessage = '';
@@ -89,20 +91,30 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
   };
   const renderInvitations = () => {
     const container = invitationsSection.querySelector('.sent-invitations-table-container');
-    const table = document.createElement('table');
-    table.className = 'sent-invitations-table';
-    table.innerHTML = '<thead><tr><th scope="col">Пользователь</th><th scope="col">Дата отправки</th><th scope="col">Действие</th></tr></thead><tbody></tbody>';
     cooldownButtons = [];
     const lastSentTime = (invite) => {
       const email = String(invite.inviteeEmail || '').trim().toLowerCase();
       return invitationStatuses[email] ? Number(invitationStatuses[email].lastSentAt) || 0 : timestampMillis(invite.emailSentAt || invite.createdAt);
     };
-    const invitations = [...(snapshot.invitations || [])].sort((a, b) => lastSentTime(b) - lastSentTime(a));
+    const invitations = [...(snapshot.invitations || [])]
+      .filter((invite) => {
+        const email = String(invite.inviteeEmail || '').trim().toLowerCase();
+        const status = invitationStatuses[email]?.invitationStatus;
+        return Boolean(email) && status !== 'revoked' && status !== 'accepted';
+      })
+      .sort((a, b) => lastSentTime(b) - lastSentTime(a));
+    if (!invitations.length) {
+      invitationsSection.hidden = true;
+      container.replaceChildren();
+      return;
+    }
+    invitationsSection.hidden = false;
+    const table = document.createElement('table');
+    table.className = 'sent-invitations-table';
+    table.innerHTML = '<thead><tr><th scope="col">Пользователь</th><th scope="col">Дата отправки</th><th scope="col">Действие</th></tr></thead><tbody></tbody>';
     for (const invite of invitations) {
       const email = String(invite.inviteeEmail || '').trim().toLowerCase();
-      if (!email) continue;
       const invitationState = invitationStatuses[email]?.invitationStatus;
-      if (invitationState === 'revoked' || invitationState === 'accepted') continue;
       const row = document.createElement('tr');
       const user = document.createElement('td');
       user.textContent = email;
@@ -207,10 +219,24 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
       invitationStatuses = next;
       invitationQuota = next.__quota || invitationQuota;
       render();
+      if (!next.__quota && !invitationQuota && !quotaMetadataRetryUsed) {
+        quotaMetadataRetryUsed = true;
+        setTimeout(() => {
+          if (!closed && !invitationQuota) void refreshInvitationStatuses();
+        }, 1200);
+      }
     } catch (error) {
       // Status refresh is secondary to sending. Keep service errors in the single
       // status line under the email field, never in the sent-invitations section.
-      if (!closed && revision === statusRefreshRevision) renderInvitations();
+      if (!closed && revision === statusRefreshRevision) {
+        renderInvitations();
+        if (!quotaMetadataRetryUsed) {
+          quotaMetadataRetryUsed = true;
+          setTimeout(() => {
+            if (!closed && !invitationQuota) void refreshInvitationStatuses();
+          }, 1200);
+        }
+      }
     }
   }
   const render = () => {
