@@ -44,6 +44,7 @@ function createHarness(inviteeEmail = 'reader@example.com') {
     documents.set(path, { ...(documents.get(path) || {}), ...value });
     writes.push({ path, value: { ...value } });
   };
+  context.isBlockedInvitationEmail = () => false;
   context.verifyFirebaseUser = (token) => token === 'owner-token'
     ? { localId: 'owner-uid', email: 'owner@example.com' }
     : { localId: 'reader-uid', email: inviteeEmail, emailVerified: true, displayName: 'Reader', photoUrl: 'https://example.com/reader.png' };
@@ -114,6 +115,36 @@ test('acceptance token is one-time, email-bound, and notifies the inviter once',
   assert.equal(statuses['reader@example.com'].accepted, true);
   assert.equal(statuses['reader@example.com'].acceptedUid, 'reader-uid');
   assert.equal(statuses['reader@example.com'].acceptedDisplayName, 'Reader');
+});
+
+test('banned invitee cannot accept an invitation or create a library share', () => {
+  const { context, documents, writes } = createHarness();
+  const issued = context.issueInvitationAcceptanceToken('owner-uid', 'owner@example.com', 'reader@example.com');
+  documents.set('bannedUsers/reader-uid', { uid: 'reader-uid' });
+  assert.throws(() => context.handleAcceptInvitation({ token: issued.token, idToken: 'x'.repeat(120) }));
+  assert.equal(documents.has('libraryShares/owner-uid__reader-uid'), false);
+  assert.equal(writes.some((item) => item.path === 'libraryShares/owner-uid__reader-uid'), false);
+  assert.equal(context.readOwnerInvitationRecord('owner-uid', 'reader@example.com').status, 'pending');
+});
+
+test('ban applied during provisioning revokes the accepted registry entry', () => {
+  const { context, values, documents } = createHarness();
+  const record = { ownerUid: 'owner-uid', ownerEmail: 'owner@example.com', inviteeEmail: 'reader@example.com', tokenHash: 'abc123', status: 'accepted', acceptedUid: 'reader-uid', acceptedAt: Date.now() };
+  values.set('invite_accept_abc123', JSON.stringify(record));
+  documents.set('bannedUsers/reader-uid', { uid: 'reader-uid' });
+  assert.throws(() => context.provisionAcceptedInvitee(record, { localId: 'reader-uid', email: 'reader@example.com' }));
+  assert.equal(context.readOwnerInvitationRecord('owner-uid', 'reader@example.com').status, 'revoked');
+  assert.equal(values.has('invite_accept_abc123'), false);
+});
+
+test('legacy email ban prevents invitation acceptance before claiming token', () => {
+  const { context, documents, writes } = createHarness();
+  const issued = context.issueInvitationAcceptanceToken('owner-uid', 'owner@example.com', 'reader@example.com');
+  context.isBlockedInvitationEmail = () => true;
+  assert.throws(() => context.handleAcceptInvitation({ token: issued.token, idToken: 'x'.repeat(120) }));
+  assert.equal(documents.has('libraryShares/owner-uid__reader-uid'), false);
+  assert.equal(writes.some((item) => item.path === 'libraryShares/owner-uid__reader-uid'), false);
+  assert.equal(context.readOwnerInvitationRecord('owner-uid', 'reader@example.com').status, 'pending');
 });
 
 test('acceptance token cannot be claimed by a different email', () => {

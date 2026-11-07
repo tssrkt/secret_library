@@ -403,6 +403,12 @@ function provisionAcceptedInvitee(record, user) {
   const uid = String(user.localId || '');
   const email = normalizeEmail(user.email);
   const ownerUid = String(record.ownerUid || '');
+  if (fsGet('bannedUsers/' + encodeURIComponent(uid))) {
+    record.status = 'revoked';
+    saveOwnerInvitationRecord(record);
+    if (record.tokenHash) PropertiesService.getScriptProperties().deleteProperty('invite_accept_' + record.tokenHash);
+    throw new Error('\u0414\u043e\u0441\u0442\u0443\u043f \u044d\u0442\u043e\u043c\u0443 \u0430\u043a\u043a\u0430\u0443\u043d\u0442\u0443 \u0437\u0430\u0431\u043b\u043e\u043a\u0438\u0440\u043e\u0432\u0430\u043d.');
+  }
   if (!isValidUid(uid) || !isValidUid(ownerUid) || !isValidEmail(email) || email !== normalizeEmail(record.inviteeEmail)) {
     throw new Error('\u0414\u0430\u043d\u043d\u044b\u0435 \u043f\u0440\u0438\u043d\u044f\u0442\u043e\u0433\u043e \u043f\u0440\u0438\u0433\u043b\u0430\u0448\u0435\u043d\u0438\u044f \u043d\u0435\u0434\u0435\u0439\u0441\u0442\u0432\u0438\u0442\u0435\u043b\u044c\u043d\u044b.');
   }
@@ -449,6 +455,12 @@ function handleAcceptInvitation(input) {
     throw new Error('Ссылка приглашения недействительна. Попросите отправить приглашение ещё раз.');
   }
   const user = verifyFirebaseUser(idToken);
+  if (fsGet('bannedUsers/' + encodeURIComponent(String(user.localId || '')))) {
+    throw new Error('\u0414\u043e\u0441\u0442\u0443\u043f \u044d\u0442\u043e\u043c\u0443 \u0430\u043a\u043a\u0430\u0443\u043d\u0442\u0443 \u0437\u0430\u0431\u043b\u043e\u043a\u0438\u0440\u043e\u0432\u0430\u043d.');
+  }
+  if (isBlockedInvitationEmail(user.email)) {
+    throw new Error('\u0414\u043e\u0441\u0442\u0443\u043f \u043a \u0431\u0438\u0431\u043b\u0438\u043e\u0442\u0435\u043a\u0435 \u0437\u0430\u0431\u043b\u043e\u043a\u0438\u0440\u043e\u0432\u0430\u043d.');
+  }
   const tokenHash = acceptanceDigest(token);
   const properties = PropertiesService.getScriptProperties();
   const recordKey = 'invite_accept_' + tokenHash;
