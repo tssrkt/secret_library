@@ -189,7 +189,7 @@ async function loadAdminPage(key, cursor = '', shouldRender = true, forceReload 
     if (shouldRender) render();
     return;
   }
-  const knownProfileUids = Object.keys(data.userProfiles || {}).slice(-300);
+  const knownProfileUids = Object.keys(data.userProfiles || {}).slice(-1000);
   let result;
   if (key === 'relationships') result = await call('getAdminRelationshipRoots')({ cursor, includeShares: !Array.isArray(data.shares), knownProfileUids });
   else result = await call('getAdminCollectionPage')({ section: key, cursor, knownProfileUids });

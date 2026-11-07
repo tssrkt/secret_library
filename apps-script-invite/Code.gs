@@ -1097,7 +1097,7 @@ function adminRelatedUserUids(section, items) {
 }
 function fsQueryUserProfiles(uids, knownUids) {
   const result = {};
-  const known = new Set((Array.isArray(knownUids) ? knownUids : []).filter(isValidUid).slice(0, 300));
+  const known = new Set((Array.isArray(knownUids) ? knownUids : []).filter(isValidUid).slice(0, 1000));
   const unique = [...new Set((uids || []).filter(isValidUid))].filter(uid => !known.has(uid)).slice(0, 150);
   const batches = [];
   for (let offset = 0; offset < unique.length; offset += 30) {
@@ -1131,7 +1131,7 @@ function fsQueryUserProfiles(uids, knownUids) {
 function fsGetAdminUserFlags(uids, profileUids, knownProfileUids) {
   const result = { banned: new Set(), admins: new Set(), emailByUid: new Map(), profiles: {} };
   const unique = [...new Set((uids || []).filter(isValidUid))].slice(0, 30);
-  const known = new Set((Array.isArray(knownProfileUids) ? knownProfileUids : []).filter(isValidUid).slice(0, 300));
+  const known = new Set((Array.isArray(knownProfileUids) ? knownProfileUids : []).filter(isValidUid).slice(0, 1000));
   const profiles = [...new Set((profileUids || []).filter(isValidUid))].filter(uid => !known.has(uid)).slice(0, 150);
   if (!unique.length && !profiles.length) return result;
   const url = FIRESTORE_REST_ROOT.slice(0, -1) + ':runQuery';
