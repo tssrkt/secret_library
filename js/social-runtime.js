@@ -1,7 +1,7 @@
 import { startFirebaseSession, endFirebaseSession } from './firebase-session.js';
 import { createSocialStore } from './social-store.js?v=20261107-invite-registry-discovery';
 import { createSharedLibraryStore } from './shared-library.js?v=20261106-root-discovery';
-import { discoverDriveFriends, grantRootFolderAccess } from './drive-sharing.js?v=20261106-root-discovery';
+import { discoverDriveFriends, grantRootFolderAccess, closeRootFolderAccess } from './drive-sharing.js?v=20261107-close-friend-access';
 import { findDriveCatalogFile, downloadDriveJsonFile, getCurrentDriveUser } from './drive.js';
 import { sendInvitationEmail, getInvitationStatuses as fetchInvitationStatuses, acceptInvitation as acceptInvitationToken } from './invitation-mailer.js?v=20261107-invite-registry-discovery';
 import { createInvitationLedger, acceptedInvitationFriends, invitationLedgerRows, mergeInvitationRows } from './invitation-ledger.js?v=20261107-ledger-server-discovery';
@@ -44,6 +44,7 @@ let driveFriends = [];
 let acceptedInviteFriends = [];
 let ledgerInvitationRowsCache = [];
 let lastDriveFriendEmailSignature = '';
+const closedAccessEmails = new Set();
 let configuredRootFolderId = '';
 let connectionReadyPromise = Promise.resolve(false);
 let resolveConnectionReady = null;
@@ -68,10 +69,10 @@ function combineFriendRows() {
     const email = String(accepted.email || '').trim().toLowerCase();
     const existing = byUid.get(accepted.uid) || byEmail.get(email);
     if (existing) {
-      existing.outbound = true;
+      if (!closedAccessEmails.has(email)) existing.outbound = true;
       continue;
     }
-    const friend = { uid: accepted.uid, email, displayName: accepted.displayName || email, inbound: false, outbound: true, isAdmin: false, catalogId: '' };
+    const friend = { uid: accepted.uid, email, displayName: accepted.displayName || email, inbound: false, outbound: !closedAccessEmails.has(email), isAdmin: false, catalogId: '' };
     friends.push(friend);
     byUid.set(friend.uid, friend);
     if (email) byEmail.set(email, friend);
@@ -313,6 +314,7 @@ export const social = {
     acceptedInviteFriends = [];
     ledgerInvitationRowsCache = [];
     configuredRootFolderId = '';
+    closedAccessEmails.clear();
     emit({ status: 'idle', message: 'Войдите через Google.', friends: [], notifications: [], libraries: [], ownRootFolderId: null });
     void endFirebaseSession().catch(() => {});
   },
@@ -342,6 +344,7 @@ export const social = {
     const result = await sendInvitationEmail({ email: normalizedEmail, idToken });
     try {
       await grantRootFolderAccess(rootFolderId, normalizedEmail);
+      closedAccessEmails.delete(normalizedEmail);
     } catch (error) {
       const detail = String(error?.message || error || '').trim();
       throw new Error('Invitation email was sent, but Google Drive folder access could not be granted. Do not resend the invitation; check the folder permissions. ' + detail);
@@ -366,6 +369,28 @@ export const social = {
     emit({ friends: combineFriendRows(), invitations: mergeInvitationRows(state.invitations, ledgerInvitationRowsCache, acceptedInviteFriends.map((friend) => friend.email)), notifications: buildDriveNotifications(driveFriends), ownRootFolderId: rootFolderId });
     watchCatalogs(driveFriends);
     void refreshDriveFriends(invitationUser, generation, driveFriends);
+    return result;
+  },
+  async closeFriendAccess(email) {
+    // This action is intentionally Google Drive-only: no Firestore/store calls.
+    let rootFolderId = configuredRootFolderId || state.ownRootFolderId || '';
+    if (!rootFolderId && invitationUser?.uid) {
+      const catalogFile = await findDriveCatalogFile(invitationUser.uid);
+      if (catalogFile) {
+        const catalog = await downloadDriveJsonFile(catalogFile.id);
+        if (catalog?.ownerUid === invitationUser.uid && typeof catalog.rootFolderId === 'string') {
+          rootFolderId = catalog.rootFolderId;
+          configuredRootFolderId = rootFolderId;
+        }
+      }
+    }
+    const result = await closeRootFolderAccess(rootFolderId, email);
+    const normalizedEmail = String(email || '').trim().toLowerCase();
+    closedAccessEmails.add(normalizedEmail);
+    for (const friend of driveFriends) {
+      if (String(friend.email || '').trim().toLowerCase() === normalizedEmail) friend.outbound = false;
+    }
+    emit({ friends: combineFriendRows() });
     return result;
   },
   async resendInvitation(email) {

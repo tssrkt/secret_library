@@ -32,7 +32,7 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
   shareSection.innerHTML = '<h3>Пригласить участника</h3><form class="social-share-form"><label><input type="email" name="email" autocomplete="off" required aria-label="Gmail" placeholder="Gmail нового участника"></label><button class="settings-save-button" type="submit">ПОДЕЛИТЬСЯ</button></form><p role="status"></p><button class="settings-save-button" type="button" data-social-retry hidden>ПОВТОРИТЬ ПОДКЛЮЧЕНИЕ</button>';
   const friendsSection = document.createElement('section');
   friendsSection.className = 'social-section friends-section';
-  friendsSection.innerHTML = '<h3>Друзья</h3><p class="friends-count" role="status"></p><div class="friends-table-container"></div>';
+  friendsSection.innerHTML = '<h3>Друзья</h3><p class="friends-count" role="status"></p><p class="friends-access-message" role="status"></p><div class="friends-table-container"></div>';
   const invitationsSection = document.createElement('section');
   invitationsSection.className = 'social-section sent-invitations-section';
   invitationsSection.innerHTML = '<h3>Отправленные приглашения</h3><p>Если друг не видит приглашения, пусть проверит папку «Спам».</p><p class="sent-invitations-message" role="status"></p><div class="sent-invitations-table-container"></div>';
@@ -42,6 +42,8 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
   const message = shareSection.querySelector('[role=status]');
   const retryButton = shareSection.querySelector('[data-social-retry]');
   const invitationsMessage = invitationsSection.querySelector('.sent-invitations-message');
+  const friendsAccessMessage = friendsSection.querySelector('.friends-access-message');
+  const closingAccess = new Set();
   retryButton.addEventListener('click', retry);
   let snapshot = { friends: [], invitations: [], status: 'idle' };
   let pageNumber = 1;
@@ -177,7 +179,7 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
     const container = friendsSection.querySelector('.friends-table-container');
     const table = document.createElement('table');
     table.className = 'friends-table';
-    table.innerHTML = '<thead><tr><th scope="col">Пользователь</th><th scope="col">Делится с вами</th><th scope="col">Вы делитесь</th></tr></thead><tbody></tbody>';
+    table.innerHTML = '<thead><tr><th scope="col">Пользователь</th><th scope="col">Делится с вами</th><th scope="col">Вы делитесь</th><th scope="col">Действие</th></tr></thead><tbody></tbody>';
     for (const friend of paged.items) {
       const row = document.createElement('tr');
       const name = document.createElement('td');
@@ -199,12 +201,41 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
         mark.setAttribute('aria-label', value ? 'Да' : 'Нет');
         cell.append(mark); row.append(cell);
       }
+      const actionCell = document.createElement('td');
+      const closeButton = document.createElement('button');
+      closeButton.type = 'button';
+      closeButton.className = 'settings-save-button';
+      closeButton.textContent = 'ЗАКРЫТЬ ДОСТУП';
+      closeButton.disabled = !friend.email || closingAccess.has(String(friend.email).trim().toLowerCase());
+      closeButton.title = friend.email ? 'Отозвать доступ к корневой папке в Google Drive' : 'У друга не указан email';
+      closeButton.addEventListener('click', async () => {
+        const email = String(friend.email || '').trim().toLowerCase();
+        if (!email || closingAccess.has(email)) return;
+        if (!window.confirm(`Закрыть для ${email} доступ к корневой папке вашей библиотеки в Google Drive?`)) return;
+        closingAccess.add(email);
+        friendsAccessMessage.textContent = '';
+        closeButton.disabled = true;
+        closeButton.textContent = 'ЗАКРЫВАЕМ…';
+        try {
+          const result = await social.closeFriendAccess(email);
+          friendsAccessMessage.textContent = result.revoked
+            ? `Доступ к корневой папке для ${email} закрыт в Google Drive.`
+            : `У ${email} не найдено прямого разрешения на корневую папку.`;
+        } catch (error) {
+          friendsAccessMessage.textContent = socialError(error);
+        } finally {
+          closingAccess.delete(email);
+          render();
+        }
+      });
+      actionCell.append(closeButton);
+      row.append(actionCell);
       table.querySelector('tbody').append(row);
     }
     if (!paged.items.length) {
       const row = document.createElement('tr');
       const cell = document.createElement('td');
-      cell.colSpan = 3;
+      cell.colSpan = 4;
       cell.textContent = snapshot.driveDiscoveryStatus === 'loading' ? 'Список друзей загружается…'
         : snapshot.driveDiscoveryStatus === 'error' ? 'Не удалось загрузить список друзей.' : 'Друзей пока нет.';
       row.append(cell);

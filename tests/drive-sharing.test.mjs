@@ -249,3 +249,32 @@ test('folder sharing settings enable and disable real Drive limited access', asy
   await syncFolderSharingAccess(index, { sharing: { excludedFolderIds: [] } }, { driveFetch: request });
   assert.equal(state.get('private-folder').inheritedPermissionsDisabled, false);
 });
+
+test('closeRootFolderAccess revokes only the matching direct Google Drive permission', async () => {
+  const calls = [];
+  const request = async (path, options = {}) => {
+    calls.push({ path, options });
+    if (path.includes('/permissions?')) return { permissions: [
+      { id: 'friend-permission', type: 'user', emailAddress: 'friend@example.com', role: 'reader', permissionDetails: [{ inherited: false }] },
+      { id: 'other-permission', type: 'user', emailAddress: 'other@example.com', role: 'reader', permissionDetails: [{ inherited: false }] },
+    ] };
+    return {};
+  };
+  const { closeRootFolderAccess } = await import('../js/drive-sharing.js');
+  const result = await closeRootFolderAccess('root-id', 'Friend@Example.com', { driveFetch: request });
+  assert.equal(result.revoked, true);
+  assert.equal(calls.length, 2);
+  assert.match(calls[1].path, /permissions\/friend-permission/);
+  assert.equal(calls[1].options.method, 'DELETE');
+});
+
+test('closeRootFolderAccess refuses to remove inherited permission', async () => {
+  const calls = [];
+  const request = async (path, options = {}) => {
+    calls.push({ path, options });
+    return { permissions: [{ id: 'inherited-permission', type: 'user', emailAddress: 'friend@example.com', role: 'reader', permissionDetails: [{ inherited: true }] }] };
+  };
+  const { closeRootFolderAccess } = await import('../js/drive-sharing.js');
+  await assert.rejects(closeRootFolderAccess('root-id', 'friend@example.com', { driveFetch: request }), /наследуется/);
+  assert.equal(calls.length, 1);
+});
