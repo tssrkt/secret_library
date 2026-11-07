@@ -3,8 +3,39 @@ import assert from 'node:assert/strict';
 import {
   createInvitationLedger,
   normalizeInvitationLedger,
+  invitationLedgerRows,
+  mergeInvitationRows,
   INVITATION_LEDGER_FILE,
 } from '../js/invitation-ledger.js';
+
+test('ledger rows expose only pending invitations and omit accepted emails', () => {
+  const rows = invitationLedgerRows({
+    ownerUid: 'owner-1',
+    invitations: [
+      { inviteeEmail: 'pending@example.com', status: 'pending', createdAt: 1, updatedAt: 2 },
+      { inviteeEmail: 'done@example.com', status: 'accepted', createdAt: 1, updatedAt: 3 },
+      { inviteeEmail: 'revoke@example.com', status: 'revoked', createdAt: 1, updatedAt: 4 },
+    ],
+  }, ['other@example.com']);
+  assert.deepEqual(rows.map((row) => row.inviteeEmail), ['pending@example.com']);
+  assert.equal(rows[0].ownerUid, 'owner-1');
+});
+
+test('merging ledger and live invitations deduplicates by normalized email and removes accepted friends', () => {
+  const rows = mergeInvitationRows(
+    [{ inviteeEmail: 'Friend@example.com', createdAt: 10, source: 'firestore' }],
+    [
+      { inviteeEmail: 'friend@example.com', createdAt: 1, source: 'drive-ledger' },
+      { inviteeEmail: 'new@example.com', createdAt: 5, source: 'drive-ledger' },
+      { inviteeEmail: 'accepted@example.com', createdAt: 7, source: 'drive-ledger' },
+    ],
+    ['accepted@example.com'],
+  );
+  assert.equal(rows.length, 2);
+  assert.equal(rows.find((row) => row.inviteeEmail === 'friend@example.com').source, 'firestore');
+  assert.ok(rows.some((row) => row.inviteeEmail === 'new@example.com'));
+  assert.ok(!rows.some((row) => row.inviteeEmail === 'accepted@example.com'));
+});
 
 test('ledger normalizes email, drops invalid entries, and keeps newest duplicate', () => {
   const result = normalizeInvitationLedger({

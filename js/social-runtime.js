@@ -1,10 +1,10 @@
 import { startFirebaseSession, endFirebaseSession } from './firebase-session.js';
-import { createSocialStore } from './social-store.js?v=20261107-invitation-flow2';
+import { createSocialStore } from './social-store.js?v=20261107-invitation-flow3';
 import { createSharedLibraryStore } from './shared-library.js?v=20261106-root-discovery';
 import { discoverDriveFriends, grantRootFolderAccess } from './drive-sharing.js?v=20261106-root-discovery';
 import { findDriveCatalogFile, downloadDriveJsonFile, getCurrentDriveUser } from './drive.js';
-import { sendInvitationEmail, getInvitationStatuses as fetchInvitationStatuses, acceptInvitation as acceptInvitationToken } from './invitation-mailer.js?v=20261107-invitation-flow2';
-import { createInvitationLedger } from './invitation-ledger.js';
+import { sendInvitationEmail, getInvitationStatuses as fetchInvitationStatuses, acceptInvitation as acceptInvitationToken } from './invitation-mailer.js?v=20261107-invitation-flow3';
+import { createInvitationLedger, invitationLedgerRows, mergeInvitationRows } from './invitation-ledger.js?v=20261107-ledger-ui';
 
 export function socialError(error) {
   if (error?.code?.includes('permission-denied')) return 'Нет доступа к социальным данным. Проверьте настройки Firebase и повторите попытку.';
@@ -42,6 +42,7 @@ const knownContactsSyncs = new Map();
 const FRIEND_CACHE_PREFIX = 'secret-library-social-friends-v1:';
 let driveFriends = [];
 let acceptedInviteFriends = [];
+let ledgerInvitationRowsCache = [];
 let lastDriveFriendEmailSignature = '';
 let configuredRootFolderId = '';
 let connectionReadyPromise = Promise.resolve(false);
@@ -197,6 +198,14 @@ export const social = {
       shared = createSharedLibraryStore({ user: session.user });
       settleConnectionReady(true);
       invitationUser = session.user;
+      try {
+        const savedLedger = await invitationLedger.load(invitationUser.uid);
+        ledgerInvitationRowsCache = invitationLedgerRows(savedLedger.ledger);
+        emit({ invitations: mergeInvitationRows([], ledgerInvitationRowsCache) });
+      } catch (error) {
+        ledgerInvitationRowsCache = [];
+        console.warn('Could not load the Drive invitation ledger:', error);
+      }
       // Registration supports unrelated social features only; Drive discovery and
       // friend-library loading have already started independently above.
       try {
@@ -237,7 +246,8 @@ export const social = {
             console.warn('Could not update the Drive invitation ledger:', error);
           });
         }
-        emit({ ...snapshot, friends: combineFriendRows(), libraries: driveFriends
+        const acceptedEmails = acceptedInviteFriends.map((friend) => friend.email);
+        emit({ ...snapshot, invitations: mergeInvitationRows(snapshot.invitations, ledgerInvitationRowsCache, acceptedEmails), friends: combineFriendRows(), libraries: driveFriends
           .filter((friend) => friend.inbound && !String(friend.uid).startsWith('email:'))
           .map((friend) => ({ uid: friend.uid, displayName: friend.displayName, revision: 'drive', catalogId: friend.catalogId || '' })) });
       },
@@ -260,6 +270,7 @@ export const social = {
     driveReader?.dispose(); driveReader = null;
     driveFriends = [];
     acceptedInviteFriends = [];
+    ledgerInvitationRowsCache = [];
     configuredRootFolderId = '';
     emit({ status: 'idle', message: 'Войдите через Google.', friends: [], notifications: [], libraries: [], ownRootFolderId: null });
     void endFirebaseSession().catch(() => {});
@@ -289,11 +300,12 @@ export const social = {
     await store.shareWithEmail(normalizedEmail);
     await grantRootFolderAccess(rootFolderId, normalizedEmail);
     try {
-      await invitationLedger.upsert(invitationUser.uid, {
+      const savedLedger = await invitationLedger.upsert(invitationUser.uid, {
         inviteeEmail: normalizedEmail,
         status: 'pending',
         createdAt: Date.now(),
       });
+      ledgerInvitationRowsCache = invitationLedgerRows(savedLedger.ledger, acceptedInviteFriends.map((friend) => friend.email));
     } catch (error) {
       // Drive appData is the migration ledger, not the registration authority yet.
       // Keep the existing invitation flow working if this secondary write fails.
@@ -306,7 +318,7 @@ export const social = {
     if (known?.inbound) known.outbound = true;
     // Do not add a recipient to Friends merely because a Drive permission was granted.
     // Only a completed registration should create the friend relationship.
-    emit({ friends: combineFriendRows(), notifications: buildDriveNotifications(driveFriends), ownRootFolderId: rootFolderId });
+    emit({ friends: combineFriendRows(), invitations: mergeInvitationRows(state.invitations, ledgerInvitationRowsCache, acceptedInviteFriends.map((friend) => friend.email)), notifications: buildDriveNotifications(driveFriends), ownRootFolderId: rootFolderId });
     watchCatalogs(driveFriends);
     void refreshDriveFriends(invitationUser, generation, driveFriends);
     return result;

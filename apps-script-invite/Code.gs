@@ -389,17 +389,11 @@ function handleInvitationStatuses(input) {
   const user = verifyFirebaseUser(idToken);
   const properties = PropertiesService.getScriptProperties();
   const statuses = {};
-  const recipientEmails = emails.filter(email => email !== normalizeEmail(user.email));
-  const invitations = readPendingInvitationsMany(idToken, recipientEmails, user.localId);
-  const invitationByEmail = new Map(recipientEmails.map((email, index) => [email, invitations[index]]));
   emails.forEach(function (email) {
     if (email === normalizeEmail(user.email)) return;
-    const invitation = invitationByEmail.get(email);
-    if (!invitation || invitation.claimedUid) return;
     const current = JSON.parse(properties.getProperty(reservationKey(user.localId, email)) || 'null');
-    let lastSentAt = 0;
-    if (current) lastSentAt = current.status === 'sent' ? Number(current.at) || 0 : Number(current.lastSentAt) || 0;
-    else if (invitation.emailStatus === 'sent') lastSentAt = Date.parse(invitation.emailSentAt) || Date.parse(invitation.createdAt) || 0;
+    if (!current) return;
+    const lastSentAt = current.status === 'sent' ? Number(current.at) || 0 : Number(current.lastSentAt) || 0;
     statuses[email] = { lastSentAt: lastSentAt, cooldownUntil: lastSentAt ? lastSentAt + RESEND_COOLDOWN_MS : 0 };
   });
   return statuses;

@@ -12,6 +12,35 @@ function normalizeEmail(value) {
   return typeof value === 'string' ? value.trim().toLowerCase() : '';
 }
 
+export function invitationLedgerRows(ledger, acceptedEmails = []) {
+  const accepted = new Set((acceptedEmails || []).map((email) => String(email || '').trim().toLowerCase()).filter(Boolean));
+  return (Array.isArray(ledger?.invitations) ? ledger.invitations : [])
+    .filter((item) => item && item.status === 'pending')
+    .map((item) => ({
+      inviteeEmail: normalizeEmail(item.inviteeEmail),
+      ownerUid: String(ledger.ownerUid || ''),
+      active: true,
+      createdAt: Number.isFinite(item.createdAt) ? item.createdAt : Date.now(),
+      emailSentAt: Number.isFinite(item.updatedAt) ? item.updatedAt : 0,
+      source: 'drive-ledger',
+    }))
+    .filter((item) => item.inviteeEmail && !accepted.has(item.inviteeEmail));
+}
+
+export function mergeInvitationRows(primary = [], ledgerRows = [], acceptedEmails = []) {
+  const accepted = new Set((acceptedEmails || []).map((email) => String(email || '').trim().toLowerCase()).filter(Boolean));
+  const byEmail = new Map();
+  for (const item of [...(Array.isArray(primary) ? primary : []), ...(Array.isArray(ledgerRows) ? ledgerRows : [])]) {
+    const email = normalizeEmail(item?.inviteeEmail);
+    if (!email || accepted.has(email)) continue;
+    const previous = byEmail.get(email);
+    if (!previous || (item.source !== 'drive-ledger' && previous.source === 'drive-ledger')) {
+      byEmail.set(email, { ...item, inviteeEmail: email });
+    }
+  }
+  return [...byEmail.values()].sort((a, b) => (Number(b.emailSentAt || b.createdAt) || 0) - (Number(a.emailSentAt || a.createdAt) || 0));
+}
+
 function normalizeRecord(record) {
   const email = normalizeEmail(record?.inviteeEmail);
   if (!email || email.length > 254 || !email.includes('@')) return null;

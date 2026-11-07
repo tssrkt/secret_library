@@ -42,6 +42,20 @@ function createHarness(inviteeEmail = 'reader@example.com') {
   return { context, values, sent };
 }
 
+test('invitation cooldown status reads only script properties, not Firestore invitation records', () => {
+  const { context, values } = createHarness();
+  const email = 'friend@example.com';
+  const key = context.reservationKey('reader-uid', email);
+  values.set(key, JSON.stringify({ status: 'sent', at: 123456 }));
+  context.readPendingInvitationsMany = () => { throw new Error('Firestore should not be queried'); };
+  const statuses = context.handleInvitationStatuses({
+    idToken: 'x'.repeat(120),
+    emails: [email],
+  });
+  assert.equal(statuses[email].lastSentAt, 123456);
+  assert.equal(statuses[email].cooldownUntil, 123456 + 60 * 60 * 1000);
+});
+
 test('acceptance token is one-time, email-bound, and notifies the inviter once', () => {
   const { context, sent } = createHarness();
   const issued = context.issueInvitationAcceptanceToken('owner-uid', 'owner@example.com', 'reader@example.com');
