@@ -29,7 +29,7 @@ function invitationWasSent(result) {
 export function mountFriends(page, social, retry, openLibrary = (uid) => { window.location.href = `?library=${encodeURIComponent(uid)}`; }) {
   const shareSection = document.createElement('section');
   shareSection.className = 'social-section';
-  shareSection.innerHTML = '<h3>Пригласить участника</h3><form class="social-share-form"><label><input type="email" name="email" autocomplete="off" required aria-label="Gmail" placeholder="Gmail нового участника"><p class="invitation-send-status" role="status" aria-live="polite"></p></label><button class="settings-save-button" type="submit">ПОДЕЛИТЬСЯ</button></form><button class="settings-save-button" type="button" data-social-retry hidden>ПОВТОРИТЬ ПОДКЛЮЧЕНИЕ</button>';
+  shareSection.innerHTML = '<h3>Пригласить участника</h3><form class="social-share-form"><label><input type="email" name="email" autocomplete="off" required aria-label="Gmail" placeholder="Gmail нового участника"></label><button class="settings-save-button" type="submit">ПОДЕЛИТЬСЯ</button><p class="invitation-send-status" role="status" aria-live="polite"></p></form><button class="settings-save-button" type="button" data-social-retry hidden>ПОВТОРИТЬ ПОДКЛЮЧЕНИЕ</button>';
   const friendsSection = document.createElement('section');
   friendsSection.className = 'social-section friends-section';
   friendsSection.innerHTML = '<h3>Друзья</h3><p class="friends-count" role="status"></p><p class="friends-access-message" role="status"></p><div class="friends-table-container"></div>';
@@ -40,6 +40,25 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
   const form = shareSection.querySelector('form');
   const submit = form.querySelector('button');
   const message = shareSection.querySelector('[role=status]');
+  const setInvitationMessage = (value) => {
+    const cooldownResponse = 'Запрос обработан. Если получателю нужно приглашение, письмо отправлено.';
+    if (value === cooldownResponse) {
+      message.replaceChildren(
+        document.createTextNode('Вы не можете отправлять приглашение одному и тому же человеку чаще чем раз в час. Если ваш друг не получил приглашение, пусть проверит папку «Спам». Если и там нет письма обратитесь в техподдержку')
+      );
+      const supportLink = document.createElement('a');
+      supportLink.href = 'https://t.me/ptica_govorun_bot';
+      supportLink.target = '_blank';
+      supportLink.rel = 'noopener noreferrer';
+      supportLink.textContent = 'техподдержку';
+      // Keep the support link in the sentence while avoiding HTML injection.
+      const fullText = message.firstChild.textContent;
+      const prefix = 'Вы не можете отправлять приглашение одному и тому же человеку чаще чем раз в час. Если ваш друг не получил приглашение, пусть проверит папку «Спам». Если и там нет письма обратитесь в ';
+      message.replaceChildren(document.createTextNode(prefix), supportLink);
+      return;
+    }
+    message.textContent = value || '';
+  };
   const retryButton = shareSection.querySelector('[data-social-retry]');
   const invitationsMessage = invitationsSection.querySelector('.sent-invitations-message');
   const friendsAccessMessage = friendsSection.querySelector('.friends-access-message');
@@ -107,7 +126,7 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
         const sentAt = currentStatus ? Number(currentStatus.lastSentAt) || 0 : timestampMillis(invite.emailSentAt || invite.createdAt);
         if (sentAt && Date.now() < sentAt + HOUR_MS) return;
         if (typeof social.resendInvitation !== 'function') {
-          message.textContent = 'Повторная отправка пока недоступна. Обновите страницу и попробуйте снова.';
+          setInvitationMessage('Повторная отправка пока недоступна. Обновите страницу и попробуйте снова.');
           return;
         }
         busy.add(email);
@@ -117,9 +136,9 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
           const result = await social.resendInvitation(email);
           invitationsMessage.textContent = '';
           if (invitationWasSent(result)) await refreshInvitationStatuses();
-          else message.textContent = result;
+          else setInvitationMessage(result);
         } catch (error) {
-          message.textContent = socialError(error);
+          setInvitationMessage(socialError(error));
         } finally {
           busy.delete(email);
           updateCooldowns();
@@ -268,7 +287,7 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
     }
     updateShareButton();
     retryButton.hidden = next.status !== 'error';
-    if (next.message || message.textContent === serviceMessage) message.textContent = next.message || '';
+    if (next.message || message.textContent === serviceMessage) setInvitationMessage(next.message || '');
     serviceMessage = next.message || '';
     render();
     // Friend discovery comes from Google Drive permissions; no Firestore contact sync is needed.
@@ -276,7 +295,7 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
     if (sending || !form.elements.email.value.trim() || !form.elements.email.validity.valid) return;
-    sending = true; updateShareButton(); message.textContent = 'Отправляем приглашение…';
+    sending = true; updateShareButton(); setInvitationMessage('Отправляем приглашение…');
     submit.textContent = 'ОТПРАВЛЯЕМ…';
     try {
       const email = form.elements.email.value;
