@@ -35,6 +35,10 @@ function doPost(e) {
       stage = 'accept-invitation-request';
       return responsePage(requestId, true, '', handleAcceptInvitation(input));
     }
+    if (input.action === 'cancelInvitation') {
+      stage = 'cancel-invitation-request';
+      return responsePage(requestId, true, '', handleCancelInvitation(input));
+    }
     if (input.action) {
       adminRequest = true;
       stage = 'admin-request';
@@ -518,6 +522,63 @@ function handleAcceptInvitation(input) {
   return { accepted: true, alreadyAccepted: alreadyAccepted };
 }
 
+function handleCancelInvitation(input) {
+  const idToken = String(input.idToken || '');
+  const email = normalizeEmail(input.email);
+  if (idToken.length < 100 || idToken.length > 5000 || !isValidEmail(email)) {
+    throw new Error('Не удалось отменить приглашение. Обновите страницу и повторите попытку.');
+  }
+  const user = verifyFirebaseUser(idToken);
+  if (email === normalizeEmail(user.email)) throw new Error('Нельзя отменить приглашение самому себе.');
+
+  const lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+  let invitation;
+  let tokenRecord = null;
+  try {
+    invitation = readOwnerInvitationRecord(user.localId, email);
+    if (!invitation) throw new Error('Приглашение не найдено.');
+    if (invitation.status === 'accepted') throw new Error('Приглашение уже принято. Закрыть доступ к сайту нельзя; при необходимости можно закрыть только доступ к вашей библиотеке.');
+    if (invitation.status === 'revoked') {
+      // Idempotent retry: keep the invitation invalid and retry the notification below.
+    } else if (invitation.status !== 'pending') {
+      throw new Error('Отменить можно только ожидающее принятия приглашение.');
+    } else {
+      const properties = PropertiesService.getScriptProperties();
+      const tokenHash = String(invitation.tokenHash || '');
+      if (tokenHash) {
+        const key = 'invite_accept_' + tokenHash;
+        tokenRecord = JSON.parse(properties.getProperty(key) || 'null');
+        if (tokenRecord && tokenRecord.status === 'accepted') {
+          throw new Error('Приглашение уже принято. Закрыть доступ к сайту нельзя; при необходимости можно закрыть только доступ к вашей библиотеке.');
+        }
+        properties.deleteProperty(key);
+        const currentKey = acceptanceCurrentKey(user.localId, email);
+        if (properties.getProperty(currentKey) === tokenHash) properties.deleteProperty(currentKey);
+      }
+      invitation.status = 'revoked';
+      invitation.revokedAt = Date.now();
+      saveOwnerInvitationRecord(invitation);
+    }
+  } finally {
+    lock.releaseLock();
+  }
+
+  // Sending is retriable and idempotent. A failed email does not reactivate the token.
+  const properties = PropertiesService.getScriptProperties();
+  const notificationKey = 'invite_cancel_notified_' + acceptanceDigest(user.localId + '\n' + email);
+  if (properties.getProperty(notificationKey) !== 'sent') {
+    MailApp.sendEmail({
+      to: email,
+      subject: 'Приглашение отменено — Тайная Библиотека',
+      body: 'Приглашение в Тайную Библиотеку отменено.',
+      name: 'Тайная Библиотека'
+    });
+    properties.setProperty(notificationKey, 'sent');
+  }
+  return { cancelled: true, email: email, invitationStatus: 'revoked' };
+}
+
 function handleInvitationStatuses(input) {
   const idToken = String(input.idToken || '');
   const requestedEmails = Array.isArray(input.emails) ? [...new Set(input.emails.slice(0, 500).map(normalizeEmail))].slice(0, 500) : [];
@@ -542,7 +603,7 @@ function handleInvitationStatuses(input) {
   statuses.__quota = {
     isAdmin: Boolean(admin && admin.active === true),
     limit: getInvitationLimit(),
-    used: Object.keys(readOwnerInvitationRegistry(user.localId)).length
+    used: countActiveInvitations(readOwnerInvitationRegistry(user.localId))
   };
   return statuses;
 }
@@ -557,10 +618,14 @@ function reservationKey(uid, email) {
   }).join('');
 }
 
+function countActiveInvitations(registry) {
+  return Object.values(registry || {}).filter(record => record && record.status !== 'revoked').length;
+}
+
 function invitationSuccessMessage(uid, invitationCount) {
   const admin = fsGet('adminUsers/' + uid);
   if (admin && admin.active === true) return 'Приглашение отправлено.';
-  const count = Number.isInteger(invitationCount) ? invitationCount : Object.keys(readOwnerInvitationRegistry(uid)).length;
+  const count = Number.isInteger(invitationCount) ? invitationCount : countActiveInvitations(readOwnerInvitationRegistry(uid));
   return 'Приглашение отправлено (' + count + ' из ' + getInvitationLimit() + ').';
 }
 
@@ -569,9 +634,10 @@ function enforceUniqueInvitationLimit(uid, email, invitation) {
   if (admin && admin.active === true) return null;
   const limit = getInvitationLimit();
   const registry = readOwnerInvitationRegistry(uid);
-  const count = Object.keys(registry).length;
+  const count = countActiveInvitations(registry);
   const current = JSON.parse(PropertiesService.getScriptProperties().getProperty(reservationKey(uid, email)) || 'null');
-  const previouslySent = Boolean(registry[email] || invitation || current?.status === 'sent');
+  const existing = registry[email] || invitation;
+  const previouslySent = Boolean((existing && existing.status !== 'revoked') || current?.status === 'sent');
   if (!previouslySent && count >= limit) throw new Error('\u0412\u0430\u0448 \u043b\u0438\u043c\u0438\u0442 \u043d\u0430 \u043f\u0440\u0438\u0433\u043b\u0430\u0448\u0435\u043d\u0438\u044f \u0438\u0441\u0447\u0435\u0440\u043f\u0430\u043d.');
   return count + (previouslySent ? 0 : 1);
 }
