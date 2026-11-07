@@ -1477,3 +1477,37 @@ test('admin summary batches cold-cache superadmin lookup with aggregation counts
   assert.equal(summary.counts.users, 4);
   assert.equal(summary.superAdminUid, 'root');
 });
+
+
+test('public doPost rejects missing, malformed and oversized payloads before processing actions', () => {
+  const app = harness();
+  const missing = app.context.doPost({ parameter: {} });
+  assert.match(missing.content, /"ok":false/);
+
+  const malformed = app.context.doPost({ parameter: { payload: '{not-json' } });
+  assert.match(malformed.content, /"ok":false/);
+
+  const oversized = app.context.doPost({ parameter: { payload: 'x'.repeat(12001) } });
+  assert.match(oversized.content, /"ok":false/);
+  assert.equal(app.sent.length, 0);
+  assert.equal(app.calls.some(call => call.url.includes('accounts:lookup')), false);
+});
+
+test('public doPost rejects malformed request IDs before token verification or side effects', () => {
+  const app = harness();
+  const result = app.context.doPost({ parameter: { payload: JSON.stringify({
+    requestId: 'bad id', email: 'friend@gmail.com', idToken: app.payload.idToken
+  }) } });
+  assert.match(result.content, /"ok":false/);
+  assert.equal(app.calls.some(call => call.url.includes('accounts:lookup')), false);
+  assert.equal(app.sent.length, 0);
+});
+
+test('public doPost does not dispatch an unknown action to an unprivileged caller', () => {
+  const app = harness();
+  const result = app.context.doPost({ parameter: { payload: JSON.stringify({
+    requestId: 'request_1234567890', action: 'unknownOperation', idToken: app.payload.idToken
+  }) } });
+  assert.match(result.content, /"ok":false/);
+  assert.equal(app.sent.length, 0);
+});
