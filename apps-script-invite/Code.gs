@@ -466,6 +466,7 @@ function handleAcceptInvitation(input) {
   lock.waitLock(10000);
   let record;
   let alreadyAccepted = false;
+  let otherAcceptedRecords = [];
   try {
     record = JSON.parse(properties.getProperty(recordKey) || 'null');
     if (!record) throw new Error('Приглашение не найдено или уже недействительно.');
@@ -501,25 +502,69 @@ function handleAcceptInvitation(input) {
       properties.deleteProperty(currentKey);
       saveOwnerInvitationRecord(record);
     }
+    // Consume every other still-valid invitation for this same email while holding
+    // the same script lock used by cancellation, so each invitation has one winner.
+    otherAcceptedRecords = markOtherInvitationsAcceptedLocked(record, user, properties);
   } finally {
     lock.releaseLock();
   }
 
-  // Idempotently provision the accepted account server-side. This replaces the
-  // client-side Firestore pendingInvites registration gate without trusting the browser.
+  // Provision the accepted account and every other invitation consumed by this registration.
   provisionAcceptedInvitee(record, user);
+  notifyAcceptedInvitationOwner(record, user, properties);
+  for (const otherRecord of otherAcceptedRecords) {
+    provisionAcceptedInvitee(otherRecord, user);
+    notifyAcceptedInvitationOwner(otherRecord, user, properties);
+  }
+  return { accepted: true, alreadyAccepted: alreadyAccepted };
+}
 
-  saveOwnerInvitationRecord(record);
-  if (!record.notifiedAt) {
+function markOtherInvitationsAcceptedLocked(acceptedRecord, user, properties) {
+  const email = normalizeEmail(user.email);
+  const now = Date.now();
+  const all = properties.getProperties();
+  const accepted = [];
+  Object.keys(all).forEach(function (key) {
+    if (!key.startsWith('invite_accept_') || key === 'invite_accept_' + acceptedRecord.tokenHash) return;
+    let record;
+    try { record = JSON.parse(all[key] || 'null'); } catch (_) { return; }
+    if (!record || normalizeEmail(record.inviteeEmail) !== email || !isValidUid(String(record.ownerUid || ''))) return;
+    const tokenHash = String(record.tokenHash || key.slice('invite_accept_'.length));
+    if (record.status !== 'pending') return;
+    const currentKey = acceptanceCurrentKey(record.ownerUid, email);
+    if (properties.getProperty(currentKey) !== tokenHash || now > Number(record.expiresAt || 0)) return;
+    if (fsGet('bannedUsers/' + encodeURIComponent(String(record.ownerUid)))) {
+      properties.deleteProperty(currentKey);
+      properties.deleteProperty(key);
+      record.status = 'revoked';
+      saveOwnerInvitationRecord(record);
+      return;
+    }
+    record.status = 'accepted';
+    record.acceptedUid = user.localId;
+    record.acceptedDisplayName = String(user.displayName || email).slice(0, 160);
+    record.acceptedAt = now;
+    properties.deleteProperty(currentKey);
+    properties.setProperty(key, JSON.stringify(record));
+    saveOwnerInvitationRecord(record);
+    accepted.push(record);
+  });
+  return accepted;
+}
+
+function notifyAcceptedInvitationOwner(record, user, properties) {
+  const key = 'invite_accept_' + record.tokenHash;
+  const latest = JSON.parse(properties.getProperty(key) || 'null') || record;
+  if (!latest.notifiedAt) {
     MailApp.sendEmail({
-      to: record.ownerEmail,
+      to: latest.ownerEmail,
       subject: 'Приглашение принято — Тайная Библиотека',
       body: 'Пользователь ' + normalizeEmail(user.email) + ' зарегистрировался в Тайной Библиотеке по вашему приглашению.'
     });
-    record.notifiedAt = Date.now();
-    properties.setProperty(recordKey, JSON.stringify(record));
+    latest.notifiedAt = Date.now();
+    properties.setProperty(key, JSON.stringify(latest));
   }
-  return { accepted: true, alreadyAccepted: alreadyAccepted };
+  saveOwnerInvitationRecord(latest);
 }
 
 function handleCancelInvitation(input) {
