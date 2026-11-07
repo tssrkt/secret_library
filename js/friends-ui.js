@@ -71,6 +71,7 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
   let invitationStatusSignature = null;
   let statusRefreshRevision = 0;
   let invitationStatuses = {};
+  let invitationQuota = null;
   // Keep a just-sent invitation visible while Firestore's live query catches up.
   const optimisticInvitations = new Map();
   let serviceMessage = '';
@@ -172,7 +173,8 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
       }
       if (closed || revision !== statusRefreshRevision) return;
       invitationStatuses = next;
-      renderInvitations();
+      invitationQuota = next.__quota || invitationQuota;
+      render();
     } catch (error) {
       // Status refresh is secondary to sending. Keep service errors in the single
       // status line under the email field, never in the sent-invitations section.
@@ -183,16 +185,36 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
     const paged = paginateItems(snapshot.friends, pageNumber, 50);
     pageNumber = paged.currentPage;
     const count = paged.totalItems;
-    const remainder100 = count % 100;
-    const remainder10 = count % 10;
-    const noun = remainder100 >= 11 && remainder100 <= 14 ? 'друзей'
-      : remainder10 === 1 ? 'друг'
-        : remainder10 >= 2 && remainder10 <= 4 ? 'друга' : 'друзей';
+    const plural = (value, one, few, many) => {
+      const n = Math.abs(value) % 100;
+      const last = n % 10;
+      if (n >= 11 && n <= 14) return many;
+      if (last === 1) return one;
+      if (last >= 2 && last <= 4) return few;
+      return many;
+    };
     const countLabel = friendsSection.querySelector('.friends-count');
     if (snapshot.driveDiscoveryStatus === 'loading' && count === 0) countLabel.textContent = 'Список друзей загружается…';
     else if (snapshot.driveDiscoveryStatus === 'error' && count === 0) countLabel.textContent = 'Не удалось загрузить список друзей. Проверьте подключение к Google Drive и попробуйте снова.';
-    else if (snapshot.driveDiscoveryStatus === 'ready' && count === 0) countLabel.textContent = 'Друзей пока нет.';
-    else countLabel.textContent = `У вас ${count.toLocaleString('ru-RU')} ${noun}.`;
+    else {
+      const friendEmails = new Set((snapshot.friends || []).map((friend) => String(friend.email || '').trim().toLowerCase()).filter(Boolean));
+      const pendingEmails = new Set((snapshot.invitations || [])
+        .map((invite) => String(invite.inviteeEmail || '').trim().toLowerCase())
+        .filter((email) => email && !friendEmails.has(email) && invitationStatuses[email]?.invitationStatus !== 'accepted'));
+      let summary = `У вас ${count.toLocaleString('ru-RU')} ${plural(count, 'друг', 'друга', 'друзей')}`;
+      if (pendingEmails.size) {
+        summary += `, и отправлено еще ${pendingEmails.size.toLocaleString('ru-RU')} ${plural(pendingEmails.size, 'приглашение', 'приглашения', 'приглашений')}`;
+      }
+      if (invitationQuota && invitationQuota.isAdmin !== true) {
+        const limit = Number(invitationQuota.limit);
+        const used = Number(invitationQuota.used);
+        if (Number.isFinite(limit) && Number.isFinite(used)) {
+          const remaining = Math.max(0, limit - used);
+          summary += `. Вы можете пригласить еще ${remaining.toLocaleString('ru-RU')} ${plural(remaining, 'друга', 'друзей', 'друзей')}`;
+        }
+      }
+      countLabel.textContent = summary + '.';
+    }
     const container = friendsSection.querySelector('.friends-table-container');
     const table = document.createElement('table');
     table.className = 'friends-table';
