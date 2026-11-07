@@ -1147,7 +1147,22 @@ function fsQueryUserProfiles(uids, knownUids) {
 
 function fsGetAdminUserFlags(uids, profileUids, knownProfileUids) {
   const result = { banned: new Set(), admins: new Set(), emailByUid: new Map(), profiles: {} };
-  const unique = [...new Set((uids || []).filter(isValidUid))].slice(0, 30);
+  const requested = [...new Set((uids || []).filter(isValidUid))].slice(0, 30);
+  const cache = CacheService.getScriptCache();
+  const unique = [];
+  requested.forEach(uid => {
+    const cached = cache.get('admin_user_flags_v1_' + uid);
+    if (cached !== null && cached !== undefined) {
+      try {
+        const flags = JSON.parse(cached);
+        if (flags.banned) result.banned.add(uid);
+        if (flags.admin) result.admins.add(uid);
+        if (flags.emailId) result.emailByUid.set(uid, flags.emailId);
+        return;
+      } catch (_) {}
+    }
+    unique.push(uid);
+  });
   const known = new Set((Array.isArray(knownProfileUids) ? knownProfileUids : []).filter(isValidUid).slice(0, 1000));
   const profiles = [...new Set((profileUids || []).filter(isValidUid))].filter(uid => !known.has(uid)).slice(0, 150);
   if (!unique.length && !profiles.length) return result;
@@ -1186,7 +1201,13 @@ function fsGetAdminUserFlags(uids, profileUids, knownProfileUids) {
       }
     });
   });
+  requested.forEach(uid => cache.put('admin_user_flags_v1_' + uid, JSON.stringify({
+    banned: result.banned.has(uid), admin: result.admins.has(uid), emailId: result.emailByUid.get(uid) || ''
+  }), 15));
   return result;
+}
+function fsInvalidateAdminUserFlags(uid) {
+  if (isValidUid(uid)) CacheService.getScriptCache().remove('admin_user_flags_v1_' + uid);
 }
 function fsQueryEmailDirectory(uids) {
   const unique = [...new Set((uids || []).filter(isValidUid))].slice(0, 30);
@@ -1667,6 +1688,7 @@ function setAdminPermissionsApi(actor, data) {
     updatedAt: new Date(), updatedBy: actor.uid
   });
   fsSet('users/' + uid, { isAdmin: active });
+  fsInvalidateAdminUserFlags(uid);
   fsAddEvent(actor.uid, 'set-admin-permissions', uid, { permissions, active });
   fsInvalidateAdminCountCache('users', 'admins');
   return { ok: true };
@@ -1706,6 +1728,7 @@ function banLibraryUserApi(actor, data) {
     fsSet('adminUsers/' + uid, { active: false, updatedAt: new Date(), updatedBy: actor.uid });
     fsSet('users/' + uid, { isAdmin: false });
   }
+  fsInvalidateAdminUserFlags(uid);
   fsAddEvent(actor.uid, 'ban-user', uid, { reason });
   fsInvalidateAdminCountCache('users', 'banned', 'admins');
   return { ok: true };
@@ -1730,6 +1753,7 @@ function restoreLibraryUserApi(actor, data) {
     fsSet('adminUsers/' + uid, { active: true, updatedAt: new Date(), updatedBy: actor.uid });
     fsSet('users/' + uid, { isAdmin: true });
   }
+  fsInvalidateAdminUserFlags(uid);
   fsAddEvent(actor.uid, 'restore-user', uid, { adminRestored });
   fsInvalidateAdminCountCache('users', 'banned', 'admins');
   return { ok: true };

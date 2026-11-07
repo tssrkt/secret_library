@@ -469,6 +469,26 @@ test('invitation dashboard reads only nested shares under pendingInvites', () =>
   assert.equal(invites[0].ownerUid, 'owner-uid');
 });
 
+test('admin participant flags are cached briefly and mutations invalidate the participant entry', () => {
+  const app = harness();
+  let requests = 0;
+  app.context.ScriptApp = { getOAuthToken: () => 'test-token' };
+  app.context.UrlFetchApp.fetchAll = batch => {
+    requests += batch.length;
+    return batch.map(() => ({ getResponseCode: () => 200, getContentText: () => '[]' }));
+  };
+  const uid = 'participant_123';
+  const first = app.context.fsGetAdminUserFlags([uid], [], []);
+  assert.equal(first.banned.has(uid), false);
+  assert.equal(first.admins.has(uid), false);
+  assert.equal(requests, 3, 'cold cache should query banned, admin and directory collections');
+  app.context.fsGetAdminUserFlags([uid], [], []);
+  assert.equal(requests, 3, 'warm cache should skip all three flag queries');
+  app.context.fsInvalidateAdminUserFlags(uid);
+  app.context.fsGetAdminUserFlags([uid], [], []);
+  assert.equal(requests, 6, 'invalidating a participant should force fresh flag queries');
+});
+
 test('admin aggregate counts are cached briefly and mutation invalidation forces a fresh read', () => {
   const app = harness();
   let requests = 0;
