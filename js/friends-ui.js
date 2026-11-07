@@ -148,6 +148,7 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
       cancelButton.type = 'button';
       cancelButton.className = 'settings-save-button';
       cancelButton.textContent = 'ОТМЕНИТЬ';
+      cancelButton.hidden = invitationState !== 'pending';
       cancelButton.addEventListener('click', async () => {
         if (busy.has(email) || snapshot.status !== 'ready') return;
         if (typeof social.cancelInvitation !== 'function') {
