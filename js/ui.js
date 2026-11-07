@@ -11,9 +11,9 @@ import { filterBooksByDirectValue, russianBookCount } from './direct-filter.js';
 import { createSearchController } from './search-ui.js';
 import { createIndexingErrorsController } from './indexing-errors-ui.js';
 import { createUserSettingsController } from './user-settings-ui.js';
-import { mountFriends } from './friends-ui.js?v=20261107-invitation-flow';
+import { mountFriends } from './friends-ui.js?v=20261107-invitation-flow2';
 import { createNotificationsController } from './notifications-ui.js?v=20261106-drive-notifications';
-import { social } from './social-runtime.js?v=20261107-invitation-flow';
+import { social } from './social-runtime.js?v=20261107-invitation-flow2';
 import { getAccessToken } from './auth.js';
 import { loadUserSettings, saveUserSettings } from './user-settings.js';
 

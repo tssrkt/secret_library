@@ -1,9 +1,9 @@
 import { startFirebaseSession, endFirebaseSession } from './firebase-session.js';
-import { createSocialStore } from './social-store.js?v=20261107-invitation-flow';
+import { createSocialStore } from './social-store.js?v=20261107-invitation-flow2';
 import { createSharedLibraryStore } from './shared-library.js?v=20261106-root-discovery';
 import { discoverDriveFriends, grantRootFolderAccess } from './drive-sharing.js?v=20261106-root-discovery';
 import { findDriveCatalogFile, downloadDriveJsonFile, getCurrentDriveUser } from './drive.js';
-import { sendInvitationEmail, getInvitationStatuses as fetchInvitationStatuses, acceptInvitation as acceptInvitationToken } from './invitation-mailer.js?v=20261107-invitation-flow';
+import { sendInvitationEmail, getInvitationStatuses as fetchInvitationStatuses, acceptInvitation as acceptInvitationToken } from './invitation-mailer.js?v=20261107-invitation-flow2';
 import { createInvitationLedger } from './invitation-ledger.js';
 
 export function socialError(error) {
@@ -37,6 +37,7 @@ let shared;
 let driveReader;
 let invitationUser = null;
 const invitationLedger = createInvitationLedger();
+const acceptedLedgerSyncs = new Set();
 const knownContactsSyncs = new Map();
 const FRIEND_CACHE_PREFIX = 'secret-library-social-friends-v1:';
 let driveFriends = [];
@@ -224,6 +225,18 @@ export const social = {
         // Friend rows, library tabs and notifications are all derived from Google Drive;
         // notification read state is stored locally in this browser.
         acceptedInviteFriends = Array.isArray(snapshot.acceptedInvitations) ? snapshot.acceptedInvitations : [];
+        for (const accepted of acceptedInviteFriends) {
+          const email = String(accepted.email || '').trim().toLowerCase();
+          const syncKey = `${invitationUser?.uid || ''}:${email}`;
+          if (!email || acceptedLedgerSyncs.has(syncKey)) continue;
+          acceptedLedgerSyncs.add(syncKey);
+          void invitationLedger.setStatus(invitationUser.uid, email, 'accepted', {
+            acceptedUid: String(accepted.uid || ''), acceptedAt: Date.now(),
+          }).catch((error) => {
+            acceptedLedgerSyncs.delete(syncKey);
+            console.warn('Could not update the Drive invitation ledger:', error);
+          });
+        }
         emit({ ...snapshot, friends: combineFriendRows(), libraries: driveFriends
           .filter((friend) => friend.inbound && !String(friend.uid).startsWith('email:'))
           .map((friend) => ({ uid: friend.uid, displayName: friend.displayName, revision: 'drive', catalogId: friend.catalogId || '' })) });

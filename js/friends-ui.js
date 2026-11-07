@@ -1,5 +1,5 @@
 import { createPaginator, paginateItems } from './pagination.js';
-import { socialError } from './social-runtime.js?v=20261107-invitation-flow';
+import { socialError } from './social-runtime.js?v=20261107-invitation-flow2';
 
 const HOUR_MS = 60 * 60 * 1000;
 
