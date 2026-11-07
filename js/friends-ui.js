@@ -1,5 +1,5 @@
 import { createPaginator, paginateItems } from './pagination.js';
-import { socialError } from './social-runtime.js?v=20261107-invitation-quota';
+import { socialError } from './social-runtime.js?v=20261107-cancel-invitation';
 
 const HOUR_MS = 60 * 60 * 1000;
 
@@ -166,7 +166,6 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
         } catch (error) {
           setInvitationMessage(socialError(error));
           // Keep the row available for a retry if Drive permission cleanup needs another attempt.
-          await refreshInvitationStatuses([email]);
         } finally {
           busy.delete(email);
           updateCooldowns();
