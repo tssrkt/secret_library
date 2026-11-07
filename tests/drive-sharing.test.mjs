@@ -110,7 +110,7 @@ test('invitation grants root-folder reader permission to the invited Google acco
       assert.equal(new URL(path, 'https://drive.googleapis.com').searchParams.get('sendNotificationEmail'), 'false');
       return { id: 'permission-created' };
     }
-    if (path.endsWith('/permissions?fields=nextPageToken%2Cpermissions%28id%2Ctype%2CemailAddress%2CdisplayName%2Crole%2Cdeleted%29&pageSize=100&supportsAllDrives=true')) return { permissions: [] };
+    if (path.includes('/permissions?fields=nextPageToken%2Cpermissions%28id%2Ctype%2CemailAddress%2CdisplayName%2Crole%2Cdeleted%2CpermissionDetails%28inherited%2Crole%2CpermissionType%29%29')) return { permissions: [] };
     throw new Error(`Unexpected Drive request: ${path}`);
   };
   const { grantRootFolderAccess } = await import('../js/drive-sharing.js');
@@ -130,6 +130,29 @@ test('invitation does not create a duplicate Drive permission when access alread
   const result = await grantRootFolderAccess('my-root', 'friend@example.com', { driveFetch: request });
   assert.deepEqual(result, { permissionId: 'existing-permission', created: false, email: 'friend@example.com' });
   assert.equal(created, false);
+});
+
+test('invitation downgrades an existing direct editor permission to reader', async () => {
+  const calls = [];
+  const request = async (path, options = {}) => {
+    calls.push({ path, options });
+    if (options.method === 'PATCH') {
+      assert.deepEqual(JSON.parse(options.body), { role: 'reader' });
+      return { id: 'existing-permission', role: 'reader' };
+    }
+    return { permissions: [{ id: 'existing-permission', type: 'user', emailAddress: 'friend@example.com', role: 'writer', permissionDetails: [{ inherited: false, role: 'writer', permissionType: 'user' }] }] };
+  };
+  const { grantRootFolderAccess } = await import('../js/drive-sharing.js');
+  const result = await grantRootFolderAccess('my-root', 'friend@example.com', { driveFetch: request });
+  assert.deepEqual(result, { permissionId: 'existing-permission', created: false, email: 'friend@example.com' });
+  assert.equal(calls.length, 2);
+  assert.equal(calls[1].options.method, 'PATCH');
+});
+
+test('inherited editor permissions are not silently accepted as read-only', async () => {
+  const request = async () => ({ permissions: [{ id: 'inherited-permission', type: 'user', emailAddress: 'friend@example.com', role: 'writer', permissionDetails: [{ inherited: true, role: 'writer', permissionType: 'user' }] }] });
+  const { grantRootFolderAccess } = await import('../js/drive-sharing.js');
+  await assert.rejects(() => grantRootFolderAccess('my-root', 'friend@example.com', { driveFetch: request }), /унаследованы права редактирования/);
 });
 
 test('matches a published catalog to the known friend email when Drive omits root owner details', async () => {

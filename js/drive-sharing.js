@@ -74,7 +74,7 @@ async function listSharedFolders(request = driveFetch, ownerEmail = '') {
 
 async function listPermissions(folderId, request = driveFetch) {
   const params = new URLSearchParams({
-    fields: 'nextPageToken,permissions(id,type,emailAddress,displayName,role,deleted)',
+    fields: 'nextPageToken,permissions(id,type,emailAddress,displayName,role,deleted,permissionDetails(inherited,role,permissionType))',
     pageSize: '100',
     supportsAllDrives: 'true',
   });
@@ -90,7 +90,28 @@ export async function grantRootFolderAccess(rootFolderId, email, api = {}) {
   if (!address) throw new Error('Укажите корректный email участника.');
   const existing = (await listPermissions(rootFolderId, request)).find((permission) =>
     !permission.deleted && permission.type === 'user' && normalizeEmail(permission.emailAddress) === address);
-  if (existing) return { permissionId: existing.id || '', created: false, email: address };
+  if (existing) {
+    // Never leave a direct editor permission in place when an invitation is sent.
+    // Inherited permissions cannot be changed here, so fail visibly instead.
+    if (existing.role === 'owner') {
+      return { permissionId: existing.id || '', created: false, email: address };
+    }
+    if (existing.role !== 'reader') {
+      const inherited = (existing.permissionDetails || []).some((detail) => detail.inherited === true);
+      if (inherited) {
+        throw new Error(`Для ${address} унаследованы права редактирования Google Drive. Измените доступ на родительской папке на чтение и повторите приглашение.`);
+      }
+      const params = new URLSearchParams({ supportsAllDrives: 'true', sendNotificationEmail: 'false' });
+      const updated = await request(`/files/${encodeURIComponent(rootFolderId)}/permissions/${encodeURIComponent(existing.id)}?${params}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ role: 'reader' }), readJson: true,
+      });
+      if (updated?.role && updated.role !== 'reader') {
+        throw new Error(`Не удалось ограничить доступ ${address} только чтением.`);
+      }
+    }
+    return { permissionId: existing.id || '', created: false, email: address };
+  }
 
   const params = new URLSearchParams({ supportsAllDrives: 'true', sendNotificationEmail: 'false' });
   const created = await request(`/files/${encodeURIComponent(rootFolderId)}/permissions?${params}`, {
