@@ -11,11 +11,24 @@ service cloud.firestore {
     function own(uid) { return signed() && me() == uid; }
     function validEmail(value) { return value is string && value.size() <= 254 && value == value.lower() && value.matches('^[^ /@]+@[^ /@]+[.][^ /@]+$'); }
     function userPath(uid) { return /databases/$(database)/documents/users/$(uid); }
+    function adminPath(uid) { return /databases/$(database)/documents/adminUsers/$(uid); }
+    function superadmin() {
+      return founder() || (signed() && exists(adminPath(me()))
+        && get(adminPath(me())).data.role == 'superadmin' && get(adminPath(me())).data.active == true);
+    }
+    function hasValidInviter() {
+      return exists(userPath(me()))
+        && get(userPath(me())).data.invitedByUid is string
+        && get(userPath(me())).data.invitedByUid.size() > 0
+        && exists(userPath(get(userPath(me())).data.invitedByUid));
+    }
     function pendingPath(address, owner) { return /databases/$(database)/documents/pendingInvites/$(address)/shares/$(owner); }
     function sharePath(owner, viewer) { return /databases/$(database)/documents/libraryShares/$(owner + '__' + viewer); }
-    function registered() { return signed() && exists(userPath(me())); }
-    // The only account allowed to create its profile without an invitation.
+    // The founder/superadmin is the only account exempt from inviter validation.
     function founder() { return signed() && me() == 'aA89pCYsKNbWWePmAveUVrG34F82'; }
+    function registered() {
+      return signed() && exists(userPath(me())) && (superadmin() || hasValidInviter());
+    }
 
     match /sharedLibraries/{owner} {
       function canRead() { return registered() && (me() == owner || get(sharePath(owner, me())).data.active == true); }
