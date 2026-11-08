@@ -17,7 +17,7 @@ import {
 import { prepareIndexingRun, createRetryEligibilityCheck } from './indexing-run.js';
 import * as ui from './ui.js?v=20261107-no-stale-invitation-count';
 import { errorDetails, recordIndexingError } from './indexing-errors.js';
-import { social, socialError } from './social-runtime.js?v=20261108-authz-server-check';
+import { social, socialError } from './social-runtime.js?v=20261108-invitation-gate-v2';
 import { getAccessToken } from './auth.js';
 import { checkpointKey, loadCheckpoint, saveCheckpoint, deleteCheckpoint, commitCheckpoint } from './indexing-checkpoint.js';
 import { createLibraryTabs } from './library-tabs.js';
@@ -407,25 +407,11 @@ async function afterAuthorization() {
     }
   }
   persistAuthSession(user);
-  if (!activeRootFolderId) {
-    ui.setAuthorized(true);
-    ui.setStatus('Выберите корневую папку вашей библиотеки.');
-    const folder = await chooseRootFolder({ listChildren: listFolderChildren, getFolder, scanFolder: scanLibrary, onExit: signOut });
-    if (!folder) {
-      if (getAccessToken()) ui.setStatus('Корневая папка не выбрана. Выберите её через личное меню.');
-      return;
-    }
-    await saveRootFolderPreference(folder.id, folder.resourceKey);
-    activeRootFolderId = folder.id;
-    activeRootFolderResourceKey = folder.resourceKey;
-  }
-  localCheckpointKey = checkpointKey(authorizedOwner, activeRootFolderId);
   reconnectRequired = false;
   ui.setReconnectRequired(false);
-  // Do not expose the library until the invitation check and registration succeed.
-  // A Google OAuth session alone is not permission to enter the private library.
+  // Enforce the invitation gate before showing any authorized UI, including the root-folder picker.
   const invitationToken = new URLSearchParams(window.location.search).get('invite') || '';
-  const registered = await social.connect(getAccessToken(), activeRootFolderId, invitationToken);
+  const registered = await social.connect(getAccessToken(), activeRootFolderId || '', invitationToken);
   if (!registered) {
     // A rejected sign-in must also clear any catalog left over from a previous session.
     libraryAccessGranted = false;
@@ -447,6 +433,21 @@ async function afterAuthorization() {
       : (socialState.message || 'Не удалось проверить право доступа. Повторите попытку позже.');
     throw new Error(message);
   }
+  // The user is now server-authorized; only now may we ask them to choose a root folder.
+  if (!activeRootFolderId) {
+    ui.setAuthorized(true);
+    ui.setStatus('Выберите корневую папку вашей библиотеки.');
+    const folder = await chooseRootFolder({ listChildren: listFolderChildren, getFolder, scanFolder: scanLibrary, onExit: signOut });
+    if (!folder) {
+      if (getAccessToken()) ui.setStatus('Корневая папка не выбрана. Выберите её через личное меню.');
+      return;
+    }
+    await saveRootFolderPreference(folder.id, folder.resourceKey);
+    activeRootFolderId = folder.id;
+    activeRootFolderResourceKey = folder.resourceKey;
+    social.setRootFolder(activeRootFolderId);
+  }
+  localCheckpointKey = checkpointKey(authorizedOwner, activeRootFolderId);
   ui.setAuthorized(true);
   void ui.setUserAvatar(user);
   ui.clearError();

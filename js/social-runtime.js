@@ -51,6 +51,7 @@ let ledgerInvitationRowsCache = [];
 let lastDriveFriendEmailSignature = '';
 const closedAccessEmails = new Set();
 let configuredRootFolderId = '';
+let connectedDriveUser = null;
 let connectionReadyPromise = Promise.resolve(false);
 let resolveConnectionReady = null;
 function settleConnectionReady(ready) {
@@ -208,12 +209,17 @@ export const social = {
       throw error;
     }
   },
+  setRootFolder(rootFolderId) {
+    configuredRootFolderId = String(rootFolderId || '');
+    if (connectedDriveUser) void refreshDriveFriends(connectedDriveUser, generation, driveFriends, false);
+  },
   subscribe(listener) { listeners.add(listener); listener(state); return () => listeners.delete(listener); },
   getState() { return state; },
   async connect(token, rootFolderId = '', invitationToken = '') {
     settleConnectionReady(false);
     connectionReadyPromise = new Promise((resolve) => { resolveConnectionReady = resolve; });
-    if (rootFolderId) configuredRootFolderId = rootFolderId;
+    configuredRootFolderId = String(rootFolderId || '');
+    connectedDriveUser = null;
     const current = ++generation;
     // Invitation operations use Firebase Auth ID tokens and the Apps Script registry;
     // never reuse a stale user while a new connection is being established.
@@ -227,6 +233,7 @@ export const social = {
       // This path runs independently of Firebase Authentication/Firestore.
       const driveUser = await getCurrentDriveUser();
       if (current !== generation) return false;
+      connectedDriveUser = driveUser;
       emit({ driveUserEmail: String(driveUser?.email || driveUser?.emailAddress || '').trim().toLowerCase() });
       driveReader?.dispose();
       driveReader = createSharedLibraryStore({ user: { uid: '' } });
@@ -338,6 +345,7 @@ export const social = {
     acceptedInviteFriends = [];
     ledgerInvitationRowsCache = [];
     configuredRootFolderId = '';
+    connectedDriveUser = null;
     closedAccessEmails.clear();
     emit({ status: 'idle', message: 'Войдите через Google.', friends: [], notifications: [], libraries: [], ownRootFolderId: null });
     void endFirebaseSession().catch(() => {});
