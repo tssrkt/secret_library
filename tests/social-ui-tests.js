@@ -77,6 +77,7 @@ export async function runSocialUiTests(test, assert, equal) {
       await tick(); await tick();
       assert(checkedEmails.includes(email), 'every stale ledger address is checked against the server directory');
       assert(page.querySelector('.sent-invitations-section').hidden, 'registered user is not shown as a pending invitation');
+      assert(page.querySelector('.friends-table').textContent.includes('Tara Green'), 'registered user is transferred to the friends table before invitations render');
       assert(!page.querySelector('.friends-count').textContent.includes('отправлено еще'), 'registered user does not count against invitation quota');
     } finally { cleanup(); page.remove(); }
   });
