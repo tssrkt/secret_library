@@ -598,7 +598,8 @@ async function restoreAuthorization() {
   const attempt = authAttempts.begin();
   const recovered = await recoverAuthSession();
   if (!authAttempts.isCurrent(attempt)) {
-    clearAccessToken();
+    // A newer explicit sign-in superseded this background restore. Never clear
+    // the access token or interfere with the newer attempt here.
     return;
   }
   if (recovered) {
@@ -637,11 +638,11 @@ try {
   // Otherwise an early first click can race initializeAuth() and fail before
   // the OAuth token client exists, forcing the user to click a second time.
   await initializeAuth();
-  // Do not enable sign-in until startup session restoration has finished.
-  // Otherwise its final setAuthorized(false) can disconnect a new social.connect()
-  // started by a fast click, leaving authorization with no error and a generic denial.
-  await restoreAuthorization();
+  // Google Identity Services is ready, so allow explicit sign-in while the
+  // slower saved-session check runs in the background. restoreAuthorization()
+  // respects authAttempts and cannot overwrite a newer user-initiated login.
   ui.setBusy(false);
+  await restoreAuthorization();
 } catch (error) {
   ui.showError(readableError(error));
   ui.setBusy(false);
