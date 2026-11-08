@@ -42,7 +42,7 @@ export function createUserSettingsController({ container, index, onError, clearE
         status.textContent = '';
         if (!folders.length) {
           description.hidden = true;
-          status.textContent = 'В корневой папке библиотеки нет папок.';
+          status.textContent = 'В вашей библиотеке нет папок.';
           return;
         }
         const previousForm = section.querySelector('.sharing-settings-form');

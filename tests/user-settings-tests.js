@@ -161,7 +161,7 @@ export async function runUserSettingsTests(test, assert, equal) {
     await opened;
     equal(container.textContent, 'Home', 'late load cannot replace home');
     await controller.open();
-    assert(container.textContent.includes('В корневой папке библиотеки нет папок.') && !container.querySelector('form'), 'empty root is a normal state');
+    assert(container.textContent.includes('В вашей библиотеке нет папок.') && !container.querySelector('form'), 'empty root is a normal state');
     controller.leave();
   });
 
