@@ -637,8 +637,11 @@ try {
   // Otherwise an early first click can race initializeAuth() and fail before
   // the OAuth token client exists, forcing the user to click a second time.
   await initializeAuth();
-  ui.setBusy(false);
+  // Do not enable sign-in until startup session restoration has finished.
+  // Otherwise its final setAuthorized(false) can disconnect a new social.connect()
+  // started by a fast click, leaving authorization with no error and a generic denial.
   await restoreAuthorization();
+  ui.setBusy(false);
 } catch (error) {
   ui.showError(readableError(error));
   ui.setBusy(false);
