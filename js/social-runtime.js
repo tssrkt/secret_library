@@ -205,6 +205,7 @@ export const social = {
     }
   },
   subscribe(listener) { listeners.add(listener); listener(state); return () => listeners.delete(listener); },
+  getState() { return state; },
   async connect(token, rootFolderId = '', invitationToken = '') {
     settleConnectionReady(false);
     connectionReadyPromise = new Promise((resolve) => { resolveConnectionReady = resolve; });
