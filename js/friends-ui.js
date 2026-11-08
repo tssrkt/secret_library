@@ -1,5 +1,5 @@
 import { createPaginator, paginateItems } from './pagination.js';
-import { socialError } from './social-runtime.js?v=20261107-authoritative-social-state';
+import { socialError } from './social-runtime.js?v=20261108-bounded-friend-discovery';
 
 const HOUR_MS = 60 * 60 * 1000;
 
