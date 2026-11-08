@@ -228,7 +228,7 @@ export function setReconnectRequired(required) {
     elements.signIn.hidden = false;
     elements.signIn.disabled = false;
   }
-  elements.signIn.textContent = '????? ????? Google';
+  elements.signIn.textContent = '\u0412\u043e\u0439\u0442\u0438 \u0447\u0435\u0440\u0435\u0437 Google';
 }
 
 export function showStats(folderCount, bookCount) {
