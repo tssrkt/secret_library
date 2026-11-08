@@ -107,20 +107,18 @@ function combineFriendRows() {
     byUid.set(friend.uid, friend);
     if (email) byEmail.set(email, friend);
   }
+  // Accepted invitations are metadata, not an ongoing friendship. A person stays
+  // in Friends only while at least one library-sharing direction is active.
   for (const accepted of acceptedInviteFriends) {
     const email = String(accepted.email || '').trim().toLowerCase();
-    const existing = byUid.get(accepted.uid) || byEmail.get(email);
-    if (existing) {
-      if (accepted.outbound === true && !closedAccessEmails.has(email)) existing.outbound = true;
-      continue;
+    const existing = byUid.get(accepted.uid) || (email ? byEmail.get(email) : null);
+    if (!existing) continue;
+    if ((!existing.email || String(existing.email).startsWith('email:')) && email) existing.email = email;
+    if (accepted.displayName && (!existing.displayName || existing.displayName === existing.email)) {
+      existing.displayName = accepted.displayName;
     }
-    const friend = { uid: accepted.uid, email, displayName: accepted.displayName || email,
-      inbound: accepted.inbound === true, outbound: accepted.outbound === true && !closedAccessEmails.has(email), isAdmin: false, catalogId: '' };
-    friends.push(friend);
-    byUid.set(friend.uid, friend);
-    if (email) byEmail.set(email, friend);
   }
-  return friends;
+  return friends.filter((friend) => friend.inbound === true || friend.outbound === true);
 }
 function writeFriendCache(uid, friends) {
   if (!uid || !Array.isArray(friends)) return;
