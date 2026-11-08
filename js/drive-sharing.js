@@ -343,9 +343,15 @@ export async function discoverDriveFriends(user, configuredRootFolderId = '', ap
           }
           continue;
         }
-        // A Drive permission only means the folder is shared. It does not prove
-        // the recipient registered or accepted the invitation, so do not create
-        // a Friends row for an outbound-only permission.
+        // Keep outbound status for a person already known as a registered friend,
+        // even when they have not shared their own catalog with us. Unknown Drive
+        // permissions alone must not create Friends rows.
+        const knownFriend = (Array.isArray(knownFriends) ? knownFriends : []).find((friend) =>
+          friend?.uid && !String(friend.uid).startsWith('email:')
+          && normalizeEmail(friend.email) === email);
+        if (knownFriend) {
+          add({ ...knownFriend, email, inbound: knownFriend.inbound === true, outbound: true });
+        }
 
         }
       }
@@ -362,7 +368,8 @@ export async function discoverDriveFriends(user, configuredRootFolderId = '', ap
     discoveryStatus: catalogDiscoveryFailed ? 'error' : 'ready',
     errors: [...driveDiscoveryErrors, ...diagnostics],
     friends: [...friends.values()]
-      .filter((friend) => friend.inbound)
+      .filter((friend) => friend.inbound || (friend.outbound && (Array.isArray(knownFriends) ? knownFriends : []).some((known) =>
+        known?.uid && String(known.uid) === String(friend.uid))))
       .sort((a, b) => a.displayName.localeCompare(b.displayName, 'ru') || a.uid.localeCompare(b.uid)),
   };
 }

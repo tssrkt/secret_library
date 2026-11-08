@@ -2,6 +2,29 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { discoverDriveFriends } from '../js/drive-sharing.js';
 
+test('retains outbound access for a registered friend who has not shared their own library', async () => {
+  const request = async (path) => {
+    const url = new URL(path, 'https://drive.googleapis.com');
+    const q = url.searchParams.get('q') || '';
+    if (url.pathname === '/files' && q.includes("name = '.secret-library-catalog.json'")) return { files: [] };
+    if (url.pathname === '/files/root-me') return { id: 'root-me', mimeType: 'application/vnd.google-apps.folder' };
+    if (url.pathname === '/files/root-me/permissions') return { permissions: [
+      { type: 'user', emailAddress: 'owner@example.com', role: 'owner' },
+      { type: 'user', emailAddress: 'ada@example.com', role: 'reader', displayName: 'Ada King' },
+    ] };
+    throw new Error(`Unexpected Drive request: ${path}`);
+  };
+  const result = await discoverDriveFriends(
+    { uid: 'tara-uid', email: 'tara@example.com' },
+    'root-me',
+    { driveFetch: request },
+    [{ uid: 'ada-uid', email: 'ada@example.com', displayName: 'Ada King', inbound: false, outbound: false }],
+  );
+  assert.deepEqual(result.friends.map(({ uid, email, inbound, outbound }) => ({ uid, email, inbound, outbound })), [
+    { uid: 'ada-uid', email: 'ada@example.com', inbound: false, outbound: true },
+  ]);
+});
+
 test('Drive permissions define one-way and mutual friend access independently', async () => {
   const request = async (path) => {
     const url = new URL(path, 'https://drive.googleapis.com');

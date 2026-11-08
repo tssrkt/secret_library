@@ -175,7 +175,12 @@ async function syncAcceptedInvitationStatuses(emails, currentGeneration = genera
   }
   if (serverPendingRows.length) ledgerInvitationRowsCache = mergeInvitationRows(ledgerInvitationRowsCache, serverPendingRows, acceptedEmails);
   if (acceptedEmails.length) ledgerInvitationRowsCache = mergeInvitationRows(ledgerInvitationRowsCache, [], acceptedEmails);
+  const hasUnreconciledRegisteredFriend = acceptedEmails.some((email) =>
+    !driveFriends.some((friend) => String(friend.email || '').trim().toLowerCase() === email));
   if (acceptedEmails.length || serverPendingRows.length) emit({ friends: combineFriendRows(), invitations: mergeInvitationRows(state.invitations, ledgerInvitationRowsCache, acceptedEmails) });
+  if (hasUnreconciledRegisteredFriend && invitationUser) {
+    void refreshDriveFriends(invitationUser, currentGeneration, combineFriendRows(), false);
+  }
   return statuses;
 }
 
@@ -193,7 +198,7 @@ async function refreshDriveFriends(user, currentGeneration = generation, knownFr
     // Folder discovery, catalog reads and library availability are Google Drive-only.
     // Friend tabs are discovered from Drive permissions and Drive catalogs; a prior
     // local snapshot is only a fallback if Drive unexpectedly returns no friends.
-    const result = await discoverDriveFriends(user, configuredRootFolderId, {}, knownFriends);
+    const result = await discoverDriveFriends(user, configuredRootFolderId, {}, combineFriendRows());
     if (currentGeneration !== generation) return;
     if (result.rootFolderId) configuredRootFolderId = result.rootFolderId;
     // If Drive's catalog search temporarily returns no records, retain the last
