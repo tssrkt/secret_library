@@ -276,16 +276,13 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
       if (pendingEmails.size) {
         summary += `, и отправлено еще ${pendingEmails.size.toLocaleString('ru-RU')} ${plural(pendingEmails.size, 'приглашение', 'приглашения', 'приглашений')}`;
       }
-      // Invitation limits apply only to regular participants. Count existing
-      // friends and outstanding invitations as used slots, even if an older
-      // invitation-service deployment reports an incomplete registry count.
+      // Accepted friends do not consume invitation slots. Only outstanding
+      // invitations count against the limit for regular participants.
       const currentUserIsAdmin = invitationQuota?.isAdmin === true;
       if (invitationQuota && !currentUserIsAdmin) {
         const limit = Number(invitationQuota.limit);
-        const serverUsed = Number(invitationQuota.used);
-        if (Number.isFinite(limit) && Number.isFinite(serverUsed)) {
-          const used = Math.max(serverUsed, count + pendingEmails.size);
-          const remaining = Math.max(0, limit - used);
+        if (Number.isFinite(limit)) {
+          const remaining = Math.max(0, limit - pendingEmails.size);
           summary += `. Вы можете пригласить еще ${remaining.toLocaleString('ru-RU')} ${plural(remaining, 'друга', 'друзей', 'друзей')}`;
         }
       }
