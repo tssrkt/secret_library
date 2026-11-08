@@ -387,9 +387,7 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
           if (isSharingWithFriend) {
             if (!window.confirm(`Закрыть для ${email} доступ к корневой папке вашей библиотеки в Google Drive?`)) return;
             const result = await social.closeFriendAccess(email);
-            friendsAccessMessage.textContent = result.revoked
-              ? `Доступ к корневой папке для ${email} закрыт в Google Drive.`
-              : '';
+            friendsAccessMessage.textContent = '';
           } else {
             const result = await social.shareBackWithEmail(email, friend.uid);
             friendsAccessMessage.textContent = typeof result === 'string' ? result : `Доступ к библиотеке предоставлен для ${email}.`;
