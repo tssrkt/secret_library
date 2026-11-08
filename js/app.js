@@ -538,9 +538,11 @@ async function signIn() {
   const attempt = authAttempts.begin();
   ui.clearError();
   ui.setBusy(true);
-  ui.setStatus('Ожидаем авторизацию Google…');
+  ui.setStatus('Ожидаем выбора Google-аккаунта…');
   try {
-    await requestAccessToken({ prompt: '' });
+    // An explicit sign-in must let the user choose the account. A blank prompt
+    // can silently reuse a different Google account and fail the invite gate.
+    await requestAccessToken({ prompt: 'select_account' });
     if (!authAttempts.isCurrent(attempt)) {
       clearAccessToken();
       return;
@@ -601,7 +603,27 @@ async function restoreAuthorization() {
     return;
   }
   if (recovered) {
-    await afterAuthorization();
+    try {
+      await afterAuthorization();
+    } catch (error) {
+      // A saved token can belong to the wrong Google account, or its access
+      // check can fail. Do not leave the user trapped in this failed automatic
+      // attempt: discard that session and offer an explicit account chooser.
+      console.warn('Could not restore the saved Google session; explicit sign-in is required:', error);
+      social.disconnect();
+      clearPersistedAuth({ forget: true });
+      clearAccessToken();
+      libraryAccessGranted = false;
+      authorizedOwner = null;
+      currentIndex = null;
+      shareableIndex = null;
+      selection.reset();
+      tabsRoot.hidden = true;
+      ui.resetUi();
+      ui.setAuthorized(false);
+      ui.clearError();
+      ui.setStatus('Не удалось подтвердить доступ для сохранённого аккаунта. Нажмите «Войти через Google» и выберите нужный аккаунт.');
+    }
   } else {
     clearPersistedAuth();
     clearAccessToken();
