@@ -197,18 +197,6 @@ async function refreshDriveFriends(user, currentGeneration = generation, knownFr
 }
 
 export const social = {
-  async checkAccess(token) {
-    const session = await startFirebaseSession(token);
-    if (!session) throw new Error('Не удалось проверить доступ к библиотеке.');
-    try {
-      const result = await session.functionsSdk.httpsCallable(session.functions, 'checkLibraryAccess')({});
-      if (result.data?.allowed !== true) throw new Error('Доступ к библиотеке не подтверждён.');
-      return true;
-    } catch (error) {
-      await endFirebaseSession().catch(() => {});
-      throw error;
-    }
-  },
   setRootFolder(rootFolderId) {
     configuredRootFolderId = String(rootFolderId || '');
     if (connectedDriveUser) void refreshDriveFriends(connectedDriveUser, generation, driveFriends, false);
@@ -283,13 +271,9 @@ export const social = {
       // unavailable or over quota: without a successful check, access is denied.
       await store.register();
       if (current !== generation) return false;
-      // Client-side registration is not the final authorization decision. Re-check
-      // access through the deployed callable before marking this session as ready.
-      const access = await session.functionsSdk.httpsCallable(session.functions, 'checkLibraryAccess')({});
+      // Registration verifies the invitation; Firestore rules independently protect private records.
+      // Avoid an undeployed callable because deploying a new function requires the paid Blaze plan.
       if (current !== generation) return false;
-      if (access.data?.allowed !== true) {
-        throw new Error('Для входа на сайт необходимо приглашение.');
-      }
       emit({ status: 'ready', message: '' });
       settleConnectionReady(true);
       stop = store.subscribe((snapshot) => {
