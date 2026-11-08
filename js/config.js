@@ -22,7 +22,7 @@ export const DRIVE_SCOPES = [
 ].join(' ');
 // Create a browser API key in Google Cloud, enable Google Picker API, and restrict
 // the key to this site's HTTP referrers and the Picker API. Never use a client secret here.
-export const GOOGLE_PICKER_API_KEY = '';
+export const GOOGLE_PICKER_API_KEY = 'AIzaSyBczcoVNwSb_wI3H9e9n73iEs8oUVbV420';
 
 export const FOLDER_MIME_TYPE = 'application/vnd.google-apps.folder';
 export const SCAN_CONCURRENCY = 4;
