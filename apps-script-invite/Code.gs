@@ -90,11 +90,10 @@ function doPost(e) {
     stage = 'send-email';
     const inviterName = String(user.displayName || 'Пользователь').trim().slice(0, 160) || 'Пользователь';
     invitationTokenRecord = issueInvitationAcceptanceToken(user.localId, normalizeEmail(user.email), email);
-    const acceptanceUrl = SITE_ORIGIN + '/secret_library/index.html?invite=' + encodeURIComponent(invitationTokenRecord.token);
     MailApp.sendEmail({
       to: email,
       subject: 'Приглашение в «Тайную Библиотеку»',
-      body: renderInvitationEmailTemplate(inviterName) + '\n\nЧтобы принять приглашение, войдите через Google по этой ссылке:\n' + acceptanceUrl + '\n\nЕсли вы уже участвуете в Тайной Библиотеке, просто откройте её — приглашение появится автоматически.',
+      body: renderInvitationEmailTemplate(inviterName),
       name: 'Тайная Библиотека'
     });
     emailSent = true;
@@ -1674,8 +1673,8 @@ function setInvitationLimitApi(actor, data) {
 
 function setInvitationEmailTemplateApi(actor, data) {
   requireAdminApi(actor.uid, 'texts');
-  const body = typeof data.body === 'string' ? data.body.trim() : '';
-  if (!body || body.length > 10000 || !body.includes('{{inviterName}}')) {
+  const body = typeof data.body === 'string' ? data.body : '';
+  if (!body.trim() || body.length > 10000 || !body.includes('{{inviterName}}')) {
     throw new Error('Текст должен содержать {{inviterName}} — место для имени пригласителя; максимум 10 000 символов.');
   }
   fsSet('systemSettings/invitationEmail', { body, updatedAt: new Date(), updatedBy: actor.uid });

@@ -1513,3 +1513,27 @@ test('public doPost does not dispatch an unknown action to an unprivileged calle
   assert.match(result.content, /"ok":false/);
   assert.equal(app.sent.length, 0);
 });
+
+
+test('invitation email body contains only the saved template with inviter name substituted', () => {
+  const app = harness();
+  const template = '  Привет!\n\n{{inviterName}} приглашает тебя.\nhttps://example.test/info\n';
+  app.context.fsGet = path => path === 'systemSettings/invitationEmail' ? { body: template } : null;
+  app.invoke();
+  assert.equal(app.sent.length, 1);
+  assert.equal(app.sent[0].body, template.replace('{{inviterName}}', 'Ада'));
+  assert.doesNotMatch(app.sent[0].body, /Чтобы принять приглашение|Если вы уже участвуете|\?invite=/);
+});
+
+test('invitation template saving preserves the exact text including leading and trailing whitespace', () => {
+  const app = harness();
+  const writes = [];
+  app.context.requireAdminApi = () => ({ uid: 'admin-uid' });
+  app.context.fsSet = (path, value) => writes.push({ path, value });
+  app.context.fsAddEvent = () => {};
+  const body = '\n  {{inviterName}} приглашает тебя.  \n';
+  const result = app.context.setInvitationEmailTemplateApi({ uid: 'admin-uid' }, { body });
+  assert.equal(result.body, body);
+  assert.equal(writes[0].path, 'systemSettings/invitationEmail');
+  assert.equal(writes[0].value.body, body);
+});

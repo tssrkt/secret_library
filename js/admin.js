@@ -616,10 +616,14 @@ function renderTexts() {
   content.append(fieldLabel, hint);
   content.append(button('Сохранить текст', async () => {
     const body = editor.value;
+    say('Сохраняю текст приглашения…');
     const result = await call('setInvitationEmailTemplate')({ body });
-    data.invitationEmailTemplate = result.body || body;
-    say('Текст пригласительного письма сохранён.');
-    renderTexts();
+    if (!result || result.ok !== true || typeof result.body !== 'string') {
+      throw new Error('Сервер не подтвердил сохранение текста приглашения.');
+    }
+    data.invitationEmailTemplate = result.body;
+    editor.value = result.body;
+    say('Текст приглашения успешно сохранён.');
   }, 'primary'));
 }
 
