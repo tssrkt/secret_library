@@ -93,7 +93,16 @@ export async function syncFolderSharingAccess(index, settings, api = {}) {
     for (const folder of index.folders.filter((item) => item.parentId === index.rootFolderId)) {
       const desired = excluded.has(folder.id);
       const params = new URLSearchParams({ fields: 'id,mimeType,inheritedPermissionsDisabled,capabilities(canDisableInheritedPermissions,canEnableInheritedPermissions)', supportsAllDrives: 'true' });
-      const current = await request(`/files/${encodeURIComponent(folder.id)}?${params}`, { readJson: true });
+      let current;
+      try {
+        current = await request(`/files/${encodeURIComponent(folder.id)}?${params}`, { readJson: true });
+      } catch (error) {
+        // With drive.file, a folder may be invisible until the user selects that exact folder in Picker.
+        // Authorize on the first 403, then repeat the metadata read before deciding whether to PATCH.
+        if (error?.status !== 403) throw error;
+        await authorizeFolder({ id: folder.id, name: folder.name, mimeType: FOLDER_MIME_TYPE, isFolder: true });
+        current = await request(`/files/${encodeURIComponent(folder.id)}?${params}`, { readJson: true });
+      }
       if (current.mimeType !== FOLDER_MIME_TYPE) throw new Error(`«${folder.name}» больше не является папкой Google Drive.`);
       const previous = current.inheritedPermissionsDisabled === true;
       if (previous === desired) continue;

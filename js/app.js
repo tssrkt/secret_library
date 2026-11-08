@@ -15,9 +15,9 @@ import {
   canResumeBuildingIndex, prepareBuildingIndex, updateBuildProgress, validateCompletedIndex,
 } from './index-build.js';
 import { prepareIndexingRun, createRetryEligibilityCheck } from './indexing-run.js';
-import * as ui from './ui.js?v=20261108-drive-file-picker-folder-fix';
+import * as ui from './ui.js?v=20261108-drive-file-picker-403-retry';
 import { errorDetails, recordIndexingError } from './indexing-errors.js';
-import { social, socialError } from './social-runtime.js?v=20261108-drive-file-picker-folder-fix';
+import { social, socialError } from './social-runtime.js?v=20261108-drive-file-picker-403-retry';
 import { getAccessToken } from './auth.js?v=20261108-drive-file-picker-folder-fix';
 import { checkpointKey, loadCheckpoint, saveCheckpoint, deleteCheckpoint, commitCheckpoint } from './indexing-checkpoint.js';
 import { createLibraryTabs } from './library-tabs.js';

@@ -307,3 +307,39 @@ test('closeRootFolderAccess refuses to remove inherited permission', async () =>
   await assert.rejects(closeRootFolderAccess('root-id', 'friend@example.com', { driveFetch: request }), /наследуется/);
   assert.equal(calls.length, 1);
 });
+
+test('authorizes a folder in Picker and retries metadata after an initial 403', async () => {
+  const calls = [];
+  const state = { id: 'folder-403', mimeType: 'application/vnd.google-apps.folder', inheritedPermissionsDisabled: false, capabilities: { canDisableInheritedPermissions: true, canEnableInheritedPermissions: true } };
+  let pickerAuthorized = false;
+  const request = async (path, options = {}) => {
+    calls.push({ path, options });
+    if (!options.method && !pickerAuthorized) {
+      const error = new Error('No access before Picker authorization');
+      error.status = 403;
+      throw error;
+    }
+    if (options.method === 'PATCH') {
+      const patch = JSON.parse(options.body);
+      state.inheritedPermissionsDisabled = patch.inheritedPermissionsDisabled;
+      return { id: state.id, ...patch };
+    }
+    return state;
+  };
+  const { syncFolderSharingAccess } = await import('../js/drive-sharing.js');
+  const pickerCalls = [];
+  const authorizeFolder = async (folder) => {
+    if (pickerAuthorized) return true;
+    pickerCalls.push(folder);
+    pickerAuthorized = true;
+    return true;
+  };
+  await syncFolderSharingAccess({ rootFolderId: 'root', folders: [
+    { id: 'root', parentId: null, name: 'Root' },
+    { id: state.id, parentId: 'root', name: 'Private' },
+  ] }, { sharing: { excludedFolderIds: [state.id] } }, { driveFetch: request, authorizeFolder });
+  assert.equal(pickerCalls.length, 1);
+  assert.equal(calls.filter((call) => !call.options.method).length, 2);
+  assert.equal(state.inheritedPermissionsDisabled, true);
+  assert.equal(calls.at(-1).options.method, 'PATCH');
+});
