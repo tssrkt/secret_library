@@ -67,8 +67,14 @@ export function createSocialStore({ db, sdk, user }) {
       await forEachConcurrent(pending.docs, 10, (snapshot) => claimInvitation(snapshot.ref));
     }
     if (uid !== founderUid && typeof user.getIdToken === 'function') {
-      const idToken = await user.getIdToken();
-      await finalizeInviteeRegistration({ idToken });
+      try {
+        const idToken = await user.getIdToken();
+        await finalizeInviteeRegistration({ idToken });
+      } catch (error) {
+        // Registration must remain available while the separately deployed Apps Script
+        // version is being updated; the next login retries this idempotent finalization.
+        console.warn('Could not finalize pending invitation records yet:', error);
+      }
     }
   }
 
