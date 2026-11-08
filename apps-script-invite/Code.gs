@@ -133,6 +133,18 @@ function ensurePendingInviteRecords(ownerUid, ownerEmail, inviteeEmail) {
   }
 }
 
+function deactivatePendingInviteShare(email, ownerUid) {
+  const normalizedEmail = normalizeEmail(email);
+  const owner = String(ownerUid || '');
+  if (!isValidEmail(normalizedEmail) || !isValidUid(owner)) return;
+  const rootPath = 'pendingInvites/' + encodeURIComponent(normalizedEmail);
+  const sharePath = rootPath + '/shares/' + encodeURIComponent(owner);
+  const share = fsGet(sharePath);
+  if (share && share.claimedUid == null && share.active !== false) fsSet(sharePath, { active: false });
+  const remaining = fsList(rootPath + '/shares');
+  if (!remaining.some(item => item && item.active === true)) fsDelete(rootPath);
+}
+
 function normalizeEmail(value) {
   return typeof value === 'string' ? value.trim().toLowerCase() : '';
 }
@@ -173,6 +185,7 @@ function deactivateBlockedInvitation(email, ownerUid) {
   if (!invitation || invitation.status === 'accepted') return;
   invitation.status = 'revoked';
   saveOwnerInvitationRecord(invitation);
+  deactivatePendingInviteShare(email, ownerUid);
 }
 
 function verifyFirebaseUser(idToken) {
@@ -396,6 +409,7 @@ function handleCancelInvitation(input) {
       invitation.status = 'revoked';
       invitation.revokedAt = Date.now();
       saveOwnerInvitationRecord(invitation);
+      deactivatePendingInviteShare(email, user.localId);
       const pendingSharePath = 'pendingInvites/' + encodeURIComponent(email) + '/shares/' + encodeURIComponent(user.localId);
       const pendingShare = fsGet(pendingSharePath);
       if (pendingShare && pendingShare.claimedUid == null) fsSet(pendingSharePath, { active: false });
