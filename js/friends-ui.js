@@ -346,12 +346,11 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
       row.append(actionCell);
       table.querySelector('tbody').append(row);
     }
-    if (!paged.items.length) {
+    if (!paged.items.length && snapshot.driveDiscoveryStatus !== 'loading' && snapshot.driveDiscoveryStatus !== 'idle') {
       const row = document.createElement('tr');
       const cell = document.createElement('td');
       cell.colSpan = 4;
-      cell.textContent = (snapshot.driveDiscoveryStatus === 'loading' || snapshot.driveDiscoveryStatus === 'idle') ? 'Список друзей загружается…'
-        : snapshot.driveDiscoveryStatus === 'error' ? 'Не удалось загрузить список друзей.' : 'Друзей пока нет.';
+      cell.textContent = snapshot.driveDiscoveryStatus === 'error' ? 'Не удалось загрузить список друзей.' : 'Друзей пока нет.';
       row.append(cell);
       table.querySelector('tbody').append(row);
     }
