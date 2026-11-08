@@ -15,7 +15,7 @@ import {
   canResumeBuildingIndex, prepareBuildingIndex, updateBuildProgress, validateCompletedIndex,
 } from './index-build.js';
 import { prepareIndexingRun, createRetryEligibilityCheck } from './indexing-run.js';
-import * as ui from './ui.js?v=20261108-reciprocal-share-only';
+import * as ui from './ui.js?v=20261108-signin-label-fix';
 import { errorDetails, recordIndexingError } from './indexing-errors.js';
 import { social, socialError } from './social-runtime.js?v=20261108-email-registry-auth';
 import { getAccessToken } from './auth.js?v=20261108-account-picker';
