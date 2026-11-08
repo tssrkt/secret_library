@@ -53,7 +53,10 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
       message.replaceChildren(document.createTextNode(prefix), supportLink);
       return;
     }
-    message.textContent = value || '';
+    const displayValue = typeof value === 'string' && value.startsWith('Приглашение отправлено')
+      ? value.replace(/\s*\(\d+\s+из\s+\d+\)/, '')
+      : value;
+    message.textContent = displayValue || '';
   };
   const retryButton = shareSection.querySelector('[data-social-retry]');
   const invitationsMessage = invitationsSection.querySelector('.sent-invitations-message');
