@@ -12,7 +12,7 @@ export async function runSocialUiTests(test, assert, equal) {
       update(change) { state = { ...state, ...change }; listeners.forEach((fn) => fn(state)); },
       async syncKnownContacts() { calls.push('syncKnownContacts'); }, async shareWithEmail(email) { calls.push(['shareWithEmail', email]); return 'Доступ предоставлен.'; }, async shareBackWithEmail(email, uid) { calls.push(['shareBackWithEmail', email, uid]); return 'Доступ предоставлен.'; },
       async resendInvitation(email) { calls.push(['resendInvitation', email]); return 'Приглашение отправлено.'; },
-      async getInvitationStatuses(emails) { return Object.fromEntries(emails.map((email) => [email, { lastSentAt: 0, cooldownUntil: 0 }])); },
+      async getInvitationStatuses(emails) { return Object.fromEntries([['__quota', { isAdmin: false, limit: 20, adminUids: [] }], ...emails.map((email) => [email, { lastSentAt: 0, cooldownUntil: 0 }])]); },
       async setSharing(uid, active) { calls.push([uid, active]); },
       async markSeen(items) { calls.push(items); this.update({ notifications: state.notifications.map((item) => items.includes(item) ? { ...item, unread: false } : item) }); },
     };
@@ -171,6 +171,20 @@ export async function runSocialUiTests(test, assert, equal) {
       assert(!row.textContent.includes('@') && !row.textContent.includes('private-admin@gmail.com'), 'email is not rendered');
     } finally { cleanup(); page.remove(); }
   });
+  await test('administrator email never flashes before the authoritative admin list loads', async () => {
+    const page = document.createElement('div'); document.body.append(page);
+    const social = stub({ driveDiscoveryStatus: 'ready', friends: [{ uid: 'real-admin-uid', displayName: 'Library owner', isAdmin: false, email: 'private-admin@gmail.com', inbound: true, outbound: false }] });
+    let finishStatuses;
+    social.getInvitationStatuses = () => new Promise((resolve) => { finishStatuses = resolve; });
+    const cleanup = mountFriends(page, social, () => {});
+    try {
+      assert(!page.querySelector('.friends-table').textContent.includes('private-admin@gmail.com'), 'email is hidden while administrator metadata is loading');
+      finishStatuses({ __quota: { isAdmin: false, limit: 20, adminUids: ['real-admin-uid'] } });
+      await tick(); await tick();
+      assert(page.querySelector('.friends-table').textContent.includes('Администратор'), 'administrator label appears after metadata loads');
+      assert(!page.querySelector('.friends-table').textContent.includes('private-admin@gmail.com'), 'administrator email never appears, even after the refresh');
+    } finally { cleanup(); page.remove(); }
+  });
   await test('friends table slices before rendering and switches action based on direction', async () => {
     const page = document.createElement('div'); document.body.append(page);
     const friends = Array.from({ length: 51 }, (_, i) => ({ uid: String(i), displayName: `User ${i}`, email: i === 0 ? 'reader@gmail.com' : '', inbound: i !== 1, outbound: i !== 0 }));
@@ -178,6 +192,7 @@ export async function runSocialUiTests(test, assert, equal) {
     const openedLibraries = [];
     const cleanup = mountFriends(page, social, () => {}, (uid) => openedLibraries.push(uid));
     try {
+      await tick(); await tick();
       equal(page.querySelectorAll('.friends-table tbody tr').length, 50, 'only first 50 friend rows exist');
       assert(page.querySelector('.friends-count').textContent === 'У вас 51 друг', 'grammatical count');
       const rows = [...page.querySelectorAll('.friends-table tbody tr')];
