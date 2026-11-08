@@ -524,7 +524,6 @@ export const social = {
     return 'Доступ к вашей библиотеке предоставлен.';
   },
   async closeFriendAccess(email) {
-    // This action is intentionally Google Drive-only: no Firestore/store calls.
     let rootFolderId = configuredRootFolderId || state.ownRootFolderId || '';
     if (!rootFolderId && invitationUser?.uid) {
       const catalogFile = await findDriveCatalogFile(invitationUser.uid);
