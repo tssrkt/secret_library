@@ -405,7 +405,7 @@ export const social = {
         notifications: buildDriveNotifications(driveFriends), ownRootFolderId: rootFolderId });
       watchCatalogs(driveFriends);
       void refreshDriveFriends(invitationUser, generation, driveFriends);
-      return `Участник ${registeredFriend.displayName} уже зарегистрирован. Доступ к библиотеке предоставлен; приглашение не отправлялось.`;
+      return `Доступ к библиотеке предоставлен.`;
     }
 
     // Validate and send through the server-owned registry before granting Drive access.
