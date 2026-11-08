@@ -92,10 +92,12 @@ function doPost(e) {
     ensurePendingInviteRecords(user.localId, normalizeEmail(user.email), email);
     saveOwnerInvitationRecord({ ownerUid: user.localId, ownerEmail: normalizeEmail(user.email),
       inviteeEmail: email, createdAt: Date.now(), status: 'pending' });
+    const invitationBody = renderInvitationEmailTemplate(inviterName);
     MailApp.sendEmail({
       to: email,
       subject: 'Приглашение в «Тайную Библиотеку»',
-      body: renderInvitationEmailTemplate(inviterName),
+      body: invitationBody,
+      htmlBody: renderInvitationEmailHtml(invitationBody),
       name: 'Тайная Библиотека'
     });
     emailSent = true;
@@ -1528,6 +1530,14 @@ function getInvitationEmailTemplate() {
 
 function renderInvitationEmailTemplate(inviterName) {
   return getInvitationEmailTemplate().replace(/\{\{\s*inviterName\s*\}\}/g, inviterName);
+}
+
+function renderInvitationEmailHtml(text) {
+  const escaped = String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;').replace(/\"/g, '&quot;').replace(/'/g, '&#39;');
+  return '<!doctype html><html><body style="margin:0;padding:0;font-family:Arial,sans-serif;font-size:16px;line-height:1.5;color:#222;white-space:normal">' +
+    escaped.split(/\r?\n/).map(line => line ? '<div style="margin:0 0 1em 0">' + line + '</div>' : '<div style="height:1em"></div>').join('') +
+    '</body></html>';
 }
 
 function getInvitationLimit() {
