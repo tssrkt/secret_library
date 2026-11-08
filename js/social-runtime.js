@@ -237,10 +237,8 @@ export const social = {
       // invitation API is independent of Firestore registration and subscriptions.
       invitationUser = session.user;
       store = createSocialStore(session);
-      // Drive catalog publishing must not depend on Firestore registration/quota.
-      // Resolve this gate as soon as the Google-authenticated Drive store exists.
+      // Keep shared-library operations unavailable until invitation registration succeeds.
       shared = createSharedLibraryStore({ user: session.user });
-      settleConnectionReady(true);
       let knownInvitationEmails = [];
       try {
         const savedLedger = await invitationLedger.load(invitationUser.uid);
