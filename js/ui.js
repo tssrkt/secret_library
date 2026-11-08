@@ -223,9 +223,13 @@ export function setIndexingContinuation(state, resume = null) {
 }
 
 export function setReconnectRequired(required) {
-  elements.signIn.hidden = !required;
-  elements.signIn.textContent = required ? 'Подключить Google снова' : 'Войти через Google';
-  if (required) elements.signIn.disabled = false;
+  // Clearing the reconnect warning must not hide the only way to sign in.
+  // Visibility is controlled by setAuthorized() once authentication succeeds.
+  if (required) {
+    elements.signIn.hidden = false;
+    elements.signIn.disabled = false;
+  }
+  elements.signIn.textContent = required ? '?????????????? Google ???????' : '????? ????? Google';
 }
 
 export function showStats(folderCount, bookCount) {
