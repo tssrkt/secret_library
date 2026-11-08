@@ -12,8 +12,12 @@ export function socialError(error) {
   if (error?.code?.startsWith('auth/')) return 'Не удалось подтвердить Google-сеанс в Firebase. Повторите вход через Google.';
   return error?.message || 'Не удалось выполнить социальную операцию. Попробуйте ещё раз.';
 }
+const DATABASE_QUOTA_MESSAGE = 'Извините, вход на сайт временно недоступен из-за превышения лимита базы данных. Лимит будет обнулён в полночь по тихоокеанскому времени (в 11:00 по Москве). Мы стараемся делать всё возможное, чтобы снизить нагрузку на сервер, но, поскольку проект некоммерческий, вынуждены пользоваться бесплатным тарифом.';
 function isQuotaExceeded(error) {
   return /resource-exhausted|quota.?exceeded|exceeded.*quota/i.test(`${error?.code || ''} ${error?.message || ''}`);
+}
+function notifyQuotaExceeded() {
+  globalThis.window?.dispatchEvent(new CustomEvent('database-quota-exceeded', { detail: { message: DATABASE_QUOTA_MESSAGE } }));
 }
 function disableFirestoreAfterQuota(current) {
   if (current !== generation) return;
@@ -308,7 +312,12 @@ export const social = {
     } catch (error) {
       if (current === generation) {
         settleConnectionReady(false);
-        emit({ status: 'error', message: socialError(error) });
+        if (isQuotaExceeded(error)) {
+          notifyQuotaExceeded();
+          emit({ status: 'error', message: DATABASE_QUOTA_MESSAGE });
+        } else {
+          emit({ status: 'error', message: socialError(error) });
+        }
       }
       return false;
     }

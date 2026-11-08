@@ -17,7 +17,7 @@ import {
 import { prepareIndexingRun, createRetryEligibilityCheck } from './indexing-run.js';
 import * as ui from './ui.js?v=20261107-no-stale-invitation-count';
 import { errorDetails, recordIndexingError } from './indexing-errors.js';
-import { social, socialError } from './social-runtime.js?v=20261108-invitation-access-gate';
+import { social, socialError } from './social-runtime.js?v=20261108-database-quota-notice';
 import { getAccessToken } from './auth.js';
 import { checkpointKey, loadCheckpoint, saveCheckpoint, deleteCheckpoint, commitCheckpoint } from './indexing-checkpoint.js';
 import { createLibraryTabs } from './library-tabs.js';
@@ -109,6 +109,10 @@ function showUnfinishedOperation() {
 window.addEventListener('google-reconnect-required', () => {
   reconnectRequired = true;
   if (!metadataController) ui.setReconnectRequired(true);
+});
+window.addEventListener('database-quota-exceeded', (event) => {
+  ui.showError(event.detail?.message || 'Вход временно невозможен из-за превышения лимита базы данных.');
+  ui.setStatus('Доступ временно ограничен: превышен лимит базы данных.');
 });
 window.addEventListener('online', () => {
   if (buildingIndex?.buildState?.pauseReason === 'network' && !reconnectRequired) void runMetadataIndexing({ resume: true });
