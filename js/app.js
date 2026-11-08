@@ -632,17 +632,18 @@ async function restoreAuthorization() {
   }
 }
 
+// A previous page token must never authorize this page automatically.
+clearPersistedAuth();
 ui.setBusy(true);
 try {
   // Keep the sign-in button disabled until Google Identity Services is ready.
   // Otherwise an early first click can race initializeAuth() and fail before
   // the OAuth token client exists, forcing the user to click a second time.
   await initializeAuth();
-  // Google Identity Services is ready, so allow explicit sign-in while the
-  // slower saved-session check runs in the background. restoreAuthorization()
-  // respects authAttempts and cannot overwrite a newer user-initiated login.
+  // Never restore an authenticated session during page startup.
   ui.setBusy(false);
-  await restoreAuthorization();
+  ui.setAuthorized(false);
+  ui.setStatus('Для доступа к библиотеке войдите через Google.');
 } catch (error) {
   ui.showError(readableError(error));
   ui.setBusy(false);
