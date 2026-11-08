@@ -192,7 +192,14 @@ export async function closeRootFolderAccess(rootFolderId, email, api = {}) {
 }
 
 export async function discoverDriveFriends(user, configuredRootFolderId = '', api = {}, knownFriends = []) {
-  const request = api.driveFetch || driveFetch;
+  // Friend discovery must always settle promptly so the settings page cannot remain
+  // on “Список друзей загружается…” indefinitely when Drive is throttling or stalled.
+  // Keep the normal Drive retry policy everywhere else; use a bounded policy only
+  // for this read-only discovery flow and preserve injected test/API adapters.
+  const request = api.driveFetch || ((path, options = {}) => driveFetch(path, {
+    ...options,
+    diagnostics: { ...options.diagnostics, timeoutMs: 12000, maxRetries: 1, stage: 'friend-discovery' },
+  }));
   const download = api.downloadDriveJsonFile || downloadDriveJsonFile;
   const findCatalog = api.findDriveCatalogFile || findDriveCatalogFile;
   const ownEmail = normalizeEmail(user?.email || user?.emailAddress);
