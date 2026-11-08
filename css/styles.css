@@ -148,6 +148,14 @@ button:disabled { cursor: wait; opacity: .6; }
 .library-tab-strip { display: flex; flex: 1; min-width: 0; gap: .4rem; overflow-x: auto; scrollbar-width: none; overscroll-behavior-x: contain; }
 .library-tab-strip::-webkit-scrollbar { display: none; }
 .library-tabs button { min-height: 44px; flex: none; }
+.library-tabs > button:not(.library-tab) {
+  color: var(--download-text);
+  background: var(--download-accent);
+}
+.library-tabs > button:not(.library-tab):not(:disabled):hover {
+  color: var(--download-text);
+  background: var(--download-hover);
+}
 .library-tab-strip .library-tab { white-space: nowrap; background: #e4d7c5; color: var(--download-accent); opacity: 1; }
 .library-tab-strip .library-tab:hover { background: #d2bea4; color: #000; }
 .library-tab-strip .library-tab[aria-selected="true"] { background: var(--download-accent); color: var(--download-text); opacity: 1; box-shadow: none; }
