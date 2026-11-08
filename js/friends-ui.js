@@ -1,5 +1,5 @@
 import { createPaginator, paginateItems } from './pagination.js';
-import { socialError } from './social-runtime.js?v=20261108-registered-check-order';
+import { socialError } from './social-runtime.js?v=20261108-registered-friends-reconcile';
 
 const HOUR_MS = 60 * 60 * 1000;
 
@@ -242,6 +242,30 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
       invitationStatuses = next;
       invitationStatusesLoaded = true;
       invitationQuota = next.__quota || invitationQuota;
+      // Reconcile the invitation ledger against the authoritative directory before
+      // rendering either table. The runtime normally adds registered users to friends;
+      // this UI-level reconciliation also prevents a registered account from vanishing
+      // between the two tables if Drive friend discovery is still catching up.
+      const friends = [...(snapshot.friends || [])];
+      for (const [rawEmail, status] of Object.entries(next)) {
+        if (rawEmail === '__quota' || status?.registered !== true || !status.registeredUid) continue;
+        const email = String(rawEmail).trim().toLowerCase();
+        if (!email) continue;
+        const existing = friends.find((friend) =>
+          String(friend.email || '').trim().toLowerCase() === email
+          || String(friend.uid || '') === String(status.registeredUid));
+        if (existing) continue;
+        const notification = (snapshot.notifications || []).find((item) =>
+          String(item.email || '').trim().toLowerCase() === email);
+        friends.push({
+          uid: String(status.registeredUid),
+          email,
+          displayName: String(status.registeredDisplayName || notification?.displayName || email),
+          inbound: false,
+          outbound: false,
+        });
+      }
+      snapshot = { ...snapshot, friends };
       render();
       if (!next.__quota && !invitationQuota && !quotaMetadataRetryUsed) {
         quotaMetadataRetryUsed = true;
