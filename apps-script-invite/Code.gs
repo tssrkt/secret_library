@@ -34,6 +34,10 @@ function doPost(e) {
       stage = 'cancel-invitation-request';
       return responsePage(requestId, true, '', handleCancelInvitation(input));
     }
+    if (input.action === 'finalizeInviteeRegistration') {
+      stage = 'finalize-invitee-registration';
+      return responsePage(requestId, true, '', finalizeInviteeRegistration(input));
+    }
     if (input.action) {
       adminRequest = true;
       stage = 'admin-request';
@@ -131,6 +135,24 @@ function ensurePendingInviteRecords(ownerUid, ownerEmail, inviteeEmail) {
       active: true, createdAt: new Date(), claimedUid: existingShare?.claimedUid || null,
       claimedAt: existingShare?.claimedAt || null });
   }
+  refreshPendingInviteFirstOwner(email);
+}
+
+function refreshPendingInviteFirstOwner(email) {
+  const normalizedEmail = normalizeEmail(email);
+  if (!isValidEmail(normalizedEmail)) return;
+  const rootPath = 'pendingInvites/' + encodeURIComponent(normalizedEmail);
+  const remaining = fsList(rootPath + '/shares').filter(item => item && item.active === true && !item.claimedUid);
+  if (!remaining.length) { fsDelete(rootPath); return; }
+  remaining.sort((a, b) => {
+    const at = a.createdAt instanceof Date ? a.createdAt.getTime() : Date.parse(a.createdAt || '') || 0;
+    const bt = b.createdAt instanceof Date ? b.createdAt.getTime() : Date.parse(b.createdAt || '') || 0;
+    return at - bt || String(a.ownerUid || a.id).localeCompare(String(b.ownerUid || b.id));
+  });
+  const root = fsGet(rootPath);
+  if (root && root.firstOwnerUid !== remaining[0].ownerUid) {
+    fsSet(rootPath, { firstOwnerUid: remaining[0].ownerUid, createdAt: remaining[0].createdAt || new Date() });
+  }
 }
 
 function deactivatePendingInviteShare(email, ownerUid) {
@@ -140,9 +162,67 @@ function deactivatePendingInviteShare(email, ownerUid) {
   const rootPath = 'pendingInvites/' + encodeURIComponent(normalizedEmail);
   const sharePath = rootPath + '/shares/' + encodeURIComponent(owner);
   const share = fsGet(sharePath);
-  if (share && share.claimedUid == null && share.active !== false) fsSet(sharePath, { active: false });
+  if (share && share.claimedUid == null) fsDelete(sharePath);
+  refreshPendingInviteFirstOwner(normalizedEmail);
+}
+
+
+function finalizeInviteeRegistration(input) {
+  const idToken = String(input.idToken || '');
+  if (idToken.length < 100 || idToken.length > 5000) throw new Error('Invalid registration credentials.');
+  const user = verifyFirebaseUser(idToken);
+  const email = normalizeEmail(user.email);
+  if (!isValidEmail(email) || user.emailVerified !== true) throw new Error('A verified Google email is required.');
+  const directory = fsGet('userDirectory/' + encodeURIComponent(email));
+  const profile = fsGet('users/' + encodeURIComponent(user.localId));
+  if (!directory || directory.uid !== user.localId || !profile) throw new Error('The participant registration has not completed.');
+  if (user.localId === 'aA89pCYsKNbWWePmAveUVrG34F82') return { ok: true };
+  const rootPath = 'pendingInvites/' + encodeURIComponent(email);
+  const shares = fsList(rootPath + '/shares');
+  const claimed = shares.filter(item => item && item.active === true && item.claimedUid === user.localId);
+  if (!claimed.length) {
+    if (profile.invitedByUid) {
+      const inviter = fsGet('users/' + encodeURIComponent(profile.invitedByUid));
+      if (!inviter) throw new Error('The recorded inviter no longer exists.');
+      return { ok: true };
+    }
+    throw new Error('No active invitation was found for this email.');
+  }
+  claimed.sort((a, b) => {
+    const at = a.createdAt instanceof Date ? a.createdAt.getTime() : Date.parse(a.createdAt || '') || 0;
+    const bt = b.createdAt instanceof Date ? b.createdAt.getTime() : Date.parse(b.createdAt || '') || 0;
+    return at - bt || String(a.ownerUid || a.id).localeCompare(String(b.ownerUid || b.id));
+  });
+  const first = claimed[0];
+  if (profile.invitedByUid !== first.ownerUid) throw new Error('The earliest active inviter does not match the participant record.');
+  claimed.forEach(item => {
+    const ownerUid = String(item.ownerUid || item.id || '');
+    if (!isValidUid(ownerUid) || ownerUid === user.localId) return;
+    const shareId = ownerUid + '__' + user.localId;
+    const existingShare = fsGet('libraryShares/' + encodeURIComponent(shareId));
+    if (!existingShare || existingShare.active !== true) {
+      fsSet('libraryShares/' + encodeURIComponent(shareId), { ownerUid, viewerUid: user.localId,
+        ownerEmail: normalizeEmail(item.ownerEmail || ''), active: true, sharedAt: new Date(), revokedAt: null });
+    }
+    const record = readOwnerInvitationRecord(ownerUid, email);
+    if (record && record.status !== 'revoked') {
+      record.status = ownerUid === first.ownerUid ? 'accepted' : 'shared';
+      if (ownerUid === first.ownerUid) {
+        record.acceptedUid = user.localId;
+        record.acceptedDisplayName = String(profile.displayName || user.displayName || email).slice(0, 160);
+        record.acceptedAt = Date.now();
+      }
+      saveOwnerInvitationRecord(record);
+    }
+  });
+  shares.forEach(item => {
+    const ownerUid = String(item.ownerUid || item.id || '');
+    if (isValidUid(ownerUid)) fsDelete(rootPath + '/shares/' + encodeURIComponent(ownerUid));
+  });
   const remaining = fsList(rootPath + '/shares');
-  if (!remaining.some(item => item && item.active === true)) fsDelete(rootPath);
+  if (!remaining.length) fsDelete(rootPath);
+  else refreshPendingInviteFirstOwner(email);
+  return { ok: true, invitedByUid: first.ownerUid };
 }
 
 function normalizeEmail(value) {
@@ -513,7 +593,7 @@ function reservationKey(uid, email) {
 }
 
 function countActiveInvitations(registry) {
-  return Object.values(registry || {}).filter(record => record && record.status !== 'revoked').length;
+  return Object.values(registry || {}).filter(record => record && !['revoked', 'shared'].includes(record.status)).length;
 }
 
 function invitationSuccessMessage(uid, invitationCount) {
@@ -1582,6 +1662,7 @@ function revokeInvitationApi(actor, data) {
   if (!item) throw new Error('Приглашение не найдено.');
   if (item.claimedUid) throw new Error('Приглашение уже принято.');
   fsSet(path, { active: false, revokedAt: new Date(), revokedBy: actor.uid });
+  refreshPendingInviteFirstOwner(email);
   fsAddEvent(actor.uid, 'revoke-invitation', null, { email, ownerUid });
   return { ok: true };
 }

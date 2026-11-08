@@ -1,4 +1,5 @@
 import { normalizeEmail, validateShareEmail, shareId } from './social-model.js?v=20261106-drive-notifications';
+import { finalizeInviteeRegistration } from './invitation-mailer.js?v=20261108-finalize-invitees';
 
 export function createSocialStore({ db, sdk, user }) {
   const { doc, collection, collectionGroup, query, where, getDoc, getDocs, runTransaction,
@@ -64,6 +65,10 @@ export function createSocialStore({ db, sdk, user }) {
     if (createdNewProfile) {
       const pending = await getDocs(collection(db, 'pendingInvites', email, 'shares'));
       await forEachConcurrent(pending.docs, 10, (snapshot) => claimInvitation(snapshot.ref));
+    }
+    if (uid !== founderUid) {
+      const idToken = await user.getIdToken();
+      await finalizeInviteeRegistration({ idToken });
     }
   }
 

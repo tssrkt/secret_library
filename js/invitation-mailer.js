@@ -94,3 +94,9 @@ export function getInvitationStatuses({ emails, idToken }) {
   if (!Array.isArray(emails)) return Promise.reject(new Error('Invitation emails must be an array.'));
   return submitMailerPayload({ action: 'getInvitationStatuses', emails, idToken }, true);
 }
+
+export function finalizeInviteeRegistration({ idToken }) {
+  try { validateMailerRequest(idToken); }
+  catch (error) { return Promise.reject(error); }
+  return submitMailerPayload({ action: 'finalizeInviteeRegistration', idToken }, true);
+}
