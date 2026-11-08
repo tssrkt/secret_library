@@ -49,6 +49,15 @@ async function logAdminEvent(actorUid, action, targetUid = null, details = {}) {
 export const checkLibraryAccess = onCall({ region: 'europe-west1', invoker: 'public' }, async (request) => {
   const uid = await requireSignedIn(request);
   const [admin, profile] = await Promise.all([adminRef(uid).get(), db.doc(`users/${uid}`).get()]);
+  const isSuperadmin = (uid === 'aA89pCYsKNbWWePmAveUVrG34F82')
+    || (admin.exists && admin.data()?.role === 'superadmin' && admin.data()?.active === true);
+  if (!profile.exists) return { allowed: false, reason: 'invitation-required' };
+  if (!isSuperadmin) {
+    const inviterUid = profile.data()?.invitedByUid;
+    if (typeof inviterUid !== 'string' || !inviterUid.trim()) return { allowed: false, reason: 'invitation-required' };
+    const inviter = await db.doc(`users/${inviterUid}`).get();
+    if (!inviter.exists) return { allowed: false, reason: 'invitation-required' };
+  }
   if (admin.exists && profile.exists) {
     const isAdmin = admin.data()?.active === true;
     if (profile.data()?.isAdmin !== isAdmin) await db.doc(`users/${uid}`).set({ isAdmin }, { merge: true });
