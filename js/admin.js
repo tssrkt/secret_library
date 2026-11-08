@@ -614,17 +614,40 @@ function renderTexts() {
   const hint = node('p', 'В месте, где должно появиться имя пригласителя, оставь {{inviterName}}. Максимум 10 000 символов.');
   fieldLabel.append(editor);
   content.append(fieldLabel, hint);
-  content.append(button('Сохранить текст', async () => {
+  const saveRow = node('div', null, 'actions');
+  saveRow.style.display = 'flex';
+  saveRow.style.alignItems = 'center';
+  saveRow.style.gap = '12px';
+  const saveButton = button('Сохранить текст', async () => {
     const body = editor.value;
-    say('Сохраняю текст приглашения…');
-    const result = await call('setInvitationEmailTemplate')({ body });
-    if (!result || result.ok !== true || typeof result.body !== 'string') {
-      throw new Error('Сервер не подтвердил сохранение текста приглашения.');
+    const originalLabel = saveButton.textContent;
+    saveButton.disabled = true;
+    saveButton.textContent = 'Сохранение…';
+    saveStatus.textContent = '';
+    try {
+      const result = await call('setInvitationEmailTemplate')({ body });
+      if (!result || result.ok !== true || typeof result.body !== 'string') {
+        throw new Error('Сервер не подтвердил сохранение текста приглашения.');
+      }
+      data.invitationEmailTemplate = result.body;
+      editor.value = result.body;
+      saveStatus.textContent = 'Изменения сохранены.';
+      saveStatus.className = 'success';
+      say('Изменения сохранены.');
+    } catch (error) {
+      saveStatus.textContent = error?.message || 'Не удалось сохранить изменения.';
+      saveStatus.className = 'error';
+      say(saveStatus.textContent, true);
+    } finally {
+      saveButton.disabled = false;
+      saveButton.textContent = originalLabel;
     }
-    data.invitationEmailTemplate = result.body;
-    editor.value = result.body;
-    say('Текст приглашения успешно сохранён.');
-  }, 'primary'));
+  }, 'primary');
+  const saveStatus = node('span', '');
+  saveStatus.setAttribute('role', 'status');
+  saveStatus.setAttribute('aria-live', 'polite');
+  saveRow.append(saveButton, saveStatus);
+  content.append(saveRow);
 }
 
 function render() {
