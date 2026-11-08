@@ -1,7 +1,7 @@
 import { normalizeEmail, validateShareEmail, shareId } from './social-model.js?v=20261106-drive-notifications';
 
 export function createSocialStore({ db, sdk, user }) {
-  const { doc, collection, collectionGroup, query, where, getDocs, runTransaction,
+  const { doc, collection, collectionGroup, query, where, getDoc, getDocs, runTransaction,
     serverTimestamp, onSnapshot } = sdk;
   const uid = user.uid;
   const email = normalizeEmail(user.email);
@@ -25,18 +25,24 @@ export function createSocialStore({ db, sdk, user }) {
     ensureCurrent();
     if (!email || !user.emailVerified) throw new Error('Для социальной части нужен подтверждённый Google email.');
     let createdNewProfile = false;
+    let newProfileInviterUid = '';
     await runTransaction(db, async (tx) => {
       const own = data(await tx.get(profileRef));
       const directory = ref('userDirectory', email);
       const existing = data(await tx.get(directory));
       const first = (!own && uid !== founderUid) ? data(await tx.get(ref('pendingInvites', email))) : null;
       const inviterUid = uid === founderUid ? '' : (own ? own.invitedByUid : first?.firstOwnerUid);
-      const inviterProfile = typeof inviterUid === 'string' && inviterUid
+      newProfileInviterUid = typeof inviterUid === 'string' ? inviterUid : '';
+      // Existing accounts are checked inside the transaction on every login.
+      // For first-time invitees, verify the inviter after creating the profile so
+      // Firestore rules can evaluate the new account's registration state.
+      const inviterProfile = own && uid !== founderUid && typeof inviterUid === 'string' && inviterUid
         ? data(await tx.get(ref('users', inviterUid))) : null;
       createdNewProfile = !own;
       ensureCurrent();
       if (existing && existing.uid !== uid) throw new Error('Этот адрес уже связан с другим пользователем.');
-      if (uid !== founderUid && (typeof inviterUid !== 'string' || !inviterUid || !inviterProfile)) {
+      if (uid !== founderUid && (typeof inviterUid !== 'string' || !inviterUid
+          || (own && !inviterProfile))) {
         throw new Error(own
           ? 'Не удалось подтвердить пригласителя вашей учётной записи. Доступ к библиотеке закрыт.'
           : 'Регистрация в Тайной Библиотеке возможна только по приглашению. Попросите участника клуба прислать вам приглашение.');
@@ -46,6 +52,13 @@ export function createSocialStore({ db, sdk, user }) {
       else tx.set(profileRef, { ...safe, createdAt: own.createdAt, invitedByUid: own.invitedByUid, ...(typeof own.isAdmin === 'boolean' ? { isAdmin: own.isAdmin } : {}) });
       if (!existing) tx.set(directory, { uid });
     });
+    // New invitees must also have a real inviter profile, not merely a forged/stale UID.
+    if (createdNewProfile && uid !== founderUid) {
+      let inviterExists = false;
+      try { inviterExists = (await getDoc(ref('users', newProfileInviterUid))).exists(); }
+      catch { /* A denied read is also a failed inviter verification. */ }
+      if (!inviterExists) throw new Error('Не удалось подтвердить пригласителя вашей учётной записи. Доступ к библиотеке закрыт.');
+    }
     // Existing accounts and server-provisioned invitees do not need invitation-tree reads.
     // Keep the claim path only for accounts completing an older, pre-migration invitation.
     if (createdNewProfile) {
