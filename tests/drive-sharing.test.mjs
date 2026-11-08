@@ -259,13 +259,19 @@ test('folder sharing settings enable and disable real Drive limited access', asy
     return state.get(id);
   };
   const { syncFolderSharingAccess } = await import('../js/drive-sharing.js');
+  const authorizedFolders = [];
+  const authorizeFolder = async (folder) => { authorizedFolders.push(folder); return true; };
   const index = { rootFolderId: 'root', folders: [
     { id: 'root', parentId: null, name: 'Root' },
     { id: 'private-folder', parentId: 'root', name: 'Private' },
     { id: 'public-folder', parentId: 'root', name: 'Public' },
     { id: 'nested', parentId: 'private-folder', name: 'Nested' },
   ] };
-  await syncFolderSharingAccess(index, { sharing: { excludedFolderIds: ['private-folder'] } }, { driveFetch: request, authorizeFolder: async () => true });
+  await syncFolderSharingAccess(index, { sharing: { excludedFolderIds: ['private-folder'] } }, { driveFetch: request, authorizeFolder });
+  assert.deepEqual(authorizedFolders.map(({ id, mimeType, isFolder }) => ({ id, mimeType, isFolder })), [
+    { id: 'private-folder', mimeType: 'application/vnd.google-apps.folder', isFolder: true },
+    { id: 'public-folder', mimeType: 'application/vnd.google-apps.folder', isFolder: true },
+  ]);
   assert.equal(state.get('private-folder').inheritedPermissionsDisabled, true);
   assert.equal(state.get('public-folder').inheritedPermissionsDisabled, false);
   assert.equal(calls.filter((call) => call.options.method === 'PATCH').length, 2);

@@ -1,5 +1,5 @@
-import { FOLDER_MIME_TYPE, GOOGLE_PICKER_API_KEY } from './config.js?v=20261108-drive-file-picker';
-import { ensureAccessToken, getSessionUserEmail } from './auth.js?v=20261108-drive-file-picker';
+import { FOLDER_MIME_TYPE, GOOGLE_PICKER_API_KEY } from './config.js?v=20261108-drive-file-picker-folder-fix';
+import { ensureAccessToken, getSessionUserEmail } from './auth.js?v=20261108-drive-file-picker-folder-fix';
 
 let pickerLoadPromise = null;
 const AUTHORIZED_ITEM_PREFIX = 'secret-library-drive-file-authorized-v1:';
@@ -73,8 +73,9 @@ export async function authorizeDriveItem({ id, name = '', mimeType = '', isFolde
   const picker = globalThis.google.picker;
   const view = new picker.DocsView(isFolder ? picker.ViewId.FOLDERS : picker.ViewId.DOCS);
   if (isFolder) {
+    // ViewId.FOLDERS already filters to folders. Do not override that view with
+    // setMimeTypes: Picker can otherwise fall back to ordinary files (for example JSON).
     view.setSelectFolderEnabled(true);
-    view.setMimeTypes(FOLDER_MIME_TYPE);
   } else if (mimeType) view.setMimeTypes(mimeType);
   if (name) view.setQuery(name);
 

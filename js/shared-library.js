@@ -3,7 +3,7 @@ import {
   createDriveJsonFile, deleteDriveFile, downloadDriveJsonFile, findDriveCatalogFile, updateDriveJsonFile,
 } from './drive.js';
 import { loadSharedCover } from './shared-cover-cache.js';
-import { ensureDriveItemAuthorized, rememberDriveItemAuthorization } from './google-picker.js?v=20261108-drive-file-picker';
+import { ensureDriveItemAuthorized, rememberDriveItemAuthorization } from './google-picker.js?v=20261108-drive-file-picker-folder-fix';
 
 // A read-only projection of the owner's index. Books remain in their original Drive folders.
 export function sharedLibraryIndex(index, settings) {

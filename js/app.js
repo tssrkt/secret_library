@@ -1,7 +1,7 @@
 import {
   clearAccessToken, clearPersistedAuth, createAuthAttemptGuard,
   initializeAuth, persistAuthSession, recoverAuthSession, requestAccessToken,
-} from './auth.js?v=20261108-drive-file-picker';
+} from './auth.js?v=20261108-drive-file-picker-folder-fix';
 import { downloadDriveFile, getCurrentDriveUser, getFolder, listFolderChildren } from './drive.js';
 import { removeCovers, removeOrphanCovers, storeCover } from './cover-cache.js';
 import {
@@ -15,16 +15,16 @@ import {
   canResumeBuildingIndex, prepareBuildingIndex, updateBuildProgress, validateCompletedIndex,
 } from './index-build.js';
 import { prepareIndexingRun, createRetryEligibilityCheck } from './indexing-run.js';
-import * as ui from './ui.js?v=20261108-drive-file-picker';
+import * as ui from './ui.js?v=20261108-drive-file-picker-folder-fix';
 import { errorDetails, recordIndexingError } from './indexing-errors.js';
-import { social, socialError } from './social-runtime.js?v=20261108-drive-file-picker';
-import { getAccessToken } from './auth.js?v=20261108-drive-file-picker';
+import { social, socialError } from './social-runtime.js?v=20261108-drive-file-picker-folder-fix';
+import { getAccessToken } from './auth.js?v=20261108-drive-file-picker-folder-fix';
 import { checkpointKey, loadCheckpoint, saveCheckpoint, deleteCheckpoint, commitCheckpoint } from './indexing-checkpoint.js';
 import { createLibraryTabs } from './library-tabs.js';
 import { createLibrarySelection } from './library-selection.js?v=20261107-stable-friend-loading';
 import { loadUserSettings, loadRootFolderPreference, loadRootFolderResourceKey, saveRootFolderPreference } from './user-settings.js';
-import { chooseRootFolder } from './root-folder-picker.js?v=20261108-drive-file-picker';
-import { ensureDriveFolderAuthorized } from './google-picker.js?v=20261108-drive-file-picker';
+import { chooseRootFolder } from './root-folder-picker.js?v=20261108-drive-file-picker-folder-fix';
+import { ensureDriveFolderAuthorized } from './google-picker.js?v=20261108-drive-file-picker-folder-fix';
 import { firebaseConfigured } from './firebase-config.js';
 import { hasMinimumBooks, MINIMUM_LIBRARY_BOOKS } from './library-access.js';
 

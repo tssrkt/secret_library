@@ -1,4 +1,4 @@
-import { DRIVE_SCOPES, GOOGLE_CLIENT_ID } from './config.js?v=20261108-drive-file-picker';
+import { DRIVE_SCOPES, GOOGLE_CLIENT_ID } from './config.js?v=20261108-drive-file-picker-folder-fix';
 import { firebaseConfigured } from './firebase-config.js';
 
 let accessToken = null;

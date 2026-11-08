@@ -102,6 +102,10 @@ export function createUserSettingsController({ container, index, onError, clearE
               form.dataset.dirty = 'false';
               if (isCurrent()) status.textContent = 'Настройки сохранены.';
             } catch (error) {
+              // A failed save must not leave the unsaved checkbox draft looking applied.
+              const savedExcluded = new Set(saved.settings.sharing.excludedFolderIds);
+              fields.forEach((field) => { field.checked = !savedExcluded.has(field.value); });
+              form.dataset.dirty = 'false';
               if (isCurrent() || error?.status === 401 || error?.code === 'unauthorized') onError(error);
             } finally {
               fields.forEach((field) => { field.disabled = false; });

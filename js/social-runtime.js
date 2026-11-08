@@ -1,7 +1,7 @@
 import { startFirebaseSession, endFirebaseSession } from './firebase-session.js';
 import { createSocialStore } from './social-store.js?v=20261108-registered-sharing-relationship';
-import { createSharedLibraryStore } from './shared-library.js?v=20261108-drive-file-picker';
-import { discoverDriveFriends, grantRootFolderAccess, closeRootFolderAccess } from './drive-sharing.js?v=20261108-drive-file-picker';
+import { createSharedLibraryStore } from './shared-library.js?v=20261108-drive-file-picker-folder-fix';
+import { discoverDriveFriends, grantRootFolderAccess, closeRootFolderAccess } from './drive-sharing.js?v=20261108-drive-file-picker-folder-fix';
 import { findDriveCatalogFile, downloadDriveJsonFile, getCurrentDriveUser } from './drive.js';
 import { sendInvitationEmail, getInvitationStatuses as fetchInvitationStatuses, cancelInvitation as cancelInvitationToken } from './invitation-mailer.js?v=20261108-email-registry-auth';
 import { createInvitationLedger, acceptedInvitationFriends, invitationLedgerRows, mergeInvitationRows } from './invitation-ledger.js?v=20261107-ledger-server-discovery';
