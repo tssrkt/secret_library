@@ -111,6 +111,7 @@ window.addEventListener('google-reconnect-required', () => {
   if (!metadataController) ui.setReconnectRequired(true);
 });
 window.addEventListener('database-quota-exceeded', (event) => {
+  if (document.body.classList.contains('settings-page-open')) return;
   ui.showError(event.detail?.message || 'Вход временно невозможен из-за превышения лимита базы данных.');
   ui.setStatus('Доступ временно ограничен: превышен лимит базы данных.');
 });

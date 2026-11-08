@@ -26,6 +26,10 @@ async function retryTransientAuthOperation(operation, attempts = 3) {
 }
 
 export function socialError(error) {
+  if (isQuotaExceeded(error)) {
+    notifyQuotaExceeded();
+    return DATABASE_QUOTA_MESSAGE;
+  }
   if (error?.code?.includes('permission-denied')) return 'Нет доступа к социальным данным. Проверьте настройки Firebase и повторите попытку.';
   if (error?.code?.includes('unavailable') || error?.code?.includes('network')) return 'Не удалось связаться с Firebase. Проверьте подключение и повторите попытку.';
   if (error?.code?.startsWith('auth/')) return 'Не удалось подтвердить Google-сеанс в Firebase. Повторите вход через Google.';
@@ -40,6 +44,7 @@ function notifyQuotaExceeded() {
 }
 function disableFirestoreAfterQuota(current) {
   if (current !== generation) return;
+  notifyQuotaExceeded();
   stop?.(); stop = null;
   store?.dispose(); store = null;
   // Keep the Firebase-authenticated user for Apps Script invitation operations.
@@ -307,6 +312,7 @@ export const social = {
         knownInvitationEmails = [...new Set((savedLedger.ledger.invitations || []).map((item) => String(item.inviteeEmail || '').trim().toLowerCase()).filter(Boolean))];
         emit({ friends: combineFriendRows(), invitations: mergeInvitationRows([], ledgerInvitationRowsCache) });
       } catch (error) {
+        if (isQuotaExceeded(error)) notifyQuotaExceeded();
         ledgerInvitationRowsCache = [];
         acceptedInviteFriends = [];
         console.warn('Could not load the Drive invitation ledger:', error);
@@ -316,7 +322,10 @@ export const social = {
       try {
         await syncAcceptedInvitationStatuses([], current);
         if (knownInvitationEmails.length) await syncAcceptedInvitationStatuses(knownInvitationEmails, current);
-      } catch (error) { console.warn('Could not refresh invitation acceptance statuses:', error); }
+      } catch (error) {
+        if (isQuotaExceeded(error)) notifyQuotaExceeded();
+        console.warn('Could not refresh invitation acceptance statuses:', error);
+      }
       // Registration now updates the server-provisioned profile instead of relying on
       // Firestore pendingInvites as the invitation authority.
       // Registration is the invitation gate. Never fail open when Firestore is
@@ -327,6 +336,7 @@ export const social = {
         registeredShareFriends = await store.loadFriends();
         if (current === generation) emit({ friends: combineFriendRows() });
       } catch (error) {
+        if (isQuotaExceeded(error)) notifyQuotaExceeded();
         // Drive discovery remains a fallback, but a failed relationship query must be visible in diagnostics.
         console.warn('Could not load registered friends and library-sharing relationships:', error);
       }

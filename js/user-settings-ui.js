@@ -8,6 +8,7 @@ export function createUserSettingsController({ container, index, onError, clearE
   let loading = null;
   let saving = null;
   let unmount = () => {};
+  let removeQuotaListener = () => {};
   const element = (tag, text, className) => {
     const node = documentRef.createElement(tag);
     if (text) node.textContent = text;
@@ -20,9 +21,23 @@ export function createUserSettingsController({ container, index, onError, clearE
     documentRef.body?.classList.add('settings-page-open');
     const current = ++revision;
     const isCurrent = () => active && current === revision;
+    removeQuotaListener();
+    let quotaExceeded = false;
     clearError();
     const page = element('div', '', 'user-settings-page');
     const section = element('section');
+    const quotaMessage = 'Извините, из-за жестких квот бесплатного тарифа лимит базы данных превышен на сегодня. Лимит будет обнулен в полночь по тихоокеанскому времени (11:00 по Москве).';
+    const showQuotaMessage = () => {
+      if (!isCurrent()) return;
+      quotaExceeded = true;
+      const message = element('p', quotaMessage, 'database-quota-message');
+      message.setAttribute('role', 'alert');
+      page.replaceChildren(section, message);
+    };
+    const onQuotaExceeded = () => showQuotaMessage();
+    documentRef.defaultView?.addEventListener('database-quota-exceeded', onQuotaExceeded);
+    removeQuotaListener = () => documentRef.defaultView?.removeEventListener('database-quota-exceeded', onQuotaExceeded);
+    section.className = 'sharing-folders-section';
     section.append(element('h3', 'Папки, которыми вы делитесь'));
     const description = element('p', 'Выберите папки библиотеки, которые будут доступны вашим друзьям.');
     section.append(description);
@@ -33,6 +48,7 @@ export function createUserSettingsController({ container, index, onError, clearE
     container.replaceChildren(page);
     try {
       unmount = mountSections(page);
+      if (quotaExceeded) showQuotaMessage();
       // Reopening during a write waits for its file ID, so it cannot create a duplicate.
       if (saving) await saving;
       if (!isCurrent()) return;
@@ -112,7 +128,7 @@ export function createUserSettingsController({ container, index, onError, clearE
         if (isCurrent()) onError(error);
       }
     } catch (error) {
-      if (!isCurrent()) return;
+      if (!isCurrent() || quotaExceeded) return;
       status.textContent = '';
       onError(error);
       const retry = element('button', 'ПОВТОРИТЬ', 'settings-save-button');
@@ -127,6 +143,8 @@ export function createUserSettingsController({ container, index, onError, clearE
     leave() {
       active = false;
       revision++;
+      removeQuotaListener();
+      removeQuotaListener = () => {};
       documentRef.body?.classList.remove('settings-page-open');
       unmount();
       unmount = () => {};
