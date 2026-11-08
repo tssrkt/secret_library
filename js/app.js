@@ -418,11 +418,20 @@ async function afterAuthorization() {
   localCheckpointKey = checkpointKey(authorizedOwner, activeRootFolderId);
   reconnectRequired = false;
   ui.setReconnectRequired(false);
-  ui.setAuthorized(true);
-  // The optional checkLibraryAccess callable is not deployed in the free Firebase project.
-  // Admin display labels are resolved from the registered administrator UID in social-store.
+  // Do not expose the library until the invitation check and registration succeed.
+  // A Google OAuth session alone is not permission to enter the private library.
   const invitationToken = new URLSearchParams(window.location.search).get('invite') || '';
-  void social.connect(getAccessToken(), activeRootFolderId, invitationToken);
+  const registered = await social.connect(getAccessToken(), activeRootFolderId, invitationToken);
+  if (!registered) {
+    libraryAccessGranted = false;
+    tabsRoot.hidden = true;
+    selection.reset();
+    ui.setAuthorized(false);
+    clearPersistedAuth({ forget: true });
+    clearAccessToken();
+    throw new Error('Для входа на сайт необходимо приглашение.');
+  }
+  ui.setAuthorized(true);
   void ui.setUserAvatar(user);
   ui.clearError();
   if (sameOwner && currentIndex) {
