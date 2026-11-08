@@ -8,7 +8,7 @@ let session, call, data, activeTab = 'users';
 let relationshipSharesCache = null;
 const adminPageState = Object.create(null);
 const adminPageRequests = new Map();
-const adminPageFields = { users: 'users', relationships: 'users', invites: 'invitations', shares: 'shares', events: 'events', banned: 'banned', admins: 'admins' };
+const adminPageFields = { users: 'users', relationships: 'users', shares: 'shares', events: 'events', banned: 'banned', admins: 'admins' };
 function invalidateAdminPages(...keys) {
   for (const key of keys) delete adminPageState[key];
 }
@@ -30,22 +30,6 @@ function dateLabel(value) {
   if (!value) return '—';
   const date = value?.toDate ? value.toDate() : new Date(value);
   return Number.isNaN(date.getTime()) ? '—' : date.toLocaleString('ru-RU');
-}
-function invitationEmailStatus(invite) {
-  const statuses = {
-    sent: 'Отправлено',
-    sending: 'Отправляется',
-    failed: 'Ошибка отправки',
-    'not-needed': 'Письмо не требовалось'
-  };
-  if (statuses[invite.emailStatus]) return statuses[invite.emailStatus];
-  if (invite.emailSentAt) return 'Отправлено';
-  return 'Нет данных (старая запись)';
-}
-function invitationActionState(invite) {
-  if (invite.claimedUid) return 'Принято';
-  if (invite.active === false) return 'Отозвано';
-  return null;
 }
 function gasRequest(action, payload) {
   if (!INVITATION_MAILER_URL) return Promise.reject(new Error('Не настроен адрес административного сервиса.'));
@@ -286,16 +270,7 @@ function renderStats() {
     const card = node('div', null, 'stat');
     card.append(node('span', title));
     const value = node('strong');
-    if (key === 'invitations' && counts.acceptedInvitations != null) {
-      const total = node('span', Number(counts.invitations).toLocaleString('ru-RU'));
-      total.title = 'Все приглашения';
-      const accepted = node('span', ' (' + Number(counts.acceptedInvitations).toLocaleString('ru-RU') + ')');
-      accepted.title = 'Принятые приглашения';
-      accepted.setAttribute('aria-label', 'Принятые приглашения');
-      value.append(total, accepted);
-    } else {
-      value.textContent = Number(counts[key]).toLocaleString('ru-RU');
-    }
+    value.textContent = Number(counts[key]).toLocaleString('ru-RU');
     card.append(value); stats.append(card);
   });
 }
@@ -509,45 +484,7 @@ function renderRelations() {
   const shareRowClasses = sortedShares.map(s => ownerColors.get(s.ownerUid));
   content.append(paginatedTable(['Владелец библиотеки','Пользователь','Доступ'],shareRows,25,[],shareRowClasses));
 }
-function renderInvites() {
-  const settings = node('section', null, 'panel');
-  settings.append(node('h2', 'Лимит приглашений'));
-  settings.append(node('p', 'Максимальное число разных людей, которых может пригласить один участник. Повторные приглашения одному человеку не учитываются. На администраторов лимит не распространяется. Значение 0 запрещает приглашать новых людей.'));
-  const limitControls = node('div');
-  limitControls.style.display = 'flex';
-  limitControls.style.alignItems = 'flex-end';
-  limitControls.style.gap = '12px';
-  limitControls.style.flexWrap = 'wrap';
-  const fieldLabel = node('label', 'Количество получателей');
-  fieldLabel.style.display = 'flex';
-  fieldLabel.style.flexDirection = 'column';
-  fieldLabel.style.gap = '6px';
-  const field = node('input');
-  field.type = 'number'; field.min = '0'; field.max = '100000'; field.step = '1'; field.required = true;
-  field.value = String(Number.isInteger(data.invitationLimit) ? data.invitationLimit : 20);
-  field.style.maxWidth = '180px';
-  fieldLabel.append(field);
-  limitControls.append(fieldLabel);
-  limitControls.append(button('Сохранить лимит', async () => {
-    const limit = Number(field.value);
-    if (!field.value.trim() || !Number.isInteger(limit) || limit < 0 || limit > 100000) { say('Укажите целое число от 0 до 100000.', true); return; }
-    try {
-      const result = await call('setInvitationLimit')({ limit });
-      data.invitationLimit = result.limit;
-      field.value = String(result.limit);
-      say('Лимит приглашений сохранён.');
-    } catch (error) { say(error?.message || 'Не удалось сохранить лимит.', true); }
-  }, 'primary'));
-  settings.append(limitControls);
-  content.append(settings);
-  const invitations = data.invitations || [];
-  const rows = invitations.map(i=>[
-    i.email,userLink(resolveAdminUser(i.ownerUid)||{uid:i.ownerUid},i.ownerUid),i.claimedUid ? userLink(resolveAdminUser(i.claimedUid)||{uid:i.claimedUid},i.claimedUid) : 'Не принято',invitationEmailStatus(i),dateLabel(i.createdAt),
-    invitationActionState(i) || button('Отменить приглашение',async()=>{if(!confirm('Отменить это приглашение?'))return;try{await call('adminRevokeInvitation')({email:i.email,ownerUid:i.ownerUid||i.id});await refresh({ summary: false });}catch(e){say(e?.message||'Не удалось отменить приглашение.',true);}},'danger')
-  ]);
-  const rowClasses = invitations.map(i => i.claimedUid ? '' : 'invitation-unaccepted');
-  content.append(paginatedTable(['Адрес приглашения','Пригласитель','Приглашённый','Статус письма','Создано','Действие'],rows,25,[],rowClasses));
-}
+
 function renderShares() {
   const users=new Map([...(data.users||[]), ...Object.values(data.userProfiles||{})].map(u=>[u.uid,u]));
   const superAdminUid = data.superAdminUid || (data.admins || []).find(a => a.role === 'superadmin')?.uid;
@@ -656,7 +593,6 @@ function render() {
   renderStats(); renderTabs(); content.replaceChildren();
   if(activeTab==='users') renderUsers();
   else if(activeTab==='relationships') renderRelations();
-  else if(activeTab==='invites') renderInvites();
   else if(activeTab==='shares') renderShares();
   else if(activeTab==='events') renderEvents();
   else if(activeTab==='banned') renderBanned();

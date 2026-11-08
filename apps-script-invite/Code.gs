@@ -730,7 +730,7 @@ function responsePage(requestId, ok, message, data) {
 function getBootstrapAdminEmail() {
   return normalizeEmail(PropertiesService.getScriptProperties().getProperty('BOOTSTRAP_ADMIN_EMAIL') || '');
 }
-const ADMIN_SECTIONS_API = ['overview', 'users', 'relationships', 'invites', 'shares', 'events', 'banned', 'admins', 'texts'];
+const ADMIN_SECTIONS_API = ['overview', 'users', 'relationships', 'shares', 'events', 'banned', 'admins', 'texts'];
 const FIRESTORE_REST_ROOT = 'https://firestore.googleapis.com/v1/projects/' +
   FIREBASE_PROJECT_ID + '/databases/(default)/documents/';
 
@@ -777,14 +777,11 @@ function handleAdminRequest(input) {
     case 'getAdminCollectionPage': return getAdminCollectionPageApi(actor, data);
     case 'getAdminBranch': return getAdminBranchApi(actor, data);
     case 'getAdminRelationshipRoots': return getAdminRelationshipRootsApi(actor, data);
-    case 'getAdminUserHistory': return getAdminUserHistoryApi(actor, data);
     case 'getAdminUserCard': return getAdminUserCardApi(actor, data);
     case 'setInvitationEmailTemplate': return setInvitationEmailTemplateApi(actor, data);
-    case 'setInvitationLimit': return setInvitationLimitApi(actor, data);
     case 'setAdminPermissions': return setAdminPermissionsApi(actor, data);
     case 'banLibraryUser': return banLibraryUserApi(actor, data);
     case 'restoreLibraryUser': return restoreLibraryUserApi(actor, data);
-    case 'adminRevokeInvitation': return revokeInvitationApi(actor, data);
     case 'adminSetLibraryShare': return setLibraryShareApi(actor, data);
     default: throw new Error('Неизвестная административная операция.');
   }
@@ -800,45 +797,6 @@ function requireAdminApi(uid, permission) {
   return { uid: uid, admin: admin };
 }
 
-function getAdminDashboardApi(actor) {
-  const p = actor.admin.role === 'superadmin'
-    ? Object.fromEntries(ADMIN_SECTIONS_API.map(k => [k, true])) : sanitizeAdminPermissions(actor.admin.permissions || {});
-  if (!Object.values(p).some(Boolean)) throw new Error('Не назначены права для просмотра админки.');
-  const users = p.users || p.relationships ? fsList('users') : [];
-  const banned = p.banned || p.users || p.relationships ? fsList('bannedUsers') : [];
-  const admins = p.admins || p.users ? fsList('adminUsers') : [];
-  const invites = p.invites ? fsListInviteShares() : [];
-  const shares = p.shares || p.relationships ? fsList('libraryShares') : [];
-  // Relationship-only moderators need the graph, not the private email directory.
-  const directory = p.users ? fsList('userDirectory') : [];
-  const emailByUid = new Map(directory.filter(item => item.uid && item.id).map(item => [item.uid, item.id]));
-  const events = p.events ? fsListPage('adminEvents', 100, 'createdAt desc') : [];
-  const userRows = users.map(u => ({ ...sanitizeRelationshipProfile(u), uid: u.id, email: p.users ? (emailByUid.get(u.id) || '') : '', banned: banned.some(b => b.id === u.id), admin: admins.some(a => a.id === u.id) }));
-  const visibleShares = redactPrivateEmails(actor, shares, 'shares');
-  const visibleAdmins = redactPrivateEmails(actor, admins, 'admins');
-  const visibleBanned = redactPrivateEmails(actor, banned, 'banned');
-  const visibleEvents = redactPrivateEmails(actor, events, 'events');
-  const visibleInvitations = sanitizeInvitationRecords(actor, invites);
-  return {
-    permissions: p,
-    counts: {
-      users: p.users ? users.length : null,
-      invitations: p.invites ? invites.length : null,
-      acceptedInvitations: p.invites ? invites.filter(x => Boolean(x.claimedUid)).length : null,
-      shares: p.shares ? shares.filter(x => x.active === true).length : null,
-      admins: p.admins ? admins.length : null,
-      banned: p.banned ? banned.length : null
-    },
-    users: p.users || p.relationships ? userRows : [],
-    invitations: p.invites ? visibleInvitations : [],
-    shares: p.shares || p.relationships ? visibleShares : [],
-    admins: p.admins ? visibleAdmins : [],
-    banned: p.banned ? visibleBanned : [],
-    events: p.events ? visibleEvents : [],
-    invitationEmailTemplate: p.texts ? getInvitationEmailTemplate() : null,
-    invitationLimit: p.invites ? getInvitationLimit() : null
-  };
-}
 
 function getAdminDashboardSummaryApi(actor) {
   const p = actor.admin.role === 'superadmin'
@@ -859,7 +817,7 @@ function getAdminDashboardSummaryApi(actor) {
   const summary = fsCountMany(countSpecs.filter(spec => spec.enabled), needsSuperadminUid);
   Object.assign(counts, summary.counts || {});
   const superadminUid = summary.superAdminUid || null;
-  return { permissions: p, counts, superAdminUid: superadminUid, invitationEmailTemplate: p.texts ? getInvitationEmailTemplate() : null, invitationLimit: p.invites ? getInvitationLimit() : null };
+  return { permissions: p, counts, superAdminUid: superadminUid, invitationEmailTemplate: p.texts ? getCachedAdminInvitationEmailTemplate() : null };
 }
 
 function fsFindSuperAdminUid() {
@@ -964,7 +922,7 @@ function fsInvalidateAdminCountCache(...keys) {
 }
 function getAdminCollectionPageApi(actor, data) {
   const config = {
-    users: ['users', 'users'], invites: ['invites', 'pendingInvites'],
+    users: ['users', 'users'],
     shares: ['shares', 'libraryShares'], events: ['events', 'adminEvents'],
     banned: ['banned', 'bannedUsers'], admins: ['admins', 'adminUsers']
   };
@@ -972,13 +930,11 @@ function getAdminCollectionPageApi(actor, data) {
   if (!config[section]) throw new Error('Неизвестный раздел админки.');
   requireAdminApi(actor.uid, config[section][0]);
   let page;
-  if (section === 'invites') page = fsQueryInvitationPage(25, data.cursor || '', data.filter || '');
-  else if (section === 'users' && String(data.search || '').trim()) page = fsQueryUsersSearchPage(25, data.cursor || '', String(data.search).trim());
+  if (section === 'users' && String(data.search || '').trim()) page = fsQueryUsersSearchPage(25, data.cursor || '', String(data.search).trim());
   else if ((section === 'shares' || section === 'admins') && ['active', 'inactive'].includes(data.filter)) {
     page = fsQueryFilteredPage(config[section][1], 'active', data.filter === 'active', 25, data.cursor || '');
   } else page = fsQueryPage(config[section][1], 25, data.cursor || '');
   if (['shares', 'admins', 'banned', 'events'].includes(section)) page.items = redactPrivateEmails(actor, page.items, section);
-  if (section === 'invites') page.items = sanitizeInvitationRecords(actor, page.items);
   if (section === 'users') {
     const uids = page.items.map(user => user.id);
     const relatedUids = adminRelatedUserUids(section, page.items);
@@ -999,7 +955,6 @@ function adminRelatedUserUids(section, items) {
       // The current page already contains these user profiles; only fetch inviters not on this page.
       if (isValidUid(item.invitedByUid) && !pageUids.has(item.invitedByUid)) add(item.invitedByUid);
     }
-    else if (section === 'invites') { add(item.ownerUid); add(item.claimedUid); }
     else if (section === 'shares') { add(item.ownerUid); add(item.viewerUid); }
     else if (section === 'events') { add(item.actorUid); add(item.targetUid); }
     else if (section === 'banned') { add(item.uid || item.id); add(item.bannedBy); }
@@ -1007,39 +962,62 @@ function adminRelatedUserUids(section, items) {
   });
   return [...uids];
 }
+const ADMIN_PROFILE_CACHE_TTL_SECONDS = 30;
 function fsQueryUserProfiles(uids, knownUids) {
   const result = {};
   const known = new Set((Array.isArray(knownUids) ? knownUids : []).filter(isValidUid).slice(0, 1000));
   const unique = [...new Set((uids || []).filter(isValidUid))].filter(uid => !known.has(uid)).slice(0, 150);
+  const cache = CacheService.getScriptCache();
+  const missing = [];
+  unique.forEach(uid => {
+    const cached = cache.get('admin_profile_v1_' + uid);
+    if (cached === null || cached === undefined) {
+      missing.push(uid);
+      return;
+    }
+    try {
+      const profile = JSON.parse(cached);
+      if (!profile.missing) result[uid] = profile.value;
+    } catch (_) {
+      missing.push(uid);
+    }
+  });
   const batches = [];
-  for (let offset = 0; offset < unique.length; offset += 30) {
-    const batch = unique.slice(offset, offset + 30);
+  for (let offset = 0; offset < missing.length; offset += 30) {
+    const batch = missing.slice(offset, offset + 30);
     const values = batch.map(uid => ({ referenceValue: 'projects/' + FIREBASE_PROJECT_ID + '/databases/(default)/documents/users/' + uid }));
     batches.push({
-      structuredQuery: { from: [{ collectionId: 'users' }], where: { fieldFilter: { field: { fieldPath: '__name__' }, op: 'IN', value: { arrayValue: { values } } } }, limit: values.length }
+      uids: batch,
+      body: { structuredQuery: { from: [{ collectionId: 'users' }], where: { fieldFilter: { field: { fieldPath: '__name__' }, op: 'IN', value: { arrayValue: { values } } } }, limit: values.length } }
     });
   }
   const url = FIRESTORE_REST_ROOT.slice(0, -1) + ':runQuery';
   const responses = batches.length > 1 && typeof UrlFetchApp.fetchAll === 'function'
-    ? UrlFetchApp.fetchAll(batches.map(body => ({
+    ? UrlFetchApp.fetchAll(batches.map(batch => ({
         url,
         method: 'post',
         headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() },
         muteHttpExceptions: true,
         contentType: 'application/json',
-        payload: JSON.stringify(body)
+        payload: JSON.stringify(batch.body)
       }))).map(response => ({ code: response.getResponseCode(), text: response.getContentText() }))
-    : batches.map(body => fsFetch(url, 'post', body));
-  responses.forEach(response => {
-    if (response.code !== 200) throw new Error('Не удалось получить имена участников Firebase (HTTP ' + response.code + ').' + (response.code === 403 ? ' Проверьте роль Cloud Datastore User (roles/datastore.user) у аккаунта, который развёртывает Apps Script.' : ''));
+    : batches.map(batch => fsFetch(url, 'post', batch.body));
+  const fetched = new Set();
+  responses.forEach((response, index) => {
+    if (response.code !== 200) throw new Error('\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u043f\u043e\u043b\u0443\u0447\u0438\u0442\u044c \u0438\u043c\u0435\u043d\u0430 \u0443\u0447\u0430\u0441\u0442\u043d\u0438\u043a\u043e\u0432 Firebase (HTTP ' + response.code + ').' + (response.code === 403 ? ' \u041f\u0440\u043e\u0432\u0435\u0440\u044c\u0442\u0435 \u0440\u043e\u043b\u044c Cloud Datastore User (roles/datastore.user) \u0443 \u0430\u043a\u043a\u0430\u0443\u043d\u0442\u0430, \u043a\u043e\u0442\u043e\u0440\u044b\u0439 \u0440\u0430\u0437\u0432\u0451\u0440\u0442\u044b\u0432\u0430\u0435\u0442 Apps Script.' : ''));
     JSON.parse(response.text).filter(row => row && row.document).forEach(row => {
       const uid = row.document.name.split('/').pop();
-      result[uid] = { ...sanitizeRelationshipProfile(fsDecodeFields(row.document.fields || {})), uid };
+      const value = { ...sanitizeRelationshipProfile(fsDecodeFields(row.document.fields || {})), uid };
+      result[uid] = value;
+      fetched.add(uid);
+    });
+    batches[index].uids.forEach(uid => {
+      if (fetched.has(uid)) cache.put('admin_profile_v1_' + uid, JSON.stringify({ value: result[uid] }), ADMIN_PROFILE_CACHE_TTL_SECONDS);
+      else cache.remove('admin_profile_v1_' + uid);
     });
   });
   return result;
 }
-
 function fsGetAdminUserFlags(uids, profileUids, knownProfileUids) {
   const result = { banned: new Set(), admins: new Set(), emailByUid: new Map(), profiles: {} };
   const requested = [...new Set((uids || []).filter(isValidUid))].slice(0, 30);
@@ -1153,16 +1131,7 @@ function sanitizeRelationshipProfile(profile) {
 function visibleUserProfile(actor, profile, uid) {
   return { ...sanitizeRelationshipProfile(profile), ...(uid ? { uid } : {}) };
 }
-function sanitizeInvitationRecords(actor, items) {
-  const allowed = ['id', 'email', 'ownerUid', 'claimedUid', 'active', 'createdAt', 'claimedAt', 'emailStatus', 'emailSentAt', 'revokedAt', 'revokedBy'];
-  return items.map(item => {
-    const safe = {};
-    allowed.forEach(key => {
-      if (Object.prototype.hasOwnProperty.call(item, key)) safe[key] = item[key];
-    });
-    return safe;
-  });
-}
+
 function sanitizeAdminPermissions(value) {
   const safe = {};
   if (!value || typeof value !== 'object' || Array.isArray(value)) return safe;
@@ -1336,27 +1305,6 @@ function getAdminUserCardApi(actor, data) {
     incoming: redactPrivateEmails(actor, incoming.filter(share => share.active === true), 'shares')
   };
 }
-function getAdminUserHistoryApi(actor, data) {
-  requireAdminApi(actor.uid, 'users');
-  const uid = String(data.uid || '');
-  if (!isValidUid(uid)) throw new Error('Некорректный UID участника.');
-  const rows = fsQueryGroupByFieldMany([
-    { collectionId: 'shares', field: 'ownerUid', value: uid, limit: 100, nestedOnly: true },
-    { collectionId: 'shares', field: 'claimedUid', value: uid, limit: 100, nestedOnly: true },
-    { collectionId: 'adminEvents', field: 'targetUid', value: uid, limit: 100 },
-    { collectionId: 'adminEvents', field: 'actorUid', value: uid, limit: 100 },
-    { collectionId: 'libraryShares', field: 'ownerUid', value: uid, limit: 100 },
-    { collectionId: 'libraryShares', field: 'viewerUid', value: uid, limit: 100 }
-  ]);
-  const invitations = rows[0].concat(rows[1]);
-  const events = rows[2].concat(rows[3]);
-  return {
-    outgoing: redactPrivateEmails(actor, rows[4], 'shares'),
-    incoming: redactPrivateEmails(actor, rows[5], 'shares'),
-    invitations: sanitizeInvitationRecords(actor, [...new Map(invitations.map(item => [item.id + ':' + item.email, item])).values()]),
-    events: redactPrivateEmails(actor, [...new Map(events.map(item => [item.id, item])).values()].sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0)).slice(0, 100), 'events')
-  };
-}
 
 function fsQueryPage(path, pageSize, cursor) {
   return fsQueryFilteredPage(path, '', '', pageSize, cursor);
@@ -1435,49 +1383,7 @@ function fsQueryUsersSearchPage(pageSize, cursor, search) {
     path: '@users-search', id: last.id, name: lastDocumentName, displayName: lastDisplayName
   })) : null };
 }
-function fsQueryInvitationPage(pageSize, cursor, filter) {
-  const size = Math.max(1, Math.min(100, Number(pageSize) || 25));
-  let afterName = '';
-  if (cursor) {
-    let decoded;
-    try { decoded = JSON.parse(Utilities.newBlob(Utilities.base64DecodeWebSafe(cursor)).getDataAsString()); }
-    catch (_) { throw new Error('Некорректный курсор страницы.'); }
-    if (decoded.path !== '@invites' || typeof decoded.name !== 'string' ||
-        !decoded.name.startsWith('projects/' + FIREBASE_PROJECT_ID + '/databases/(default)/documents/pendingInvites/') ||
-        !decoded.name.includes('/shares/') || decoded.name.split('/').pop() !== decoded.id) {
-      throw new Error('Некорректный курсор страницы.');
-    }
-    afterName = decoded.name;
-  }
 
-  // Enumerate only invitation roots and their shares. Never scan the global
-  // collection group "shares", which also contains unrelated library data.
-  const roots = fsList('pendingInvites');
-  const rows = [];
-  roots.forEach(root => {
-    const email = String(root.id || '');
-    if (!email) return;
-    fsList('pendingInvites/' + encodeURIComponent(email) + '/shares').forEach(share => {
-      const documentName = 'projects/' + FIREBASE_PROJECT_ID + '/databases/(default)/documents/pendingInvites/' +
-        encodeURIComponent(email) + '/shares/' + share.id;
-      if (afterName && documentName <= afterName) return;
-      const item = { ...share, id: share.id, email: decodeURIComponent(email), _documentName: documentName };
-      if (filter === 'accepted' && !item.claimedUid) return;
-      if (filter === 'pending' && item.claimedUid) return;
-      if (filter === 'revoked' && item.active !== false) return;
-      rows.push(item);
-    });
-  });
-  rows.sort((a, b) => a._documentName.localeCompare(b._documentName));
-  const hasMore = rows.length > size;
-  const items = rows.slice(0, size);
-  const last = items[items.length - 1];
-  const lastDocumentName = last?._documentName || '';
-  items.forEach(item => delete item._documentName);
-  return { items, hasMore, nextCursor: hasMore && last
-    ? Utilities.base64EncodeWebSafe(JSON.stringify({ path: '@invites', id: last.id, name: lastDocumentName }))
-    : null };
-}
 function fsQueryGroupByField(collectionId, field, value, limit, nestedOnly) {
   const structuredQuery = {
     from: [{ collectionId, allDescendants: true }],
@@ -1528,6 +1434,16 @@ function getInvitationEmailTemplate() {
   ].join('\n');
 }
 
+function getCachedAdminInvitationEmailTemplate() {
+  const cache = CacheService.getScriptCache();
+  const key = 'admin_invitation_email_template_v1';
+  const cached = cache.get(key);
+  if (cached !== null && cached !== undefined) return cached;
+  const body = getInvitationEmailTemplate();
+  cache.put(key, body, 60);
+  return body;
+}
+
 function renderInvitationEmailTemplate(inviterName) {
   return getInvitationEmailTemplate().replace(/\{\{\s*inviterName\s*\}\}/g, inviterName);
 }
@@ -1546,17 +1462,6 @@ function getInvitationLimit() {
   return Number.isInteger(value) && value >= 0 && value <= 100000 ? value : 20;
 }
 
-function setInvitationLimitApi(actor, data) {
-  requireAdminApi(actor.uid, 'invites');
-  const rawLimit = data.limit;
-  const value = typeof rawLimit === 'number' ? rawLimit : Number(String(rawLimit ?? '').trim());
-  if ((typeof rawLimit !== 'number' && String(rawLimit ?? '').trim() === '') || !Number.isInteger(value) || value < 0 || value > 100000) {
-    throw new Error('Лимит должен быть целым числом от 0 до 100000.');
-  }
-  fsSet('systemSettings/invitationLimit', { limit: value, updatedAt: new Date(), updatedBy: actor.uid });
-  fsAddEvent(actor.uid, 'update-invitation-limit', null, { limit: value });
-  return { ok: true, limit: value };
-}
 
 function setInvitationEmailTemplateApi(actor, data) {
   requireAdminApi(actor.uid, 'texts');
@@ -1565,6 +1470,7 @@ function setInvitationEmailTemplateApi(actor, data) {
     throw new Error('Текст должен содержать {{inviterName}} — место для имени пригласителя; максимум 10 000 символов.');
   }
   fsSet('systemSettings/invitationEmail', { body, updatedAt: new Date(), updatedBy: actor.uid });
+  CacheService.getScriptCache().remove('admin_invitation_email_template_v1');
   fsAddEvent(actor.uid, 'update-invitation-email-template', null, { length: body.length });
   return { ok: true, body };
 }
@@ -1662,20 +1568,6 @@ function restoreLibraryUserApi(actor, data) {
   return { ok: true };
 }
 
-function revokeInvitationApi(actor, data) {
-  requireAdminApi(actor.uid, 'invites');
-  const email = normalizeEmail(data.email);
-  const ownerUid = String(data.ownerUid || '');
-  if (!isValidEmail(email) || !isValidUid(ownerUid)) throw new Error('Некорректное приглашение.');
-  const path = 'pendingInvites/' + encodeURIComponent(email) + '/shares/' + encodeURIComponent(ownerUid);
-  const item = fsGet(path);
-  if (!item) throw new Error('Приглашение не найдено.');
-  if (item.claimedUid) throw new Error('Приглашение уже принято.');
-  fsSet(path, { active: false, revokedAt: new Date(), revokedBy: actor.uid });
-  refreshPendingInviteFirstOwner(email);
-  fsAddEvent(actor.uid, 'revoke-invitation', null, { email, ownerUid });
-  return { ok: true };
-}
 
 function setLibraryShareApi(actor, data) {
   requireAdminApi(actor.uid, 'shares');
@@ -1792,41 +1684,8 @@ function fsListPage(path, pageSize, orderBy) {
   const body = JSON.parse(response.text);
   return (body.documents || []).map(doc => ({ ...fsDecodeFields(doc.fields || {}), id: doc.name.split('/').pop() }));
 }
-function fsListInviteSharesByOwner(uid) {
-  const url = FIRESTORE_REST_ROOT.slice(0, -1) + ':runQuery';
-  const response = fsFetch(url, 'post', {
-    structuredQuery: {
-      from: [{ collectionId: 'shares', allDescendants: true }],
-      where: { fieldFilter: { field: { fieldPath: 'ownerUid' }, op: 'EQUAL', value: { stringValue: String(uid) } } }
-    }
-  });
-  if (response.code !== 200) throw new Error('Не удалось проверить лимит приглашений Firebase.');
-  return JSON.parse(response.text).filter(row => row && row.document)
-    .filter(row => row.document.name.includes('/documents/pendingInvites/'))
-    .filter(row => {
-      const marker = '/documents/pendingInvites/';
-      const index = row.document.name.indexOf(marker);
-      if (index < 0) return false;
-      const segments = row.document.name.slice(index + marker.length).split('/');
-      return segments.length === 3 && segments[1] === 'shares';
-    })
-    .map(row => ({ ...fsDecodeFields(row.document.fields || {}), id: row.document.name.split('/').pop() }));
-}
-function fsListInviteShares() {
-  // Restrict reads to the invitation tree. A collection-group query over every
-  // collection named "shares" reads unrelated documents before filtering paths,
-  // which can exhaust the Firestore free read quota on each admin refresh.
-  const inviteRoots = fsList('pendingInvites');
-  const out = [];
-  inviteRoots.forEach(root => {
-    const email = String(root.id || '');
-    if (!email) return;
-    fsList('pendingInvites/' + encodeURIComponent(email) + '/shares').forEach(item => {
-      out.push({ ...item, email });
-    });
-  });
-  return out;
-}
+
+
 function fsSet(path, values) {
   const fields = fsEncodeFields(values);
   const mask = Object.keys(fields).map(key => 'updateMask.fieldPaths=' + encodeURIComponent(key)).join('&');
