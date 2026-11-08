@@ -6,9 +6,10 @@ This branch replaces the broad `drive` OAuth scope with `drive.readonly`, `drive
 
 1. Open the [Google Picker API](https://console.cloud.google.com/apis/library/picker.googleapis.com) page in the same Google Cloud project as the site's OAuth client and enable it.
 2. Open [API credentials](https://console.cloud.google.com/apis/credentials) and create a separate browser API key.
-3. Restrict the key to **Websites / HTTP referrers**, adding `https://tssrkt.github.io/*`.
+3. Restrict the key to **Websites / HTTP referrers**, adding `https://tssrkt.github.io/*` and `http://localhost:8000/*` for local test-branch validation.
 4. Under API restrictions, restrict it to **Google Picker API**. Do not put an OAuth client secret in the frontend.
-5. Put the public, restricted key in `GOOGLE_PICKER_API_KEY` in `js/config.js`.
+5. Add `http://localhost:8000` to the OAuth client's **Authorized JavaScript origins** so the branch can be tested locally without deploying it to the public site.
+6. Put the public, restricted key in `GOOGLE_PICKER_API_KEY` in `js/config.js`.
 
 The key is intentionally empty in source control. The app fails closed for Drive mutations until the key is configured.
 
