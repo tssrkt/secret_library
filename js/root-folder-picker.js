@@ -1,3 +1,5 @@
+import { authorizeDriveFolder } from './google-picker.js?v=20261108-drive-file-picker';
+
 export function chooseRootFolder({ listChildren, getFolder, onExit = () => {}, description = 'Выберите папку в корне Google Диска. Сайт будет сканировать её и все вложенные папки.', documentRef = document }) {
   return new Promise((resolve, reject) => {
     const backdrop = documentRef.createElement('div');
@@ -77,6 +79,8 @@ export function chooseRootFolder({ listChildren, getFolder, onExit = () => {}, d
       status.textContent = 'Проверяем выбранную папку…';
       try {
         const folder = await getFolder(selectedFolder.id, { resourceKey: selectedFolder.resourceKey });
+        status.textContent = 'Подтвердите эту же папку в окне Google Picker, чтобы разрешить приложению менять только выбранные объекты.';
+        await authorizeDriveFolder({ id: folder.id, name: folder.name });
         close({ id: folder.id, name: folder.name, resourceKey: folder.resourceKey || '' });
       } catch (error) {
         busy = false;

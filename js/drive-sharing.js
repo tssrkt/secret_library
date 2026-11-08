@@ -1,5 +1,6 @@
 import { SHARED_CATALOG_FILE_NAME, FOLDER_MIME_TYPE } from './config.js';
 import { driveFetch, downloadDriveJsonFile, findDriveCatalogFile } from './drive.js';
+import { ensureDriveFolderAuthorized } from './google-picker.js?v=20261108-drive-file-picker';
 
 const normalizeEmail = (value) => typeof value === 'string' ? value.trim().toLowerCase() : '';
 const isEmailPrefixName = (name, email) => {
@@ -85,6 +86,7 @@ async function listPermissions(folderId, request = driveFetch) {
 // Limited access blocks permissions inherited from the shared root; direct grants remain separate.
 export async function syncFolderSharingAccess(index, settings, api = {}) {
   const request = api.driveFetch || driveFetch;
+  const authorizeFolder = api.authorizeFolder || ensureDriveFolderAuthorized;
   const excluded = new Set(settings?.sharing?.excludedFolderIds || []);
   const changed = [];
   try {
@@ -97,6 +99,8 @@ export async function syncFolderSharingAccess(index, settings, api = {}) {
       if (previous === desired) continue;
       const canChange = desired ? current.capabilities?.canDisableInheritedPermissions : current.capabilities?.canEnableInheritedPermissions;
       if (canChange === false) throw new Error(`Google Drive не разрешает изменить наследование доступа к папке «${folder.name}». Проверьте права владельца папки.`);
+      // drive.file does not imply authorization of descendant folders when only the root was picked.
+      await authorizeFolder({ id: folder.id, name: folder.name });
       const updateParams = new URLSearchParams({ fields: 'id,inheritedPermissionsDisabled', supportsAllDrives: 'true' });
       await request(`/files/${encodeURIComponent(folder.id)}?${updateParams}`, {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' },

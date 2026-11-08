@@ -265,11 +265,11 @@ test('folder sharing settings enable and disable real Drive limited access', asy
     { id: 'public-folder', parentId: 'root', name: 'Public' },
     { id: 'nested', parentId: 'private-folder', name: 'Nested' },
   ] };
-  await syncFolderSharingAccess(index, { sharing: { excludedFolderIds: ['private-folder'] } }, { driveFetch: request });
+  await syncFolderSharingAccess(index, { sharing: { excludedFolderIds: ['private-folder'] } }, { driveFetch: request, authorizeFolder: async () => true });
   assert.equal(state.get('private-folder').inheritedPermissionsDisabled, true);
   assert.equal(state.get('public-folder').inheritedPermissionsDisabled, false);
   assert.equal(calls.filter((call) => call.options.method === 'PATCH').length, 2);
-  await syncFolderSharingAccess(index, { sharing: { excludedFolderIds: [] } }, { driveFetch: request });
+  await syncFolderSharingAccess(index, { sharing: { excludedFolderIds: [] } }, { driveFetch: request, authorizeFolder: async () => true });
   assert.equal(state.get('private-folder').inheritedPermissionsDisabled, false);
 });
 

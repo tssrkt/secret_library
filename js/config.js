@@ -14,11 +14,15 @@ export const METADATA_VERSION = 3;
 export const COVER_CACHE_PREFIX = 'secret-library-cover-';
 export const COVER_MAX_WIDTH = 240;
 export const COVER_MAX_HEIGHT = 320;
+// Broad read access is intentional; mutations are restricted to app-authorized items via drive.file.
 export const DRIVE_SCOPES = [
-  // Full Drive access is required to grant/revoke permissions on an existing user-selected root folder.
-  'https://www.googleapis.com/auth/drive',
+  'https://www.googleapis.com/auth/drive.readonly',
   'https://www.googleapis.com/auth/drive.appdata',
+  'https://www.googleapis.com/auth/drive.file',
 ].join(' ');
+// Create a browser API key in Google Cloud, enable Google Picker API, and restrict
+// the key to this site's HTTP referrers and the Picker API. Never use a client secret here.
+export const GOOGLE_PICKER_API_KEY = '';
 
 export const FOLDER_MIME_TYPE = 'application/vnd.google-apps.folder';
 export const SCAN_CONCURRENCY = 4;

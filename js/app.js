@@ -1,7 +1,7 @@
 import {
   clearAccessToken, clearPersistedAuth, createAuthAttemptGuard,
   initializeAuth, persistAuthSession, recoverAuthSession, requestAccessToken,
-} from './auth.js?v=20261108-account-picker';
+} from './auth.js?v=20261108-drive-file-picker';
 import { downloadDriveFile, getCurrentDriveUser, getFolder, listFolderChildren } from './drive.js';
 import { removeCovers, removeOrphanCovers, storeCover } from './cover-cache.js';
 import {
@@ -15,15 +15,16 @@ import {
   canResumeBuildingIndex, prepareBuildingIndex, updateBuildProgress, validateCompletedIndex,
 } from './index-build.js';
 import { prepareIndexingRun, createRetryEligibilityCheck } from './indexing-run.js';
-import * as ui from './ui.js?v=20261108-registered-sharing-relationship';
+import * as ui from './ui.js?v=20261108-drive-file-picker';
 import { errorDetails, recordIndexingError } from './indexing-errors.js';
-import { social, socialError } from './social-runtime.js?v=20261108-registered-sharing-relationship';
-import { getAccessToken } from './auth.js?v=20261108-account-picker';
+import { social, socialError } from './social-runtime.js?v=20261108-drive-file-picker';
+import { getAccessToken } from './auth.js?v=20261108-drive-file-picker';
 import { checkpointKey, loadCheckpoint, saveCheckpoint, deleteCheckpoint, commitCheckpoint } from './indexing-checkpoint.js';
 import { createLibraryTabs } from './library-tabs.js';
 import { createLibrarySelection } from './library-selection.js?v=20261107-stable-friend-loading';
 import { loadUserSettings, loadRootFolderPreference, loadRootFolderResourceKey, saveRootFolderPreference } from './user-settings.js';
-import { chooseRootFolder } from './root-folder-picker.js?v=20261108-root-folder-signout';
+import { chooseRootFolder } from './root-folder-picker.js?v=20261108-drive-file-picker';
+import { ensureDriveFolderAuthorized } from './google-picker.js?v=20261108-drive-file-picker';
 import { firebaseConfigured } from './firebase-config.js';
 import { hasMinimumBooks, MINIMUM_LIBRARY_BOOKS } from './library-access.js';
 
@@ -432,6 +433,11 @@ async function afterAuthorization() {
       ? 'Для входа на сайт необходимо приглашение.'
       : (socialState.message || 'Не удалось проверить право доступа. Повторите попытку позже.');
     throw new Error(message);
+  }
+  // Existing roots selected before the scope reduction must be explicitly authorized for drive.file once.
+  if (activeRootFolderId) {
+    const savedRoot = await getFolder(activeRootFolderId, { resourceKey: activeRootFolderResourceKey });
+    await ensureDriveFolderAuthorized(savedRoot);
   }
   // The user is now server-authorized; only now may we ask them to choose a root folder.
   if (!activeRootFolderId) {

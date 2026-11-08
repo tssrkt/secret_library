@@ -72,7 +72,7 @@ test('server manifest read failure aborts publication without cache fallback or 
     setDoc: async (ref, value) => { writes.push(['manifest', ref.path, value]); },
     deleteDoc: async () => {},
   };
-  const store = createSharedLibraryStore({ db: {}, sdk, user: { uid: 'owner' } });
+  const store = createSharedLibraryStore({ db: {}, sdk, user: { uid: 'owner' }, authorizeItem: async () => true, rememberAuthorization: () => {} });
   const index = { version: 4, rootFolderId: 'root', folders: [
     { id: 'root', parentId: null, name: 'Root' }, { id: 'shelf', parentId: 'root', name: 'Shelf' },
   ], books: [{ id: 'book-id', parentId: 'shelf', title: 'Book', authors: ['Author'] }] };
@@ -119,7 +119,7 @@ test('failed cover sync preserves old covers and retry completes publication', a
     if (failDelete && ref.path === 'sharedLibraries/owner/covers/removed-book') throw new Error('temporary delete failure');
     return deleteDoc(ref);
   };
-  const store = createSharedLibraryStore({ db: {}, sdk, user: { uid: 'owner' },
+  const store = createSharedLibraryStore({ db: {}, sdk, user: { uid: 'owner' }, authorizeItem: async () => true, rememberAuthorization: () => {},
     downloadCover: async () => {
       if (failDownload) throw new Error('temporary Drive failure');
       return new Blob(['new-cover'], { type: 'image/webp' });
@@ -163,7 +163,7 @@ test('shared book covers are copied to Firebase and loaded without access to the
     setDoc: async (ref, value) => { documents.set(ref.path, value); writes.push(ref.path); },
     deleteDoc: async (ref) => { documents.delete(ref.path); },
   };
-  const store = createSharedLibraryStore({ db: {}, sdk, user: { uid: 'owner' },
+  const store = createSharedLibraryStore({ db: {}, sdk, user: { uid: 'owner' }, authorizeItem: async () => true, rememberAuthorization: () => {},
     downloadCover: async (id) => { downloads++; assert.equal(id, 'private-drive-cover-id'); return new Blob(['tiny-webp'], { type: 'image/webp' }); } });
   const index = { version: 4, rootFolderId: 'root', folders: [{ id: 'root', parentId: null, name: 'Root' }],
     books: [{ id: 'book-id', parentId: 'root', title: 'Book', fileName: 'book.fb2', coverFileId: 'private-drive-cover-id', modifiedTime: 'v1' }] };

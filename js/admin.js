@@ -1,4 +1,4 @@
-import { initializeAuth, requestAccessToken, getAccessToken } from './auth.js?v=20261108-account-picker';
+import { initializeAuth, requestAccessToken, getAccessToken } from './auth.js?v=20261108-drive-file-picker';
 import { startFirebaseSession } from './firebase-session.js';
 import { INVITATION_MAILER_URL } from './config.js';
 

@@ -1,4 +1,4 @@
-import { DRIVE_SCOPES, GOOGLE_CLIENT_ID } from './config.js';
+import { DRIVE_SCOPES, GOOGLE_CLIENT_ID } from './config.js?v=20261108-drive-file-picker';
 import { firebaseConfigured } from './firebase-config.js';
 
 let accessToken = null;
@@ -35,12 +35,39 @@ export async function ensureAccessToken() {
   return accessToken;
 }
 
-export const AUTH_SESSION_KEY = 'secret-library-google-session';
+// Bump the session key when OAuth scopes change so a token issued with the old broad scope is never silently reused.
+export const AUTH_SESSION_KEY = 'secret-library-google-session-v2';
+export const AUTH_SCOPE_VERSION_KEY = 'secret-library-oauth-scope-version';
+const CURRENT_AUTH_SCOPE_VERSION = 'drive-file-picker-v1';
 export const PREVIOUS_SIGN_IN_KEY = 'secret-library-previous-sign-in';
 export const PERSISTED_PROFILE_KEY = 'secret-library-persisted-profile';
 
 function storageOrNull(name) {
   try { return window[name]; } catch { return null; }
+}
+
+const LEGACY_AUTH_SESSION_KEY = 'secret-library-google-session';
+
+async function revokeLegacyOAuthGrant() {
+  let current = false;
+  try { current = storageOrNull('localStorage')?.getItem(AUTH_SCOPE_VERSION_KEY) === CURRENT_AUTH_SCOPE_VERSION; } catch { /* continue conservatively */ }
+  if (current) return;
+  let saved = null;
+  try { saved = JSON.parse(storageOrNull('sessionStorage')?.getItem(LEGACY_AUTH_SESSION_KEY) || 'null'); } catch { /* stale session may be malformed */ }
+  if (!saved?.accessToken || !globalThis.google?.accounts?.oauth2?.revoke) return;
+  try {
+    await new Promise((resolve) => {
+      let settled = false;
+      const timer = setTimeout(() => { if (!settled) { settled = true; resolve(false); } }, 5000);
+      globalThis.google.accounts.oauth2.revoke(saved.accessToken, () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(true);
+      });
+    });
+  } catch { /* a later response.scope check prevents accepting the old broad grant */ }
+  try { storageOrNull('sessionStorage')?.removeItem(LEGACY_AUTH_SESSION_KEY); } catch { /* optional cleanup */ }
 }
 
 export function persistAuthSession(user = {}, {
@@ -145,6 +172,7 @@ export async function initializeAuth() {
     throw new AuthError('Сначала укажите Google OAuth Client ID в js/config.js.', 'missing_client_id');
   }
   await loadGoogleIdentity();
+  await revokeLegacyOAuthGrant();
   tokenClient = google.accounts.oauth2.initTokenClient({
     client_id: GOOGLE_CLIENT_ID,
     scope: firebaseConfigured() ? `${DRIVE_SCOPES} openid email profile` : DRIVE_SCOPES,
@@ -155,6 +183,9 @@ export async function initializeAuth() {
 
 export function requestAccessToken({ prompt = 'consent' } = {}) {
   if (!tokenClient) return Promise.reject(new AuthError('Google OAuth is not initialized.'));
+  let scopeVersionCurrent = false;
+  try { scopeVersionCurrent = storageOrNull('localStorage')?.getItem(AUTH_SCOPE_VERSION_KEY) === CURRENT_AUTH_SCOPE_VERSION; } catch { /* require consent when storage is unavailable */ }
+  const effectivePrompt = scopeVersionCurrent ? prompt : (prompt === 'select_account' ? 'consent select_account' : 'consent');
   if (pendingToken) {
     // An explicit account choice must not reuse a pending silent renewal.
     if (prompt === 'select_account' && pendingTokenPrompt !== 'select_account') {
@@ -193,9 +224,25 @@ export function requestAccessToken({ prompt = 'consent' } = {}) {
         reject(new AuthError('Google authorization did not finish. Please try again.', response.error));
         return;
       }
+      if (typeof response.scope === 'string') {
+        const grantedScopes = new Set(response.scope.split(/\s+/));
+        if (grantedScopes.has('https://www.googleapis.com/auth/drive')) {
+          try { google.accounts.oauth2.revoke(response.access_token, () => {}); } catch { /* force a fresh consent on the next attempt */ }
+          try { storageOrNull('localStorage')?.removeItem(AUTH_SCOPE_VERSION_KEY); } catch { /* consent is still required on the next attempt */ }
+          reject(new AuthError('Google still returned the old broad Drive permission. A revocation was requested; sign in again to complete the permission reduction.'));
+          return;
+        }
+        const missingScopes = DRIVE_SCOPES.split(/\s+/).filter((scope) => !grantedScopes.has(scope));
+        if (missingScopes.length) {
+          try { google.accounts.oauth2.revoke(response.access_token, () => {}); } catch { /* do not retain a partial token */ }
+          reject(new AuthError('Не все необходимые разрешения Google Drive были предоставлены. Повторите вход и разрешите чтение библиотеки, appData и доступ к выбранным через Picker объектам.'));
+          return;
+        }
+      }
       accessToken = response.access_token;
       tokenExpiresAt = Date.now() + Math.max(0, Number(response.expires_in) || 3600) * 1000;
       interactionRequired = false;
+      try { storageOrNull('localStorage')?.setItem(AUTH_SCOPE_VERSION_KEY, CURRENT_AUTH_SCOPE_VERSION); } catch { /* session still works without persistent storage */ }
       persistAuthSession(sessionUser);
       scheduleRenewal();
       resolve(accessToken);
@@ -203,8 +250,8 @@ export function requestAccessToken({ prompt = 'consent' } = {}) {
     tokenClient.error_callback = (error) => fail(new AuthError('The authorization window was closed or sign-in was cancelled.', error?.type || 'popup_closed'));
     try {
       // login_hint can bypass account selection even with select_account.
-      const options = { prompt };
-      if (prompt !== 'select_account' && sessionUser.emailAddress) options.login_hint = sessionUser.emailAddress;
+      const options = { prompt: effectivePrompt };
+      if (!effectivePrompt.split(/\s+/).includes('select_account') && sessionUser.emailAddress) options.login_hint = sessionUser.emailAddress;
       tokenClient.requestAccessToken(options);
     } catch (error) { fail(error); }
   });
@@ -222,6 +269,10 @@ export function requestAccessToken({ prompt = 'consent' } = {}) {
 
 export function getAccessToken() {
   return accessToken;
+}
+
+export function getSessionUserEmail() {
+  return typeof sessionUser?.emailAddress === 'string' ? sessionUser.emailAddress.trim().toLowerCase() : '';
 }
 
 export function clearAccessToken({ revoke = false } = {}) {
