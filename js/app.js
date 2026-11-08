@@ -17,7 +17,7 @@ import {
 import { prepareIndexingRun, createRetryEligibilityCheck } from './indexing-run.js';
 import * as ui from './ui.js?v=20261108-reciprocal-share-only';
 import { errorDetails, recordIndexingError } from './indexing-errors.js';
-import { social, socialError } from './social-runtime.js?v=20261108-retry-transient-auth';
+import { social, socialError } from './social-runtime.js?v=20261108-email-registry-auth';
 import { getAccessToken } from './auth.js?v=20261108-account-picker';
 import { checkpointKey, loadCheckpoint, saveCheckpoint, deleteCheckpoint, commitCheckpoint } from './indexing-checkpoint.js';
 import { createLibraryTabs } from './library-tabs.js';
@@ -410,8 +410,7 @@ async function afterAuthorization() {
   reconnectRequired = false;
   ui.setReconnectRequired(false);
   // Enforce the invitation gate before showing any authorized UI, including the root-folder picker.
-  const invitationToken = new URLSearchParams(window.location.search).get('invite') || '';
-  const registered = await social.connect(getAccessToken(), activeRootFolderId || '', invitationToken);
+  const registered = await social.connect(getAccessToken(), activeRootFolderId || '');
   if (!registered) {
     // A rejected sign-in must also clear any catalog left over from a previous session.
     libraryAccessGranted = false;

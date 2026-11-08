@@ -19,7 +19,6 @@ function doPost(e) {
   let stage = 'parse-request';
   let reservation = null;
   let emailSent = false;
-  let invitationTokenRecord = null;
   let adminRequest = false;
   try {
     const raw = e && e.parameter && e.parameter.payload;
@@ -30,10 +29,6 @@ function doPost(e) {
     if (input.action === 'getInvitationStatuses') {
       stage = 'invitation-status-request';
       return responsePage(requestId, true, '', handleInvitationStatuses(input));
-    }
-    if (input.action === 'acceptInvitation') {
-      stage = 'accept-invitation-request';
-      return responsePage(requestId, true, '', handleAcceptInvitation(input));
     }
     if (input.action === 'cancelInvitation') {
       stage = 'cancel-invitation-request';
@@ -89,7 +84,10 @@ function doPost(e) {
 
     stage = 'send-email';
     const inviterName = String(user.displayName || 'Пользователь').trim().slice(0, 160) || 'Пользователь';
-    invitationTokenRecord = issueInvitationAcceptanceToken(user.localId, normalizeEmail(user.email), email);
+    // Invite by email only: register the pending email before sending the message.
+    ensurePendingInviteRecords(user.localId, normalizeEmail(user.email), email);
+    saveOwnerInvitationRecord({ ownerUid: user.localId, ownerEmail: normalizeEmail(user.email),
+      inviteeEmail: email, createdAt: Date.now(), status: 'pending' });
     MailApp.sendEmail({
       to: email,
       subject: 'Приглашение в «Тайную Библиотеку»',
@@ -103,9 +101,6 @@ function doPost(e) {
     reservation = null;
     return responsePage(requestId, true, invitationSuccessMessage(user.localId, invitationCount));
   } catch (error) {
-    if (invitationTokenRecord && !emailSent) {
-      try { revokeInvitationAcceptanceToken(invitationTokenRecord); } catch (_) {}
-    }
     if (reservation && reservation.status === 'reserved' && !emailSent) {
       try { finishSend(reservation.uid, reservation.email, false, reservation.reservationId); } catch (_) {}
     }
@@ -117,6 +112,24 @@ function doPost(e) {
     return adminRequest
       ? adminResponsePage(requestId, false, publicAdminError(error), null)
       : responsePage(requestId, false, publicError(error));
+  }
+}
+
+function ensurePendingInviteRecords(ownerUid, ownerEmail, inviteeEmail) {
+  const owner = String(ownerUid || '');
+  const email = normalizeEmail(inviteeEmail);
+  if (!isValidUid(owner) || !isValidEmail(email) || email === normalizeEmail(ownerEmail)) {
+    throw new Error('Invalid invitation registration details.');
+  }
+  const rootPath = 'pendingInvites/' + encodeURIComponent(email);
+  const existingRoot = fsGet(rootPath);
+  if (!existingRoot) fsSet(rootPath, { firstOwnerUid: owner, createdAt: new Date() });
+  const sharePath = rootPath + '/shares/' + encodeURIComponent(owner);
+  const existingShare = fsGet(sharePath);
+  if (!existingShare || existingShare.active !== true) {
+    fsSet(sharePath, { ownerUid: owner, ownerEmail: normalizeEmail(ownerEmail), inviteeEmail: email,
+      active: true, createdAt: new Date(), claimedUid: existingShare?.claimedUid || null,
+      claimedAt: existingShare?.claimedAt || null });
   }
 }
 
@@ -158,9 +171,6 @@ function isBlockedInvitationEmail(email) {
 function deactivateBlockedInvitation(email, ownerUid) {
   const invitation = readOwnerInvitationRecord(ownerUid, email);
   if (!invitation || invitation.status === 'accepted') return;
-  const properties = PropertiesService.getScriptProperties();
-  if (invitation.tokenHash) properties.deleteProperty('invite_accept_' + invitation.tokenHash);
-  properties.deleteProperty(acceptanceCurrentKey(ownerUid, email));
   invitation.status = 'revoked';
   saveOwnerInvitationRecord(invitation);
 }
@@ -302,9 +312,6 @@ function acceptanceDigest(value) {
   }).join('');
 }
 
-function acceptanceCurrentKey(uid, email) {
-  return 'invite_current_' + acceptanceDigest(uid + '\n' + normalizeEmail(email));
-}
 
 function ownerInvitationRegistryKey(uid) {
   return 'invite_owner_' + acceptanceDigest(String(uid || ''));
@@ -357,226 +364,14 @@ function saveOwnerInvitationRecord(record) {
   const email = normalizeEmail(record.inviteeEmail);
   properties.setProperty(ownerInvitationRecordKey(record.ownerUid, email), JSON.stringify({
     ownerUid: record.ownerUid, ownerEmail: normalizeEmail(record.ownerEmail), inviteeEmail: email,
-    tokenHash: record.tokenHash, status: record.status, createdAt: Number(record.createdAt) || Date.now(),
+    status: record.status, createdAt: Number(record.createdAt) || Date.now(),
     acceptedUid: record.acceptedUid || '', acceptedDisplayName: String(record.acceptedDisplayName || '').slice(0, 160),
     acceptedAt: Number(record.acceptedAt) || 0
   }));
 }
-function deleteOwnerInvitationRecord(uid, email) {
-  const properties = PropertiesService.getScriptProperties();
-  migrateLegacyOwnerInvitationRegistry(uid, properties);
-  properties.deleteProperty(ownerInvitationRecordKey(uid, email));
-}
 function readOwnerInvitationRecord(uid, email) {
   return readOwnerInvitationRegistry(uid)[normalizeEmail(email)] || null;
 }
-function issueInvitationAcceptanceToken(ownerUid, ownerEmail, inviteeEmail) {
-  const properties = PropertiesService.getScriptProperties();
-  const currentKey = acceptanceCurrentKey(ownerUid, inviteeEmail);
-  const previousHash = properties.getProperty(currentKey);
-  if (previousHash) properties.deleteProperty('invite_accept_' + previousHash);
-
-  const token = Utilities.getUuid() + Utilities.getUuid().replace(/-/g, '');
-  const tokenHash = acceptanceDigest(token);
-  const now = Date.now();
-  const record = {
-    ownerUid: ownerUid,
-    ownerEmail: normalizeEmail(ownerEmail),
-    inviteeEmail: normalizeEmail(inviteeEmail),
-    createdAt: now,
-    expiresAt: now + 7 * 24 * 60 * 60 * 1000,
-    status: 'pending',
-    tokenHash: tokenHash
-  };
-  properties.setProperty('invite_accept_' + tokenHash, JSON.stringify(record));
-  properties.setProperty(currentKey, tokenHash);
-  saveOwnerInvitationRecord(record);
-  return { token: token, tokenHash: tokenHash, currentKey: currentKey };
-}
-
-function revokeInvitationAcceptanceToken(tokenRecord) {
-  if (!tokenRecord || !tokenRecord.tokenHash) return;
-  const properties = PropertiesService.getScriptProperties();
-  if (properties.getProperty(tokenRecord.currentKey) === tokenRecord.tokenHash) {
-    properties.deleteProperty(tokenRecord.currentKey);
-  }
-  properties.deleteProperty('invite_accept_' + tokenRecord.tokenHash);
-  const registry = readOwnerInvitationRegistry(tokenRecord.ownerUid);
-  const email = normalizeEmail(tokenRecord.inviteeEmail);
-  if (registry[email] && registry[email].tokenHash === tokenRecord.tokenHash) {
-    deleteOwnerInvitationRecord(tokenRecord.ownerUid, email);
-  }
-}
-
-function provisionAcceptedInvitee(record, user) {
-  const uid = String(user.localId || '');
-  const email = normalizeEmail(user.email);
-  const ownerUid = String(record.ownerUid || '');
-  if (fsGet('bannedUsers/' + encodeURIComponent(uid))) {
-    record.status = 'revoked';
-    saveOwnerInvitationRecord(record);
-    if (record.tokenHash) PropertiesService.getScriptProperties().deleteProperty('invite_accept_' + record.tokenHash);
-    throw new Error('\u0414\u043e\u0441\u0442\u0443\u043f \u044d\u0442\u043e\u043c\u0443 \u0430\u043a\u043a\u0430\u0443\u043d\u0442\u0443 \u0437\u0430\u0431\u043b\u043e\u043a\u0438\u0440\u043e\u0432\u0430\u043d.');
-  }
-  if (!isValidUid(uid) || !isValidUid(ownerUid) || !isValidEmail(email) || email !== normalizeEmail(record.inviteeEmail)) {
-    throw new Error('\u0414\u0430\u043d\u043d\u044b\u0435 \u043f\u0440\u0438\u043d\u044f\u0442\u043e\u0433\u043e \u043f\u0440\u0438\u0433\u043b\u0430\u0448\u0435\u043d\u0438\u044f \u043d\u0435\u0434\u0435\u0439\u0441\u0442\u0432\u0438\u0442\u0435\u043b\u044c\u043d\u044b.');
-  }
-  if (!fsGet('users/' + encodeURIComponent(ownerUid))) {
-    throw new Error('\u041f\u0440\u043e\u0444\u0438\u043b\u044c \u043f\u0440\u0438\u0433\u043b\u0430\u0441\u0438\u0432\u0448\u0435\u0433\u043e \u043d\u0435 \u0437\u0430\u0440\u0435\u0433\u0438\u0441\u0442\u0440\u0438\u0440\u043e\u0432\u0430\u043d.');
-  }
-
-  const profilePath = 'users/' + encodeURIComponent(uid);
-  const directoryPath = 'userDirectory/' + encodeURIComponent(email);
-  const existingProfile = fsGet(profilePath);
-  const directory = fsGet(directoryPath);
-  if (directory && directory.uid !== uid) throw new Error('\u042d\u0442\u043e\u0442 Google email \u0443\u0436\u0435 \u0441\u0432\u044f\u0437\u0430\u043d \u0441 \u0434\u0440\u0443\u0433\u0438\u043c \u0443\u0447\u0430\u0441\u0442\u043d\u0438\u043a\u043e\u043c.');
-
-  if (!existingProfile) {
-    fsSet(profilePath, {
-      displayName: String(user.displayName || email).slice(0, 160),
-      photoURL: String(user.photoUrl || '').slice(0, 2048),
-      createdAt: new Date(),
-      invitedByUid: ownerUid
-    });
-  }
-  if (!directory) fsSet(directoryPath, { uid: uid });
-
-  const sharePath = 'libraryShares/' + encodeURIComponent(ownerUid + '__' + uid);
-  const share = fsGet(sharePath);
-  if (!share || share.active !== true) {
-    fsSet(sharePath, {
-      ownerUid: ownerUid,
-      viewerUid: uid,
-      ownerEmail: normalizeEmail(record.ownerEmail),
-      active: true,
-      sharedAt: new Date(),
-      revokedAt: null
-    });
-  }
-  record.provisionedAt = Number(record.provisionedAt) || Date.now();
-  PropertiesService.getScriptProperties().setProperty('invite_accept_' + record.tokenHash, JSON.stringify(record));
-}
-
-function handleAcceptInvitation(input) {
-  const token = String(input.token || '');
-  const idToken = String(input.idToken || '');
-  if (!/^[a-f0-9-]{32,100}$/i.test(token) || idToken.length < 100 || idToken.length > 5000) {
-    throw new Error('Ссылка приглашения недействительна. Попросите отправить приглашение ещё раз.');
-  }
-  const user = verifyFirebaseUser(idToken);
-  const tokenHash = acceptanceDigest(token);
-  const properties = PropertiesService.getScriptProperties();
-  const recordKey = 'invite_accept_' + tokenHash;
-  const lock = LockService.getScriptLock();
-  lock.waitLock(10000);
-  let record;
-  let alreadyAccepted = false;
-  let otherAcceptedRecords = [];
-  try {
-    record = JSON.parse(properties.getProperty(recordKey) || 'null');
-    if (!record) throw new Error('Приглашение не найдено или уже недействительно.');
-    if (!record.tokenHash) record.tokenHash = tokenHash;
-    if (normalizeEmail(user.email) !== record.inviteeEmail) {
-      throw new Error('Войдите через Google с тем адресом, на который пришло приглашение.');
-    }
-    if (record.status === 'accepted' && record.acceptedUid === user.localId) {
-      alreadyAccepted = true;
-    } else {
-      const currentKey = acceptanceCurrentKey(record.ownerUid, record.inviteeEmail);
-      if (properties.getProperty(currentKey) !== tokenHash || record.status !== 'pending') {
-        throw new Error('Приглашение уже использовано или заменено новым.');
-      }
-      if (Date.now() > Number(record.expiresAt || 0)) {
-        properties.deleteProperty(currentKey);
-        properties.deleteProperty(recordKey);
-        throw new Error('Срок действия приглашения истёк. Попросите отправить его ещё раз.');
-      }
-      if (fsGet('bannedUsers/' + encodeURIComponent(String(record.ownerUid || '')))) {
-        properties.deleteProperty(currentKey); properties.deleteProperty(recordKey);
-        record.status = 'revoked'; saveOwnerInvitationRecord(record);
-        throw new Error('\u041f\u0440\u0438\u0433\u043b\u0430\u0448\u0435\u043d\u0438\u0435 \u043e\u0442\u043e\u0437\u0432\u0430\u043d\u043e: \u0430\u043a\u043a\u0430\u0443\u043d\u0442 \u043f\u0440\u0438\u0433\u043b\u0430\u0441\u0438\u0432\u0448\u0435\u0433\u043e \u0437\u0430\u0431\u043b\u043e\u043a\u0438\u0440\u043e\u0432\u0430\u043d.');
-      }
-      if (fsGet('bannedUsers/' + encodeURIComponent(String(user.localId || ''))) || isBlockedInvitationEmail(user.email)) {
-        throw new Error('\u0414\u043e\u0441\u0442\u0443\u043f \u044d\u0442\u043e\u043c\u0443 \u0430\u043a\u043a\u0430\u0443\u043d\u0442\u0443 \u0437\u0430\u0431\u043b\u043e\u043a\u0438\u0440\u043e\u0432\u0430\u043d.');
-      }
-          record.status = 'accepted';
-      record.acceptedUid = user.localId;
-      record.acceptedDisplayName = String(user.displayName || user.email).slice(0, 160);
-      record.acceptedAt = Date.now();
-      properties.setProperty(recordKey, JSON.stringify(record));
-      properties.deleteProperty(currentKey);
-      saveOwnerInvitationRecord(record);
-    }
-    // Consume every other still-valid invitation for this same email while holding
-    // the same script lock used by cancellation, so each invitation has one winner.
-    otherAcceptedRecords = markOtherInvitationsAcceptedLocked(record, user, properties);
-  } finally {
-    lock.releaseLock();
-  }
-
-  // Provision the accepted account and every other invitation consumed by this registration.
-  provisionAcceptedInvitee(record, user);
-  notifyAcceptedInvitationOwner(record, user, properties);
-  for (const otherRecord of otherAcceptedRecords) {
-    provisionAcceptedInvitee(otherRecord, user);
-    notifyAcceptedInvitationOwner(otherRecord, user, properties);
-  }
-  return { accepted: true, alreadyAccepted: alreadyAccepted };
-}
-
-function markOtherInvitationsAcceptedLocked(acceptedRecord, user, properties) {
-  const email = normalizeEmail(user.email);
-  const now = Date.now();
-  const all = properties.getProperties();
-  const accepted = [];
-  Object.keys(all).forEach(function (key) {
-    if (!key.startsWith('invite_accept_') || key === 'invite_accept_' + acceptedRecord.tokenHash) return;
-    let record;
-    try { record = JSON.parse(all[key] || 'null'); } catch (_) { return; }
-    if (!record || normalizeEmail(record.inviteeEmail) !== email || !isValidUid(String(record.ownerUid || ''))) return;
-    const tokenHash = String(record.tokenHash || key.slice('invite_accept_'.length));
-    if (record.status === 'accepted' && record.acceptedUid === user.localId &&
-        (!record.provisionedAt || !record.notifiedAt)) {
-      accepted.push(record);
-      return;
-    }
-    if (record.status !== 'pending') return;
-    const currentKey = acceptanceCurrentKey(record.ownerUid, email);
-    if (properties.getProperty(currentKey) !== tokenHash || now > Number(record.expiresAt || 0)) return;
-    if (fsGet('bannedUsers/' + encodeURIComponent(String(record.ownerUid)))) {
-      properties.deleteProperty(currentKey);
-      properties.deleteProperty(key);
-      record.status = 'revoked';
-      saveOwnerInvitationRecord(record);
-      return;
-    }
-    record.status = 'accepted';
-    record.acceptedUid = user.localId;
-    record.acceptedDisplayName = String(user.displayName || email).slice(0, 160);
-    record.acceptedAt = now;
-    properties.deleteProperty(currentKey);
-    properties.setProperty(key, JSON.stringify(record));
-    saveOwnerInvitationRecord(record);
-    accepted.push(record);
-  });
-  return accepted;
-}
-
-function notifyAcceptedInvitationOwner(record, user, properties) {
-  const key = 'invite_accept_' + record.tokenHash;
-  const latest = JSON.parse(properties.getProperty(key) || 'null') || record;
-  if (!latest.notifiedAt) {
-    MailApp.sendEmail({
-      to: latest.ownerEmail,
-      subject: 'Приглашение принято — Тайная Библиотека',
-      body: 'Пользователь ' + normalizeEmail(user.email) + ' зарегистрировался в Тайной Библиотеке по вашему приглашению.'
-    });
-    latest.notifiedAt = Date.now();
-    properties.setProperty(key, JSON.stringify(latest));
-  }
-  saveOwnerInvitationRecord(latest);
-}
-
 function handleCancelInvitation(input) {
   const idToken = String(input.idToken || '');
   const email = normalizeEmail(input.email);
@@ -589,7 +384,6 @@ function handleCancelInvitation(input) {
   const lock = LockService.getScriptLock();
   lock.waitLock(10000);
   let invitation;
-  let tokenRecord = null;
   try {
     invitation = readOwnerInvitationRecord(user.localId, email);
     if (!invitation) throw new Error('Приглашение не найдено.');
@@ -599,31 +393,20 @@ function handleCancelInvitation(input) {
     } else if (invitation.status !== 'pending') {
       throw new Error('Отменить можно только ожидающее принятия приглашение.');
     } else {
-      const properties = PropertiesService.getScriptProperties();
-      let tokenHash = String(invitation.tokenHash || '');
-      const currentKey = acceptanceCurrentKey(user.localId, email);
-      if (!tokenHash) tokenHash = String(properties.getProperty(currentKey) || '');
-      if (tokenHash) {
-        const key = 'invite_accept_' + tokenHash;
-        tokenRecord = JSON.parse(properties.getProperty(key) || 'null');
-        if (tokenRecord && tokenRecord.status === 'accepted') {
-          throw new Error('Приглашение уже принято. Закрыть доступ к сайту нельзя; при необходимости можно закрыть только доступ к вашей библиотеке.');
-        }
-        properties.deleteProperty(key);
-        if (properties.getProperty(currentKey) === tokenHash) properties.deleteProperty(currentKey);
-        invitation.tokenHash = tokenHash;
-      }
       invitation.status = 'revoked';
       invitation.revokedAt = Date.now();
       saveOwnerInvitationRecord(invitation);
+      const pendingSharePath = 'pendingInvites/' + encodeURIComponent(email) + '/shares/' + encodeURIComponent(user.localId);
+      const pendingShare = fsGet(pendingSharePath);
+      if (pendingShare && pendingShare.claimedUid == null) fsSet(pendingSharePath, { active: false });
     }
   } finally {
     lock.releaseLock();
   }
 
-  // Sending is retriable and idempotent. A failed email does not reactivate the token.
+  // Sending is retriable and idempotent; cancellation is recorded by email, not by link token.
   const properties = PropertiesService.getScriptProperties();
-  const invitationGeneration = String(invitation.tokenHash || invitation.createdAt || 'legacy');
+  const invitationGeneration = String(invitation.createdAt || 'legacy');
   const notificationKey = 'invite_cancel_notified_' + acceptanceDigest(user.localId + '\n' + email + '\n' + invitationGeneration);
   const notificationLock = LockService.getScriptLock();
   notificationLock.waitLock(10000);

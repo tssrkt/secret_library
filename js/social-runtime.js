@@ -3,7 +3,7 @@ import { createSocialStore } from './social-store.js?v=20261108-verify-inviter';
 import { createSharedLibraryStore } from './shared-library.js?v=20261106-root-discovery';
 import { discoverDriveFriends, grantRootFolderAccess, closeRootFolderAccess } from './drive-sharing.js?v=20261108-bounded-friend-discovery';
 import { findDriveCatalogFile, downloadDriveJsonFile, getCurrentDriveUser } from './drive.js';
-import { sendInvitationEmail, getInvitationStatuses as fetchInvitationStatuses, acceptInvitation as acceptInvitationToken, cancelInvitation as cancelInvitationToken } from './invitation-mailer.js?v=20261107-cancel-invitation-response';
+import { sendInvitationEmail, getInvitationStatuses as fetchInvitationStatuses, cancelInvitation as cancelInvitationToken } from './invitation-mailer.js?v=20261108-email-registry-auth';
 import { createInvitationLedger, acceptedInvitationFriends, invitationLedgerRows, mergeInvitationRows } from './invitation-ledger.js?v=20261107-ledger-server-discovery';
 
 const TRANSIENT_AUTH_CODES = new Set([
@@ -245,7 +245,7 @@ export const social = {
   },
   subscribe(listener) { listeners.add(listener); listener(state); return () => listeners.delete(listener); },
   getState() { return state; },
-  async connect(token, rootFolderId = '', invitationToken = '') {
+  async connect(token, rootFolderId = '') {
     settleConnectionReady(false);
     connectionReadyPromise = new Promise((resolve) => { resolveConnectionReady = resolve; });
     configuredRootFolderId = String(rootFolderId || '');
@@ -298,17 +298,6 @@ export const social = {
         await syncAcceptedInvitationStatuses([], current);
         if (knownInvitationEmails.length) await syncAcceptedInvitationStatuses(knownInvitationEmails, current);
       } catch (error) { console.warn('Could not refresh invitation acceptance statuses:', error); }
-      // Accept the server-verified invitation before client registration. Apps Script
-      // creates the profile, email directory entry and owner->reader relationship using
-      // the verified token; the browser cannot forge an invitation to bypass the gate.
-      if (invitationToken) {
-        const idToken = await session.user.getIdToken();
-        await acceptInvitationToken({ token: invitationToken, idToken });
-        // Remove the one-time secret from the address bar only after server acceptance.
-        const cleanUrl = new URL(window.location.href);
-        cleanUrl.searchParams.delete('invite');
-        window.history.replaceState({}, '', cleanUrl);
-      }
       // Registration now updates the server-provisioned profile instead of relying on
       // Firestore pendingInvites as the invitation authority.
       // Registration is the invitation gate. Never fail open when Firestore is
