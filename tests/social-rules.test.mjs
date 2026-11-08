@@ -210,6 +210,29 @@ test('only the fixed founder may create a profile without an invitation', async 
   assert.equal((await get(stranger.db, 'users/uninvited-person')).invitedByUid, FOUNDER_UID);
 });
 
+test('existing profiles without a real inviter are blocked on every login', async () => {
+  const founder = client(FOUNDER_UID, FOUNDER_EMAIL);
+  await founder.store.register();
+  await env.withSecurityRulesDisabled(async (context) => {
+    const db = context.firestore();
+    await sdk.setDoc(sdk.doc(db, 'users/no-inviter'), {
+      displayName: 'No inviter', photoURL: '', createdAt: sdk.Timestamp.now(), invitedByUid: null,
+    });
+    await sdk.setDoc(sdk.doc(db, 'users/orphan-inviter'), {
+      displayName: 'Orphan inviter', photoURL: '', createdAt: sdk.Timestamp.now(), invitedByUid: 'deleted-inviter',
+    });
+    await sdk.deleteDoc(sdk.doc(db, 'users/deleted-inviter'));
+  });
+
+  const noInviter = client('no-inviter');
+  await assert.rejects(noInviter.store.register(), /пригласителя/i);
+  await assertFails(sdk.getDoc(sdk.doc(noInviter.db, 'sharedLibraries/no-inviter')));
+
+  const orphanInviter = client('orphan-inviter');
+  await assert.rejects(orphanInviter.store.register(), /permission|пригласителя/i);
+  await assertFails(sdk.getDoc(sdk.doc(orphanInviter.db, 'sharedLibraries/orphan-inviter')));
+});
+
 test('registered recipients are not claimed through legacy Firestore invitation subscriptions', async () => {
   const a = client('live-inviter'); const b = client('live-recipient');
   await register(a); await register(b);
