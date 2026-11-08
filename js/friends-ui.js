@@ -363,25 +363,36 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
         cell.append(mark); row.append(cell);
       }
       const actionCell = document.createElement('td');
-      const closeButton = document.createElement('button');
-      closeButton.type = 'button';
-      closeButton.className = 'settings-save-button';
-      closeButton.textContent = 'ЗАКРЫТЬ ДОСТУП';
-      closeButton.disabled = !friend.email || closingAccess.has(String(friend.email).trim().toLowerCase());
-      closeButton.title = friend.email ? 'Отозвать доступ к корневой папке в Google Drive' : 'У друга не указан email';
-      closeButton.addEventListener('click', async () => {
+      const actionButton = document.createElement('button');
+      actionButton.type = 'button';
+      actionButton.className = 'settings-save-button';
+      const isSharingWithFriend = friend.outbound === true;
+      actionButton.textContent = isSharingWithFriend ? 'ЗАКРЫТЬ ДОСТУП' : 'ПОДЕЛИТЬСЯ';
+      const friendEmail = String(friend.email || '').trim().toLowerCase();
+      actionButton.disabled = !friendEmail || closingAccess.has(friendEmail);
+      actionButton.title = !friendEmail
+        ? 'У друга не указан email'
+        : isSharingWithFriend
+          ? 'Отозвать доступ к корневой папке в Google Drive'
+          : 'Открыть другу доступ к корневой папке вашей библиотеки';
+      actionButton.addEventListener('click', async () => {
         const email = String(friend.email || '').trim().toLowerCase();
         if (!email || closingAccess.has(email)) return;
-        if (!window.confirm(`Закрыть для ${email} доступ к корневой папке вашей библиотеки в Google Drive?`)) return;
         closingAccess.add(email);
         friendsAccessMessage.textContent = '';
-        closeButton.disabled = true;
-        closeButton.textContent = 'ЗАКРЫВАЕМ…';
+        actionButton.disabled = true;
+        actionButton.textContent = isSharingWithFriend ? 'ЗАКРЫВАЕМ…' : 'ОТКРЫВАЕМ ДОСТУП…';
         try {
-          const result = await social.closeFriendAccess(email);
-          friendsAccessMessage.textContent = result.revoked
-            ? `Доступ к корневой папке для ${email} закрыт в Google Drive.`
-            : `У ${email} не найдено прямого разрешения на корневую папку.`;
+          if (isSharingWithFriend) {
+            if (!window.confirm(`Закрыть для ${email} доступ к корневой папке вашей библиотеки в Google Drive?`)) return;
+            const result = await social.closeFriendAccess(email);
+            friendsAccessMessage.textContent = result.revoked
+              ? `Доступ к корневой папке для ${email} закрыт в Google Drive.`
+              : `У ${email} не найдено прямого разрешения на корневую папку.`;
+          } else {
+            const result = await social.shareBackWithEmail(email, friend.uid);
+            friendsAccessMessage.textContent = typeof result === 'string' ? result : `Доступ к библиотеке предоставлен для ${email}.`;
+          }
         } catch (error) {
           friendsAccessMessage.textContent = socialError(error);
         } finally {
@@ -389,7 +400,7 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
           render();
         }
       });
-      actionCell.append(closeButton);
+      actionCell.append(actionButton);
       row.append(actionCell);
       table.querySelector('tbody').append(row);
     }

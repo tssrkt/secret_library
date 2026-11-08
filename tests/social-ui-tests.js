@@ -222,7 +222,7 @@ export async function runSocialUiTests(test, assert, equal) {
       equal([...rows[1].children].slice(1).map((cell, i) => i < 2 ? cell.querySelector('.friend-status-mark')?.getAttribute('aria-label') : cell.textContent), ['Нет', 'Да', 'ЗАКРЫТЬ ДОСТУП'], 'outbound only');
       equal([...rows[2].children].slice(1).map((cell, i) => i < 2 ? cell.querySelector('.friend-status-mark')?.getAttribute('aria-label') : cell.textContent), ['Да', 'Да', 'ЗАКРЫТЬ ДОСТУП'], 'mutual');
       rows[0].querySelector('.settings-save-button').click(); await tick();
-      assert(social.calls.some((call) => Array.isArray(call) && call[0] === '0' && call[1] === true), 'share action');
+      assert(social.calls.some((call) => Array.isArray(call) && call[0] === 'shareBackWithEmail' && call[1] === 'reader@gmail.com' && call[2] === '0'), 'share action grants Drive access to an existing friend without sending an invitation');
       page.querySelector('[aria-label="Страница 2"]').click(); equal(page.querySelectorAll('.friends-table tbody tr').length, 1, 'second page is a slice');
       social.update({ friends: friends.slice(0, 50) });
       assert(!page.querySelector('.book-pagination') && page.querySelectorAll('.friends-table tbody tr').length === 50, '50 friends no paginator, page clamps');
