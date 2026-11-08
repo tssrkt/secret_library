@@ -229,7 +229,7 @@ export function setReconnectRequired(required) {
     elements.signIn.hidden = false;
     elements.signIn.disabled = false;
   }
-  elements.signIn.textContent = required ? '?????????????? Google ???????' : '????? ????? Google';
+  elements.signIn.textContent = required ? '\u041f\u0435\u0440\u0435\u043f\u043e\u0434\u043a\u043b\u044e\u0447\u0438\u0442\u044c Google \u0430\u043a\u043a\u0430\u0443\u043d\u0442' : '\u0412\u043e\u0439\u0442\u0438 \u0447\u0435\u0440\u0435\u0437 Google';
 }
 
 export function showStats(folderCount, bookCount) {
