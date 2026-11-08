@@ -136,7 +136,10 @@ export async function runSocialUiTests(test, assert, equal) {
   await test('existing friends never appear in the sent invitations table even if a stale pending row remains', async () => {
     const page = document.createElement('div'); document.body.append(page);
     const social = stub({
-      friends: [{ uid: 'inviter', displayName: 'Inviter', email: 'inviter@gmail.com', inbound: true, outbound: false }],
+      // Drive friend discovery can temporarily lack the email on the friend row;
+      // the inbound notification still identifies the existing inviter.
+      friends: [{ uid: 'inviter', displayName: 'Inviter', email: '', inbound: true, outbound: false }],
+      notifications: [{ ownerUid: 'inviter', displayName: 'Inviter', email: 'inviter@gmail.com', unread: false, mutual: false }],
       invitations: [{ inviteeEmail: 'inviter@gmail.com', active: true, createdAt: Date.now() - 1000 }],
     });
     social.getInvitationStatuses = async () => ({ 'inviter@gmail.com': { invitationStatus: 'pending', lastSentAt: Date.now() - 1000 } });

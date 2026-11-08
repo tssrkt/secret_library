@@ -103,9 +103,13 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
       container.replaceChildren();
       return;
     }
-    const friendEmails = new Set((snapshot.friends || [])
-      .map((friend) => String(friend.email || '').trim().toLowerCase())
-      .filter(Boolean));
+    // Anyone who already shares a library with this user is an existing participant,
+    // including the original inviter. Their email can be absent from the friend row
+    // while it is still available on the Drive notification, so check both sources.
+    const friendEmails = new Set([
+      ...(snapshot.friends || []).map((friend) => friend.email),
+      ...(snapshot.notifications || []).map((notification) => notification.email),
+    ].map((email) => String(email || '').trim().toLowerCase()).filter(Boolean));
     const lastSentTime = (invite) => {
       const email = String(invite.inviteeEmail || '').trim().toLowerCase();
       return invitationStatuses[email] ? Number(invitationStatuses[email].lastSentAt) || 0 : timestampMillis(invite.emailSentAt || invite.createdAt);
@@ -269,7 +273,10 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
     if (discoveryPending && count === 0) countLabel.textContent = 'Список друзей загружается…';
     else if (snapshot.driveDiscoveryStatus === 'error' && count === 0) countLabel.textContent = 'Не удалось загрузить список друзей. Проверьте подключение к Google Drive и попробуйте снова.';
     else {
-      const friendEmails = new Set((snapshot.friends || []).map((friend) => String(friend.email || '').trim().toLowerCase()).filter(Boolean));
+      const friendEmails = new Set([
+        ...(snapshot.friends || []).map((friend) => friend.email),
+        ...(snapshot.notifications || []).map((notification) => notification.email),
+      ].map((email) => String(email || '').trim().toLowerCase()).filter(Boolean));
       // The local invitation ledger may contain already-accepted invitations.
       // Never include those provisional rows in the summary until the server's
       // authoritative invitation statuses have loaded.
@@ -368,7 +375,10 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
   const unsubscribe = social.subscribe((next) => {
     const actualInvitations = next.invitations || [];
     const actualEmails = new Set(actualInvitations.map((invite) => String(invite.inviteeEmail || '').trim().toLowerCase()));
-    const friendEmails = new Set((next.friends || []).map((friend) => String(friend.email || '').trim().toLowerCase()).filter(Boolean));
+    const friendEmails = new Set([
+      ...(next.friends || []).map((friend) => friend.email),
+      ...(next.notifications || []).map((notification) => notification.email),
+    ].map((email) => String(email || '').trim().toLowerCase()).filter(Boolean));
     for (const email of optimisticInvitations.keys()) {
       if (actualEmails.has(email) || friendEmails.has(email)) optimisticInvitations.delete(email);
     }
