@@ -331,7 +331,7 @@ export const social = {
     configuredRootFolderId = '';
     connectedDriveUser = null;
     closedAccessEmails.clear();
-    emit({ status: 'idle', message: 'Войдите через Google.', friends: [], notifications: [], libraries: [], ownRootFolderId: null });
+    emit({ status: 'idle', message: '', friends: [], notifications: [], libraries: [], ownRootFolderId: null });
     void endFirebaseSession().catch(() => {});
   },
   async shareWithEmail(email) {
