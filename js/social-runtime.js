@@ -536,11 +536,23 @@ export const social = {
         }
       }
     }
-    const result = await closeRootFolderAccess(rootFolderId, email);
     const normalizedEmail = String(email || '').trim().toLowerCase();
+    // Revoke the actual Drive permission first, then close the matching registered
+    // owner -> viewer relationship so the person disappears from Friends unless
+    // they still share their library with us.
+    const result = await closeRootFolderAccess(rootFolderId, normalizedEmail);
     closedAccessEmails.add(normalizedEmail);
     for (const friend of driveFriends) {
       if (String(friend.email || '').trim().toLowerCase() === normalizedEmail) friend.outbound = false;
+    }
+    const registeredFriend = registeredShareFriends.find((friend) =>
+      String(friend.email || '').trim().toLowerCase() === normalizedEmail && friend.outbound === true);
+    const driveFriend = driveFriends.find((friend) =>
+      String(friend.email || '').trim().toLowerCase() === normalizedEmail && friend.uid && !String(friend.uid).startsWith('email:'));
+    const otherUid = registeredFriend?.uid || driveFriend?.uid;
+    if (otherUid && store && registeredShareFriends.some((friend) => String(friend.uid) === String(otherUid) && friend.outbound === true)) {
+      await store.setSharing(String(otherUid), false, normalizedEmail);
+      registeredShareFriends = await store.loadFriends();
     }
     emit({ friends: combineFriendRows() });
     return result;
