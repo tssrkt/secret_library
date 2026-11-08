@@ -15,7 +15,7 @@ import { createUserSettingsController } from './user-settings-ui.js?v=20261107-s
 import { mountFriends } from './friends-ui.js?v=20261108-hide-friends-from-invites';
 import { createNotificationsController } from './notifications-ui.js?v=20261108-reciprocal-share-only';
 import { social } from './social-runtime.js?v=20261108-reciprocal-share-only';
-import { getAccessToken } from './auth.js';
+import { getAccessToken } from './auth.js?v=20261108-account-picker';
 import { loadUserSettings, saveUserSettings } from './user-settings.js';
 
 const genresRu = await loadGenreDictionary().catch(() => ({}));

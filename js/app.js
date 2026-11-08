@@ -1,7 +1,7 @@
 import {
   clearAccessToken, clearPersistedAuth, createAuthAttemptGuard,
   initializeAuth, persistAuthSession, recoverAuthSession, requestAccessToken,
-} from './auth.js';
+} from './auth.js?v=20261108-account-picker';
 import { downloadDriveFile, getCurrentDriveUser, getFolder, listFolderChildren } from './drive.js';
 import { removeCovers, removeOrphanCovers, storeCover } from './cover-cache.js';
 import {
@@ -18,7 +18,7 @@ import { prepareIndexingRun, createRetryEligibilityCheck } from './indexing-run.
 import * as ui from './ui.js?v=20261108-reciprocal-share-only';
 import { errorDetails, recordIndexingError } from './indexing-errors.js';
 import { social, socialError } from './social-runtime.js?v=20261108-reciprocal-share-only';
-import { getAccessToken } from './auth.js';
+import { getAccessToken } from './auth.js?v=20261108-account-picker';
 import { checkpointKey, loadCheckpoint, saveCheckpoint, deleteCheckpoint, commitCheckpoint } from './indexing-checkpoint.js';
 import { createLibraryTabs } from './library-tabs.js';
 import { createLibrarySelection } from './library-selection.js?v=20261107-stable-friend-loading';

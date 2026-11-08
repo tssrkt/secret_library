@@ -5,6 +5,8 @@ let accessToken = null;
 let tokenClient = null;
 let tokenExpiresAt = 0;
 let pendingToken = null;
+let pendingTokenPrompt = null;
+let cancelPendingToken = null;
 let renewalTimer;
 let sessionUser = {};
 let interactionRequired = false;
@@ -152,20 +154,43 @@ export async function initializeAuth() {
 }
 
 export function requestAccessToken({ prompt = 'consent' } = {}) {
-  if (!tokenClient) return Promise.reject(new AuthError('Google OAuth еще не инициализирован.'));
-  if (pendingToken) return pendingToken;
+  if (!tokenClient) return Promise.reject(new AuthError('Google OAuth is not initialized.'));
+  if (pendingToken) {
+    // An explicit account choice must not reuse a pending silent renewal.
+    if (prompt === 'select_account' && pendingTokenPrompt !== 'select_account') {
+      tokenGeneration += 1;
+      cancelPendingToken?.(new AuthError('Automatic authorization was replaced by account selection.', 'cancelled'));
+      // Isolate the interactive request from late callbacks of the old client.
+      tokenClient = google.accounts.oauth2.initTokenClient({
+        client_id: GOOGLE_CLIENT_ID,
+        scope: firebaseConfigured() ? `${DRIVE_SCOPES} openid email profile` : DRIVE_SCOPES,
+        callback: () => {},
+        error_callback: () => {},
+      });
+      pendingToken = null;
+      pendingTokenPrompt = null;
+      cancelPendingToken = null;
+    } else return pendingToken;
+  }
   const generation = tokenGeneration;
-  pendingToken = new Promise((resolve, reject) => {
+  let promise;
+  promise = new Promise((resolve, reject) => {
     let settled = false;
-    const timer = setTimeout(() => fail(new AuthError('Google не завершил подключение.', 'auth_timeout')), 60000);
-    const fail = (error) => { settled = true; clearTimeout(timer); reject(error); };
+    const timer = setTimeout(() => fail(new AuthError('Google did not complete authorization.', 'auth_timeout')), 60000);
+    const fail = (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      reject(error);
+    };
+    cancelPendingToken = fail;
     tokenClient.callback = (response) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      if (generation !== tokenGeneration) { reject(new AuthError('Вход отменён.', 'cancelled')); return; }
+      if (generation !== tokenGeneration) { reject(new AuthError('Sign-in cancelled.', 'cancelled')); return; }
       if (response.error || !response.access_token) {
-        reject(new AuthError('Авторизация Google не завершена. Попробуйте войти еще раз.', response.error));
+        reject(new AuthError('Google authorization did not finish. Please try again.', response.error));
         return;
       }
       accessToken = response.access_token;
@@ -175,11 +200,24 @@ export function requestAccessToken({ prompt = 'consent' } = {}) {
       scheduleRenewal();
       resolve(accessToken);
     };
-    tokenClient.error_callback = (error) => fail(new AuthError('Окно авторизации было закрыто или вход отменен.', error?.type || 'popup_closed'));
-    try { tokenClient.requestAccessToken({ prompt, ...(sessionUser.emailAddress ? { login_hint: sessionUser.emailAddress } : {}) }); }
-    catch (error) { fail(error); }
-  }).finally(() => { pendingToken = null; });
-  return pendingToken;
+    tokenClient.error_callback = (error) => fail(new AuthError('The authorization window was closed or sign-in was cancelled.', error?.type || 'popup_closed'));
+    try {
+      // login_hint can bypass account selection even with select_account.
+      const options = { prompt };
+      if (prompt !== 'select_account' && sessionUser.emailAddress) options.login_hint = sessionUser.emailAddress;
+      tokenClient.requestAccessToken(options);
+    } catch (error) { fail(error); }
+  });
+  pendingToken = promise;
+  pendingTokenPrompt = prompt;
+  promise.finally(() => {
+    if (pendingToken === promise) {
+      pendingToken = null;
+      pendingTokenPrompt = null;
+      cancelPendingToken = null;
+    }
+  }).catch(() => {});
+  return promise;
 }
 
 export function getAccessToken() {
