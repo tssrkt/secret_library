@@ -429,7 +429,11 @@ async function afterAuthorization() {
     ui.setAuthorized(false);
     clearPersistedAuth({ forget: true });
     clearAccessToken();
-    throw new Error('Для входа на сайт необходимо приглашение.');
+    const socialState = social.getState();
+    const message = /Регистрация в Тайной Библиотеке возможна только по приглашению/i.test(socialState.message || '')
+      ? 'Для входа на сайт необходимо приглашение.'
+      : (socialState.message || 'Не удалось проверить право доступа. Повторите попытку позже.');
+    throw new Error(message);
   }
   ui.setAuthorized(true);
   void ui.setUserAvatar(user);
