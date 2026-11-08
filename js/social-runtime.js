@@ -1,5 +1,5 @@
 import { startFirebaseSession, endFirebaseSession } from './firebase-session.js';
-import { createSocialStore } from './social-store.js?v=20261108-registered-friends-list';
+import { createSocialStore } from './social-store.js?v=20261108-registered-sharing-relationship';
 import { createSharedLibraryStore } from './shared-library.js?v=20261106-root-discovery';
 import { discoverDriveFriends, grantRootFolderAccess, closeRootFolderAccess } from './drive-sharing.js?v=20261108-bounded-friend-discovery';
 import { findDriveCatalogFile, downloadDriveJsonFile, getCurrentDriveUser } from './drive.js';
@@ -423,6 +423,11 @@ export const social = {
     if (!rootFolderId) throw new Error('Не удалось определить корневую папку из опубликованного каталога Google Drive. Обновите библиотеку и повторите попытку.');
     if (registeredStatus?.registered === true && registeredStatus.registeredUid) {
       await grantRootFolderAccess(rootFolderId, normalizedEmail);
+      // Drive permission alone does not create the app's library relationship.
+      // Persist the active owner -> viewer relationship before reporting success.
+      if (!store) throw new Error('Library relationship unavailable. Please try again.');
+      await store.setSharing(String(registeredStatus.registeredUid), true, normalizedEmail);
+      registeredShareFriends = await store.loadFriends();
       closedAccessEmails.delete(normalizedEmail);
       const driveFriend = driveFriends.find((friend) => String(friend.email || '').trim().toLowerCase() === normalizedEmail
         || String(friend.uid || '') === String(registeredStatus.registeredUid));
@@ -585,7 +590,7 @@ export const social = {
     if (!invitationUser) throw new Error('Сначала войдите через Google, чтобы проверить приглашения.');
     return syncAcceptedInvitationStatuses(emails, generation);
   },
-  setSharing(uid, active) { if (!store || state.status !== 'ready') return Promise.reject(new Error(state.message)); return store.setSharing(uid, active); },
+  setSharing(uid, active, email = '') { if (!store || state.status !== 'ready') return Promise.reject(new Error(state.message)); return store.setSharing(uid, active, email); },
   markSeen(items) { markDriveNotificationsSeen(items); return Promise.resolve(); },
   syncKnownContacts() { return Promise.resolve(); },
   async publishLibrary(index, settings) {

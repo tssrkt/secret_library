@@ -12,7 +12,7 @@ export function createSocialStore({ db, sdk, user }) {
   const profileRef = ref('users', uid);
   const pendingRef = (address, owner) => ref('pendingInvites', address, 'shares', owner);
   const relationshipRef = (owner, viewer) => ref('libraryShares', shareId(owner, viewer));
-  const newShare = (ownerUid, viewerUid, ownerEmail = ownerUid === uid ? email : '') => ({ ownerUid, viewerUid, ...(ownerEmail ? { ownerEmail: normalizeEmail(ownerEmail) } : {}), active: true, sharedAt: serverTimestamp(), revokedAt: null });
+  const newShare = (ownerUid, viewerUid, ownerEmail = ownerUid === uid ? email : '', viewerEmail = '') => ({ ownerUid, viewerUid, ...(ownerEmail ? { ownerEmail: normalizeEmail(ownerEmail) } : {}), ...(viewerEmail ? { viewerEmail: normalizeEmail(viewerEmail) } : {}), active: true, sharedAt: serverTimestamp(), revokedAt: null });
   let disposed = false;
   const ensureCurrent = () => { if (disposed) throw new Error('Сеанс социальной части завершён.'); };
   async function forEachConcurrent(items, limit, callback) {
@@ -123,7 +123,7 @@ export function createSocialStore({ db, sdk, user }) {
     });
   }
 
-  async function setSharing(otherUid, active = true) {
+  async function setSharing(otherUid, active = true, otherEmail = '') {
     ensureCurrent();
     if (!otherUid || otherUid === uid) throw new Error('Нельзя поделиться библиотекой с самим собой.');
     return runTransaction(db, async (tx) => {
@@ -131,10 +131,13 @@ export function createSocialStore({ db, sdk, user }) {
       const existing = data(await tx.get(share));
       ensureCurrent();
       if (Boolean(existing?.active) === active) {
-        if (active && !existing.ownerEmail) { tx.update(share, { ownerEmail: email }); return true; }
+        if (active && (!existing.ownerEmail || (otherEmail && !existing.viewerEmail))) {
+          tx.update(share, { ...(!existing.ownerEmail ? { ownerEmail: email } : {}), ...(otherEmail && !existing.viewerEmail ? { viewerEmail: normalizeEmail(otherEmail) } : {}) });
+          return true;
+        }
         return false;
       }
-      if (active) tx.set(share, newShare(uid, otherUid));
+      if (active) tx.set(share, newShare(uid, otherUid, email, otherEmail));
       else tx.update(share, { active: false, revokedAt: serverTimestamp() });
       return true;
     });
@@ -186,7 +189,7 @@ export function createSocialStore({ db, sdk, user }) {
       const otherUid = share.ownerUid === uid ? share.viewerUid : share.ownerUid;
       if (!otherUid || otherUid === uid) continue;
       const row = rows.get(otherUid) || { uid: otherUid, inbound: false, outbound: false, email: '' };
-      if (share.ownerUid === uid) row.outbound = true;
+      if (share.ownerUid === uid) { row.outbound = true; row.email = normalizeEmail(share.viewerEmail) || row.email; }
       else {
         row.inbound = true;
         row.email = normalizeEmail(share.ownerEmail) || row.email;

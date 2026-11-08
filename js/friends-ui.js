@@ -1,5 +1,5 @@
 import { createPaginator, paginateItems } from './pagination.js';
-import { socialError } from './social-runtime.js?v=20261108-library-relations-friends';
+import { socialError } from './social-runtime.js?v=20261108-registered-sharing-relationship';
 
 const HOUR_MS = 60 * 60 * 1000;
 

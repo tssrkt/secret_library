@@ -85,7 +85,7 @@ test('share email migration processes records concurrently in bounded batches', 
 test('loadFriends builds registered friends from active one-way and mutual library shares', async () => {
   const uid = 'current-user';
   const shares = [
-    { ownerUid: uid, viewerUid: 'outgoing-friend', ownerEmail: 'current@example.com', active: true },
+    { ownerUid: uid, viewerUid: 'outgoing-friend', ownerEmail: 'current@example.com', viewerEmail: 'outgoing@example.com', active: true },
     { ownerUid: 'incoming-friend', viewerUid: uid, ownerEmail: 'incoming@example.com', active: true },
     { ownerUid: uid, viewerUid: 'revoked-friend', active: false },
     { ownerUid: 'incoming-friend', viewerUid: uid, ownerEmail: 'incoming@example.com', active: true },
@@ -97,7 +97,7 @@ test('loadFriends builds registered friends from active one-way and mutual libra
     where: (field, op, value) => ({ field, op, value }),
     query: (target, ...filters) => ({ ...target, filters }),
     getDocs: async (target) => {
-      if (target.path === 'users/current-user/knownContacts') return { docs: [{ id: 'outgoing-friend', data: () => ({ email: 'outgoing@example.com' }) }] };
+      if (target.path === 'users/current-user/knownContacts') return { docs: [] };
       const filter = target.filters?.[0];
       return { docs: shares.filter((share) => share[filter.field] === filter.value).map((share) => ({ data: () => share })) };
     },
