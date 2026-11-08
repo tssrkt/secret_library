@@ -23,7 +23,7 @@ import { checkpointKey, loadCheckpoint, saveCheckpoint, deleteCheckpoint, commit
 import { createLibraryTabs } from './library-tabs.js';
 import { createLibrarySelection } from './library-selection.js?v=20261107-stable-friend-loading';
 import { loadUserSettings, loadRootFolderPreference, loadRootFolderResourceKey, saveRootFolderPreference } from './user-settings.js';
-import { chooseRootFolder } from './root-folder-picker.js?v=20261106-root-discovery';
+import { chooseRootFolder } from './root-folder-picker.js?v=20261108-root-folder-signout';
 import { firebaseConfigured } from './firebase-config.js';
 import { hasMinimumBooks, MINIMUM_LIBRARY_BOOKS } from './library-access.js';
 
@@ -166,10 +166,10 @@ async function ensureMinimumBookAccess(index) {
   const reason = 'В вашей папке всего ' + count + ' книг, а нужно не менее ' + MINIMUM_LIBRARY_BOOKS + '!';
   ui.setStatus(reason + ' Выберите другую корневую папку.');
   while (true) {
-    const folder = await chooseRootFolder({ listChildren: listFolderChildren, getFolder, scanFolder: scanLibrary,
+    const folder = await chooseRootFolder({ listChildren: listFolderChildren, getFolder, scanFolder: scanLibrary, onExit: signOut,
       description: reason + ' Выберите корневую папку, где после сканирования найдётся не менее ' + MINIMUM_LIBRARY_BOOKS + ' книг. Учитываются книги во вложенных папках.' });
     if (!folder) {
-      ui.setStatus('Доступ к каталогу закрыт: нужно не менее ' + MINIMUM_LIBRARY_BOOKS + ' книг. Выберите подходящую корневую папку через личное меню.');
+      if (getAccessToken()) ui.setStatus('Доступ к каталогу закрыт: нужно не менее ' + MINIMUM_LIBRARY_BOOKS + ' книг. Выберите подходящую корневую папку через личное меню.');
       return false;
     }
     if (folder.id === activeRootFolderId) {
@@ -410,9 +410,9 @@ async function afterAuthorization() {
   if (!activeRootFolderId) {
     ui.setAuthorized(true);
     ui.setStatus('Выберите корневую папку вашей библиотеки.');
-    const folder = await chooseRootFolder({ listChildren: listFolderChildren, getFolder, scanFolder: scanLibrary });
+    const folder = await chooseRootFolder({ listChildren: listFolderChildren, getFolder, scanFolder: scanLibrary, onExit: signOut });
     if (!folder) {
-      ui.setStatus('Корневая папка не выбрана. Выберите её через личное меню.');
+      if (getAccessToken()) ui.setStatus('Корневая папка не выбрана. Выберите её через личное меню.');
       return;
     }
     await saveRootFolderPreference(folder.id, folder.resourceKey);
@@ -518,7 +518,7 @@ async function changeRootFolder() {
   if (!authorizedOwner || metadataController || libraryRefresher.running) return;
   ui.clearError();
   try {
-    const folder = await chooseRootFolder({ listChildren: listFolderChildren, getFolder, scanFolder: scanLibrary });
+    const folder = await chooseRootFolder({ listChildren: listFolderChildren, getFolder, scanFolder: scanLibrary, onExit: signOut });
     if (!folder || folder.id === activeRootFolderId) return;
     if (!window.confirm(`Сменить корневую папку на «${folder.name}»? Текущий каталог останется сохранён, а для новой папки будет создан отдельный индекс.`)) return;
     await saveRootFolderPreference(folder.id, folder.resourceKey);
