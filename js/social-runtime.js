@@ -221,7 +221,7 @@ export const social = {
       // Discover and open friend libraries directly with the Google Drive token.
       // This path runs independently of Firebase Authentication/Firestore.
       const driveUser = await getCurrentDriveUser();
-      if (current !== generation) return;
+      if (current !== generation) return false;
       emit({ driveUserEmail: String(driveUser?.email || driveUser?.emailAddress || '').trim().toLowerCase() });
       driveReader?.dispose();
       driveReader = createSharedLibraryStore({ user: { uid: '' } });
@@ -230,8 +230,8 @@ export const social = {
       emit({ friends: [], libraries: [], status: 'loading', message: 'Ищем библиотеки друзей в Google Drive…' });
       void refreshDriveFriends(driveUser, current, [], true);
       const session = await startFirebaseSession(token);
-      if (current !== generation) return;
-      if (!session) { settleConnectionReady(false); return; }
+      if (current !== generation) return false;
+      if (!session) { settleConnectionReady(false); return false; }
       // Keep invitation sending available as soon as Firebase Auth is ready. The
       // invitation API is independent of Firestore registration and subscriptions.
       invitationUser = session.user;
@@ -269,14 +269,10 @@ export const social = {
       }
       // Registration now updates the server-provisioned profile instead of relying on
       // Firestore pendingInvites as the invitation authority.
-      try {
-        await store.register();
-      } catch (error) {
-        if (!isQuotaExceeded(error)) throw error;
-        disableFirestoreAfterQuota(current);
-        return;
-      }
-      if (current !== generation) return;
+      // Registration is the invitation gate. Never fail open when Firestore is
+      // unavailable or over quota: without a successful check, access is denied.
+      await store.register();
+      if (current !== generation) return false;
       emit({ status: 'ready', message: '' });
       settleConnectionReady(true);
       stop = store.subscribe((snapshot) => {
@@ -309,11 +305,13 @@ export const social = {
           if (isQuotaExceeded(error)) { disableFirestoreAfterQuota(current); return; }
           emit({ status: 'error', message: socialError(error) });
         });
+      return true;
     } catch (error) {
       if (current === generation) {
         settleConnectionReady(false);
         emit({ status: 'error', message: socialError(error) });
       }
+      return false;
     }
   },
   disconnect() {
