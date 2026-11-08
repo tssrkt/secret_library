@@ -1384,21 +1384,21 @@ function fsQueryUsersSearchPage(pageSize, cursor, search) {
   })) : null };
 }
 
-function fsQueryGroupByField(collectionId, field, value, limit, nestedOnly) {
+function fsQueryGroupByField(collectionId, field, value, limit) {
   const structuredQuery = {
     from: [{ collectionId, allDescendants: true }],
     where: { fieldFilter: { field: { fieldPath: field }, op: 'EQUAL', value: { stringValue: String(value) } } },
     limit: Math.min(100, Number(limit) || 100)
   };
   const response = fsFetch(FIRESTORE_REST_ROOT.slice(0, -1) + ':runQuery', 'post', { structuredQuery });
-  return fsDecodeGroupByFieldResponse(response, nestedOnly);
+  return fsDecodeGroupByFieldResponse(response);
 }
 function fsQueryGroupByFieldMany(specs) {
   if (!Array.isArray(specs) || !specs.length) return [];
   if (specs.length === 1 || typeof UrlFetchApp.fetchAll !== 'function') {
     return specs.map(spec => spec.allDescendants === false
       ? fsQueryFilteredPage(spec.collectionId, spec.field, spec.value, spec.limit, '').items
-      : fsQueryGroupByField(spec.collectionId, spec.field, spec.value, spec.limit, spec.nestedOnly));
+      : fsQueryGroupByField(spec.collectionId, spec.field, spec.value, spec.limit));
   }
   const url = FIRESTORE_REST_ROOT.slice(0, -1) + ':runQuery';
   const requests = specs.map(spec => ({
@@ -1409,17 +1409,14 @@ function fsQueryGroupByFieldMany(specs) {
       limit: Math.min(100, Number(spec.limit) || 100)
     } })
   }));
-  return UrlFetchApp.fetchAll(requests).map((response, index) => fsDecodeGroupByFieldResponse({ code: response.getResponseCode(), text: response.getContentText() }, specs[index].nestedOnly));
+  return UrlFetchApp.fetchAll(requests).map(response => fsDecodeGroupByFieldResponse({ code: response.getResponseCode(), text: response.getContentText() }));
 }
-function fsDecodeGroupByFieldResponse(response, nestedOnly) {
+function fsDecodeGroupByFieldResponse(response) {
   if (response.code !== 200) throw new Error('Не удалось загрузить историю участника.');
-  return JSON.parse(response.text).filter(row => row && row.document)
-    .filter(row => !nestedOnly || row.document.name.includes('/pendingInvites/'))
-    .map(row => ({
-      ...fsDecodeFields(row.document.fields || {}),
-      id: row.document.name.split('/').pop(),
-      ...(nestedOnly ? { email: decodeURIComponent(row.document.name.split('/documents/pendingInvites/')[1].split('/shares/')[0]) } : {})
-    }));
+  return JSON.parse(response.text).filter(row => row && row.document).map(row => ({
+    ...fsDecodeFields(row.document.fields || {}),
+    id: row.document.name.split('/').pop()
+  }));
 }
 function getInvitationEmailTemplate() {
   const saved = fsGet('systemSettings/invitationEmail');
@@ -1623,7 +1620,7 @@ function fsGetManyAndQueryGroupByFieldMany(paths, specs) {
     return { ...fsDecodeFields(document.fields || {}), id: document.name.split('/').pop() };
   });
   const groups = responses.slice(safePaths.length).map((response, index) =>
-    fsDecodeGroupByFieldResponse({ code: response.getResponseCode(), text: response.getContentText() }, safeSpecs[index].nestedOnly));
+    fsDecodeGroupByFieldResponse({ code: response.getResponseCode(), text: response.getContentText() }));
   return { records, groups };
 }
 function fsGetMany(paths) {
