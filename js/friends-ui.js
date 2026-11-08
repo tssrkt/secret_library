@@ -389,7 +389,7 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
             const result = await social.closeFriendAccess(email);
             friendsAccessMessage.textContent = result.revoked
               ? `Доступ к корневой папке для ${email} закрыт в Google Drive.`
-              : `У ${email} не найдено прямого разрешения на корневую папку.`;
+              : '';
           } else {
             const result = await social.shareBackWithEmail(email, friend.uid);
             friendsAccessMessage.textContent = typeof result === 'string' ? result : `Доступ к библиотеке предоставлен для ${email}.`;
