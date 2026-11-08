@@ -359,6 +359,13 @@ export const social = {
     const normalizedEmail = String(email || '').trim().toLowerCase();
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) throw new Error('Укажите корректный адрес электронной почты.');
     if (normalizedEmail === String(invitationUser.email || '').trim().toLowerCase()) throw new Error('Нельзя пригласить собственный адрес.');
+    // Registration lookup is the first operation after validating the email.
+    // Never resolve Drive access, reserve quota, write an invitation, or send mail
+    // until the server has confirmed that this address is not already a participant.
+    const idToken = await invitationUser.getIdToken();
+    const knownStatuses = await fetchInvitationStatuses({ emails: [normalizedEmail], idToken });
+    const registeredStatus = knownStatuses && knownStatuses[normalizedEmail];
+
     let rootFolderId = configuredRootFolderId || state.ownRootFolderId || '';
     // The selected root is already represented by the published Drive catalog.
     // Recover it from Drive if the in-memory setting has not caught up yet.
@@ -373,13 +380,6 @@ export const social = {
       }
     }
     if (!rootFolderId) throw new Error('Не удалось определить корневую папку из опубликованного каталога Google Drive. Обновите библиотеку и повторите попытку.');
-
-    // Check the canonical user directory before sending any email or creating an
-    // invitation. Existing participants are added as friends and receive Drive
-    // access directly; they never enter the sent-invitations ledger.
-    const idToken = await invitationUser.getIdToken();
-    const knownStatuses = await fetchInvitationStatuses({ emails: [normalizedEmail], idToken });
-    const registeredStatus = knownStatuses && knownStatuses[normalizedEmail];
     if (registeredStatus?.registered === true && registeredStatus.registeredUid) {
       await grantRootFolderAccess(rootFolderId, normalizedEmail);
       closedAccessEmails.delete(normalizedEmail);
@@ -491,8 +491,17 @@ export const social = {
   },
   async resendInvitation(email) {
     if (!invitationUser) throw new Error('Сначала войдите через Google, чтобы отправлять приглашения.');
+    const normalizedEmail = String(email || '').trim().toLowerCase();
+    if (!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(normalizedEmail)) throw new Error('Укажите корректный адрес электронной почты.');
     const idToken = await invitationUser.getIdToken();
-    return sendInvitationEmail({ email, idToken });
+    const knownStatuses = await fetchInvitationStatuses({ emails: [normalizedEmail], idToken });
+    const registeredStatus = knownStatuses && knownStatuses[normalizedEmail];
+    if (registeredStatus?.registered === true && registeredStatus.registeredUid) {
+      // A stale row may still expose the resend action. Route it through the same
+      // registered-user flow; never send another invitation email to a member.
+      return social.shareWithEmail(normalizedEmail);
+    }
+    return sendInvitationEmail({ email: normalizedEmail, idToken });
   },
   async cancelInvitation(email) {
     if (!invitationUser) throw new Error('Сначала войдите через Google, чтобы отменять приглашения.');

@@ -1,5 +1,5 @@
 import { createPaginator, paginateItems } from './pagination.js';
-import { socialError } from './social-runtime.js?v=20261108-check-stale-invitees';
+import { socialError } from './social-runtime.js?v=20261108-registered-check-order';
 
 const HOUR_MS = 60 * 60 * 1000;
 
