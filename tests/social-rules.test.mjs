@@ -250,9 +250,10 @@ test('registered recipients are not claimed through legacy Firestore invitation 
 test('shares are directional, duplicate clicks are idempotent and revoke never changes reverse access', async () => {
   const a = client('a'); const b = client('b'); const c = client('c');
   await register(a); await register(b); await register(c);
-  await a.store.setSharing('b', true);
+  await a.store.setSharing('b', true, b.user.email);
   const initial = await get(a.db, 'libraryShares/a__b');
   assert.equal(initial.active, true); assert.equal(initial.ownerEmail, 'a@gmail.com');
+  assert.equal(initial.viewerEmail, 'b@gmail.com');
   assert.equal(await get(a.db, 'libraryShares/b__a'), null);
   await a.store.setSharing('b', true);
   assert.deepEqual((await get(a.db, 'libraryShares/a__b')).sharedAt, initial.sharedAt);

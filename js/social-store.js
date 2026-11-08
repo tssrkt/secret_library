@@ -131,8 +131,8 @@ export function createSocialStore({ db, sdk, user }) {
       const existing = data(await tx.get(share));
       ensureCurrent();
       if (Boolean(existing?.active) === active) {
-        if (active && (!existing.ownerEmail || (otherEmail && !existing.viewerEmail))) {
-          tx.update(share, { ...(!existing.ownerEmail ? { ownerEmail: email } : {}), ...(otherEmail && !existing.viewerEmail ? { viewerEmail: normalizeEmail(otherEmail) } : {}) });
+        if (active && !existing.ownerEmail) {
+          tx.update(share, { ownerEmail: email });
           return true;
         }
         return false;
