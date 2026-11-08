@@ -175,7 +175,7 @@ export function requestAccessToken({ prompt = 'consent' } = {}) {
       scheduleRenewal();
       resolve(accessToken);
     };
-    tokenClient.error_callback = (error) => fail(new AuthError('Окно авторизации было закрыто или вход отменен.', error?.type || 'popup_closed'));
+    tokenClient.error_callback = (error) => fail(new AuthError('Для входа на сайт необходимо приглашение.', error?.type || 'popup_closed'));
     try { tokenClient.requestAccessToken({ prompt, ...(sessionUser.emailAddress ? { login_hint: sessionUser.emailAddress } : {}) }); }
     catch (error) { fail(error); }
   }).finally(() => { pendingToken = null; });
