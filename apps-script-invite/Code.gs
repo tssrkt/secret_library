@@ -66,6 +66,12 @@ function doPost(e) {
       deactivateBlockedInvitation(email, user.localId);
       throw new Error('Данный емейл заблокирован');
     }
+    // A registered participant must never receive an invitation email or create a pending invite.
+    stage = 'check-registered-recipient';
+    const recipientDirectory = fsGet('userDirectory/' + encodeURIComponent(email));
+    if (recipientDirectory && isValidUid(String(recipientDirectory.uid || ''))) {
+      throw new Error('Этот пользователь уже зарегистрирован в Тайной Библиотеке. Приглашение не отправлено. Обновите список друзей.');
+    }
     stage = 'check-unique-invitation-limit';
     const invitationCount = enforceUniqueInvitationLimit(user.localId, email, invitation);
     stage = 'reserve-send';
@@ -654,9 +660,12 @@ function handleInvitationStatuses(input) {
     const current = JSON.parse(properties.getProperty(reservationKey(user.localId, email)) || 'null');
     const invitation = readOwnerInvitationRecord(user.localId, email);
     const lastSentAt = current ? (current.status === 'sent' ? Number(current.at) || 0 : Number(current.lastSentAt) || 0) : 0;
-    if (current || invitation) {
-      const directory = fsGet('userDirectory/' + encodeURIComponent(email));
-      const registeredUid = directory && isValidUid(String(directory.uid || '')) ? String(directory.uid) : '';
+    // Always check the canonical email directory, even when the address only
+    // exists in the browser's older Drive invitation ledger and has no server
+    // invitation record. Registered users must never be treated as invitees.
+    const directory = fsGet('userDirectory/' + encodeURIComponent(email));
+    const registeredUid = directory && isValidUid(String(directory.uid || '')) ? String(directory.uid) : '';
+    if (current || invitation || registeredUid) {
       const profile = registeredUid ? fsGet('users/' + encodeURIComponent(registeredUid)) : null;
       statuses[email] = { lastSentAt: lastSentAt, cooldownUntil: lastSentAt ? lastSentAt + RESEND_COOLDOWN_MS : 0,
         invitationStatus: invitation?.status || '', createdAt: Number(invitation?.createdAt) || 0,

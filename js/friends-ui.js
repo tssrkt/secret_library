@@ -1,5 +1,5 @@
 import { createPaginator, paginateItems } from './pagination.js';
-import { socialError } from './social-runtime.js?v=20261108-registered-inviters';
+import { socialError } from './social-runtime.js?v=20261108-check-stale-invitees';
 
 const HOUR_MS = 60 * 60 * 1000;
 
@@ -230,10 +230,14 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
     if (typeof social.getInvitationStatuses !== 'function') return;
     const revision = ++statusRefreshRevision;
     try {
-      // Always ask for the full server-owned registry in one request. The empty
-      // email list is also the canonical path for invitation quota metadata, so
-      // quota display must not depend on whether local invitation rows exist.
-      const next = await social.getInvitationStatuses([]);
+      // Check every address currently shown in the local/Drive invitation ledger.
+      // The server also returns quota metadata for non-empty lists, and must resolve
+      // registered users even when an old ledger row has no server invitation record.
+      const emails = [...new Set([
+        ...(snapshot.invitations || []).map((invite) => String(invite.inviteeEmail || '').trim().toLowerCase()),
+        ...extraEmails.map((email) => String(email || '').trim().toLowerCase()),
+      ].filter(Boolean))];
+      const next = await social.getInvitationStatuses(emails);
       if (closed || revision !== statusRefreshRevision) return;
       invitationStatuses = next;
       invitationStatusesLoaded = true;

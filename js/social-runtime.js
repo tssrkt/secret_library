@@ -144,13 +144,18 @@ async function syncAcceptedInvitationStatuses(emails, currentGeneration = genera
     if (!email) continue;
     if (status?.invitationStatus === 'pending') serverPendingRows.push({ inviteeEmail: email, ownerUid: invitationUser.uid, active: true, createdAt: Number(status.createdAt) || Date.now(), emailSentAt: Number(status.lastSentAt) || 0, source: 'apps-script' });
     if (status?.registered === true && status.registeredUid) {
-      // Legacy reciprocal-sharing records may list an existing inviter as an
-      // invitee. Resolve that registered participant from the server directory
-      // and surface them as a friend instead of keeping a stale invitation row.
+      // Resolve an existing account from the canonical server directory. Keep
+      // Drive access directions grounded in actual Drive discovery; registration
+      // alone does not mean that the other person shares their library with us.
+      const driveFriend = driveFriends.find((friend) => String(friend.email || '').trim().toLowerCase() === email
+        || String(friend.uid || '') === String(status.registeredUid));
+      const existingIndex = acceptedInviteFriends.findIndex((friend) => String(friend.email || '').trim().toLowerCase() === email);
+      const previous = existingIndex >= 0 ? acceptedInviteFriends[existingIndex] : {};
       const registered = { uid: String(status.registeredUid), email,
-        displayName: String(status.registeredDisplayName || email), inbound: true, outbound: false };
-      const index = acceptedInviteFriends.findIndex((friend) => String(friend.email || '').trim().toLowerCase() === email);
-      if (index >= 0) acceptedInviteFriends[index] = { ...acceptedInviteFriends[index], ...registered };
+        displayName: String(status.registeredDisplayName || driveFriend?.displayName || email),
+        inbound: driveFriend?.inbound === true || previous.inbound === true,
+        outbound: driveFriend?.outbound === true || previous.outbound === true };
+      if (existingIndex >= 0) acceptedInviteFriends[existingIndex] = { ...previous, ...registered };
       else acceptedInviteFriends.push(registered);
       acceptedEmails.push(email);
       continue;
@@ -265,8 +270,10 @@ export const social = {
       }
       // Apps Script is the source of truth. Always request the full owner registry, not only emails found in the secondary Drive ledger, so invitations missing from that cache are restored. Reconstruct the invitation list and accepted
       // friends even when the secondary Drive appData ledger is unavailable.
-      try { await syncAcceptedInvitationStatuses([], current); }
-      catch (error) { console.warn('Could not refresh invitation acceptance statuses:', error); }
+      try {
+        await syncAcceptedInvitationStatuses([], current);
+        if (knownInvitationEmails.length) await syncAcceptedInvitationStatuses(knownInvitationEmails, current);
+      } catch (error) { console.warn('Could not refresh invitation acceptance statuses:', error); }
       // Accept the server-verified invitation before client registration. Apps Script
       // creates the profile, email directory entry and owner->reader relationship using
       // the verified token; the browser cannot forge an invitation to bypass the gate.
@@ -367,9 +374,37 @@ export const social = {
     }
     if (!rootFolderId) throw new Error('Не удалось определить корневую папку из опубликованного каталога Google Drive. Обновите библиотеку и повторите попытку.');
 
+    // Check the canonical user directory before sending any email or creating an
+    // invitation. Existing participants are added as friends and receive Drive
+    // access directly; they never enter the sent-invitations ledger.
+    const idToken = await invitationUser.getIdToken();
+    const knownStatuses = await fetchInvitationStatuses({ emails: [normalizedEmail], idToken });
+    const registeredStatus = knownStatuses && knownStatuses[normalizedEmail];
+    if (registeredStatus?.registered === true && registeredStatus.registeredUid) {
+      await grantRootFolderAccess(rootFolderId, normalizedEmail);
+      closedAccessEmails.delete(normalizedEmail);
+      const driveFriend = driveFriends.find((friend) => String(friend.email || '').trim().toLowerCase() === normalizedEmail
+        || String(friend.uid || '') === String(registeredStatus.registeredUid));
+      const index = acceptedInviteFriends.findIndex((friend) => String(friend.email || '').trim().toLowerCase() === normalizedEmail);
+      const existing = index >= 0 ? acceptedInviteFriends[index] : {};
+      const registeredFriend = {
+        uid: String(registeredStatus.registeredUid), email: normalizedEmail,
+        displayName: String(registeredStatus.registeredDisplayName || driveFriend?.displayName || existing.displayName || normalizedEmail),
+        inbound: driveFriend?.inbound === true || existing.inbound === true,
+        outbound: true,
+      };
+      if (index >= 0) acceptedInviteFriends[index] = { ...existing, ...registeredFriend };
+      else acceptedInviteFriends.push(registeredFriend);
+      emit({ friends: combineFriendRows(),
+        invitations: mergeInvitationRows(state.invitations, ledgerInvitationRowsCache, [normalizedEmail]),
+        notifications: buildDriveNotifications(driveFriends), ownRootFolderId: rootFolderId });
+      watchCatalogs(driveFriends);
+      void refreshDriveFriends(invitationUser, generation, driveFriends);
+      return `Участник ${registeredFriend.displayName} уже зарегистрирован. Доступ к библиотеке предоставлен; приглашение не отправлялось.`;
+    }
+
     // Validate and send through the server-owned registry before granting Drive access.
     // This prevents rejected/over-limit invitations from receiving the root folder.
-    const idToken = await invitationUser.getIdToken();
     const result = await sendInvitationEmail({ email: normalizedEmail, idToken });
     try {
       await grantRootFolderAccess(rootFolderId, normalizedEmail);

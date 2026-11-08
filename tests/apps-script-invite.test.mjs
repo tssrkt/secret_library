@@ -7,7 +7,7 @@ import { createHash } from 'node:crypto';
 const source = await readFile(new URL('../apps-script-invite/Code.gs', import.meta.url), 'utf8');
 const adminClientSource = await readFile(new URL('../js/admin.js', import.meta.url), 'utf8');
 
-function harness({ authUser, pendingFields, pendingStatus = 200, profileStatus = 200, blockedEmailUid = null, blockedEmail = false, blockedEmailByField = false, blockOnSecondCheck = false } = {}) {
+function harness({ authUser, pendingFields, pendingStatus = 200, profileStatus = 200, blockedEmailUid = null, registeredEmailUid = null, blockedEmail = false, blockedEmailByField = false, blockOnSecondCheck = false } = {}) {
   const properties = new Map();
   const cacheEntries = new Map();
   const sent = [];
@@ -85,7 +85,7 @@ function harness({ authUser, pendingFields, pendingStatus = 200, profileStatus =
   vm.runInContext(source, context);
   context.realFsGet = context.fsGet;
   context.fsGet = (path) => {
-    if (blockedEmailUid && path === 'userDirectory/friend%40gmail.com') return { id: 'friend%40gmail.com', uid: blockedEmailUid };
+    if ((blockedEmailUid || registeredEmailUid) && path === 'userDirectory/friend%40gmail.com') return { id: 'friend%40gmail.com', uid: blockedEmailUid || registeredEmailUid };
     if (blockedEmail && path === 'bannedUsers/blocked-uid') return { id: 'blocked-uid', uid: 'blocked-uid' };
     if ((blockedEmail || blockOnSecondCheck) && path === 'pendingInvites/friend%40gmail.com/shares/owner-uid') return { ownerUid: 'owner-uid', active: true, claimedUid: null };
     return null;
@@ -150,6 +150,12 @@ test('invitation status checks use Script Properties and skip the owner email', 
   assert.equal(app.calls.filter(call => call.url.includes('/pendingInvites/')).length, before);
   assert.match(result.content, /"friend@gmail.com":\{"lastSentAt":\d+,"cooldownUntil":\d+,"invitationStatus":"pending"/);
   assert.doesNotMatch(result.content, /owner@gmail.com/);
+});
+
+test('invitation statuses resolve registered recipients even without a server invitation record', () => {
+  const app = harness({ registeredEmailUid: 'existing-user-uid' });
+  const result = app.invoke({ action: 'getInvitationStatuses', emails: ['friend@gmail.com'] });
+  assert.match(result.content, /"friend@gmail.com":\{"lastSentAt":\d+,"cooldownUntil":\d+,"invitationStatus":"","createdAt":0,"registered":true,"registeredUid":"existing-user-uid"/);
 });
 
 test('invitation status metadata includes active administrator UIDs and excludes inactive admins', () => {
@@ -898,17 +904,13 @@ test('legacy pendingInvites records do not control the server-owned invitation r
   assert.equal(app.calls.filter(call => call.url.includes('/pendingInvites/')).length, 0);
 });
 
-test('invitation delivery does not reveal whether the recipient email is registered', () => {
-  const registered = harness();
-  const unregistered = harness();
-  const registeredResult = registered.invoke();
-  const unregisteredResult = unregistered.invoke();
-  assert.equal(registered.sent.length, 1);
-  assert.equal(unregistered.sent.length, 1);
-  assert.equal(registeredResult.content, unregisteredResult.content);
-  assert(!registered.calls.some((call) => call.url.includes('/userDirectory/')));
-  assert(!unregistered.calls.some((call) => call.url.includes('/userDirectory/')));
-  assert.match(registered.sent[0].body, /Если вы уже участвуете в Тайной Библиотеке/);
+test('registered recipient is not emailed and no invitation reservation is created', () => {
+  const registered = harness({ registeredEmailUid: 'existing-user-uid' });
+  const result = registered.invoke();
+  assert.equal(registered.sent.length, 0, 'registered users must never receive invitation emails');
+  assert.match(result.content, /"ok":false/);
+  assert.equal([...registered.properties.keys()].some((key) => key.startsWith('invite:')), false);
+  assert.equal([...registered.properties.keys()].some((key) => key.startsWith('invite_accept_')), false);
 });
 
 test('does not send if the owner profile cannot be read under Firestore rules', () => {

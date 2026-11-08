@@ -63,6 +63,24 @@ export async function runSocialUiTests(test, assert, equal) {
     } finally { cleanup(); page.remove(); }
   });
 
+  await test('registered users in stale invitation ledgers are checked and hidden from sent invitations', async () => {
+    const page = document.createElement('div'); document.body.append(page);
+    const email = 'green.tara.tibet@gmail.com';
+    const social = stub({ invitations: [{ inviteeEmail: email, active: true, createdAt: Date.now() - 1000 }] });
+    let checkedEmails = [];
+    social.getInvitationStatuses = async (emails) => {
+      checkedEmails = emails;
+      return { [email]: { registered: true, registeredUid: 'registered-uid', registeredDisplayName: 'Tara Green' }, __quota: { isAdmin: false, limit: 20, adminUids: [] } };
+    };
+    const cleanup = mountFriends(page, social, () => {});
+    try {
+      await tick(); await tick();
+      assert(checkedEmails.includes(email), 'every stale ledger address is checked against the server directory');
+      assert(page.querySelector('.sent-invitations-section').hidden, 'registered user is not shown as a pending invitation');
+      assert(!page.querySelector('.friends-count').textContent.includes('отправлено еще'), 'registered user does not count against invitation quota');
+    } finally { cleanup(); page.remove(); }
+  });
+
   await test('shows the sending status directly below the email field while the request is pending', async () => {
     const page = document.createElement('div'); document.body.append(page);
     const social = stub({ invitations: [] });

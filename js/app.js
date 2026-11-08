@@ -17,7 +17,7 @@ import {
 import { prepareIndexingRun, createRetryEligibilityCheck } from './indexing-run.js';
 import * as ui from './ui.js?v=20261108-reciprocal-share-only';
 import { errorDetails, recordIndexingError } from './indexing-errors.js';
-import { social, socialError } from './social-runtime.js?v=20261108-registered-inviters';
+import { social, socialError } from './social-runtime.js?v=20261108-check-stale-invitees';
 import { getAccessToken } from './auth.js?v=20261108-account-picker';
 import { checkpointKey, loadCheckpoint, saveCheckpoint, deleteCheckpoint, commitCheckpoint } from './indexing-checkpoint.js';
 import { createLibraryTabs } from './library-tabs.js';
