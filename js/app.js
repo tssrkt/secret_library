@@ -17,7 +17,7 @@ import {
 import { prepareIndexingRun, createRetryEligibilityCheck } from './indexing-run.js';
 import * as ui from './ui.js?v=20261107-no-stale-invitation-count';
 import { errorDetails, recordIndexingError } from './indexing-errors.js';
-import { social, socialError } from './social-runtime.js?v=20261108-database-quota-notice';
+import { social, socialError } from './social-runtime.js?v=20261108-authz-server-check';
 import { getAccessToken } from './auth.js';
 import { checkpointKey, loadCheckpoint, saveCheckpoint, deleteCheckpoint, commitCheckpoint } from './indexing-checkpoint.js';
 import { createLibraryTabs } from './library-tabs.js';
@@ -427,13 +427,21 @@ async function afterAuthorization() {
   const invitationToken = new URLSearchParams(window.location.search).get('invite') || '';
   const registered = await social.connect(getAccessToken(), activeRootFolderId, invitationToken);
   if (!registered) {
+    // A rejected sign-in must also clear any catalog left over from a previous session.
     libraryAccessGranted = false;
     tabsRoot.hidden = true;
     selection.reset();
+    currentIndex = null;
+    buildingIndex = null;
+    buildingIndexFileId = null;
+    indexFileId = null;
+    authorizedOwner = null;
+    const socialState = social.getState();
+    social.disconnect();
+    ui.resetUi();
     ui.setAuthorized(false);
     clearPersistedAuth({ forget: true });
     clearAccessToken();
-    const socialState = social.getState();
     const message = /Регистрация в Тайной Библиотеке возможна только по приглашению/i.test(socialState.message || '')
       ? 'Для входа на сайт необходимо приглашение.'
       : (socialState.message || 'Не удалось проверить право доступа. Повторите попытку позже.');
