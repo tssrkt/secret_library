@@ -30,11 +30,16 @@ export function createSocialStore({ db, sdk, user }) {
       const directory = ref('userDirectory', email);
       const existing = data(await tx.get(directory));
       const first = (!own && uid !== founderUid) ? data(await tx.get(ref('pendingInvites', email))) : null;
+      const inviterUid = uid === founderUid ? '' : (own ? own.invitedByUid : first?.firstOwnerUid);
+      const inviterProfile = typeof inviterUid === 'string' && inviterUid
+        ? data(await tx.get(ref('users', inviterUid))) : null;
       createdNewProfile = !own;
       ensureCurrent();
       if (existing && existing.uid !== uid) throw new Error('Этот адрес уже связан с другим пользователем.');
-      if (!own && uid !== founderUid && typeof first?.firstOwnerUid !== 'string') {
-        throw new Error('Регистрация в Тайной Библиотеке возможна только по приглашению. Попросите участника клуба прислать вам приглашение.');
+      if (uid !== founderUid && (typeof inviterUid !== 'string' || !inviterUid || !inviterProfile)) {
+        throw new Error(own
+          ? 'Не удалось подтвердить пригласителя вашей учётной записи. Доступ к библиотеке закрыт.'
+          : 'Регистрация в Тайной Библиотеке возможна только по приглашению. Попросите участника клуба прислать вам приглашение.');
       }
       const safe = { displayName: (user.displayName || 'Пользователь').slice(0, 160), photoURL: (user.photoURL || '').slice(0, 2048) };
       if (!own) tx.set(profileRef, { ...safe, createdAt: serverTimestamp(), invitedByUid: uid === founderUid ? null : first.firstOwnerUid });
