@@ -25,7 +25,7 @@ export function createNotificationsController({ button, panel, avatarButton, clo
         action.addEventListener('click', async () => {
           if (busy.has(item.ownerUid) || !item.email) return;
           busy.add(item.ownerUid); action.disabled = true; message.textContent = '';
-          try { await social.shareWithEmail(item.email); }
+          try { await social.shareBackWithEmail(item.email, item.ownerUid); }
           catch (error) { message.textContent = error?.message || 'Не удалось предоставить доступ к библиотеке.'; }
           finally { busy.delete(item.ownerUid); render(); }
         }); row.append(action);

@@ -387,6 +387,38 @@ export const social = {
     void refreshDriveFriends(invitationUser, generation, driveFriends);
     return result;
   },
+  // Reciprocal sharing is for an existing participant who has already shared
+  // their library with us. Grant Drive access only: never send or record an invite.
+  async shareBackWithEmail(email, ownerUid = '') {
+    if (!invitationUser) throw new Error('Сначала войдите через Google, чтобы открыть доступ к библиотеке.');
+    const normalizedEmail = String(email || '').trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) throw new Error('Не удалось определить email владельца библиотеки.');
+    if (normalizedEmail === String(invitationUser.email || '').trim().toLowerCase()) throw new Error('Нельзя открыть доступ самому себе.');
+    let rootFolderId = configuredRootFolderId || state.ownRootFolderId || '';
+    if (!rootFolderId) {
+      const catalogFile = await findDriveCatalogFile(invitationUser.uid);
+      if (catalogFile) {
+        const catalog = await downloadDriveJsonFile(catalogFile.id);
+        if (catalog?.ownerUid === invitationUser.uid && typeof catalog.rootFolderId === 'string') {
+          rootFolderId = catalog.rootFolderId;
+          configuredRootFolderId = rootFolderId;
+        }
+      }
+    }
+    if (!rootFolderId) throw new Error('Не удалось определить корневую папку вашей библиотеки. Обновите библиотеку и повторите попытку.');
+    await grantRootFolderAccess(rootFolderId, normalizedEmail);
+    closedAccessEmails.delete(normalizedEmail);
+    for (const friend of driveFriends) {
+      if ((ownerUid && String(friend.uid) === String(ownerUid))
+          || String(friend.email || '').trim().toLowerCase() === normalizedEmail) {
+        friend.outbound = true;
+      }
+    }
+    emit({ friends: combineFriendRows(), notifications: buildDriveNotifications(driveFriends), ownRootFolderId: rootFolderId });
+    watchCatalogs(driveFriends);
+    void refreshDriveFriends(invitationUser, generation, driveFriends);
+    return 'Доступ к вашей библиотеке предоставлен.';
+  },
   async closeFriendAccess(email) {
     // This action is intentionally Google Drive-only: no Firestore/store calls.
     let rootFolderId = configuredRootFolderId || state.ownRootFolderId || '';

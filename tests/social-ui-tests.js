@@ -10,7 +10,7 @@ export async function runSocialUiTests(test, assert, equal) {
     const listeners = new Set(); const calls = [];
     return { calls, subscribe(fn) { listeners.add(fn); fn(state); return () => listeners.delete(fn); },
       update(change) { state = { ...state, ...change }; listeners.forEach((fn) => fn(state)); },
-      async syncKnownContacts() { calls.push('syncKnownContacts'); }, async shareWithEmail(email) { calls.push(email); return 'Доступ предоставлен.'; },
+      async syncKnownContacts() { calls.push('syncKnownContacts'); }, async shareWithEmail(email) { calls.push(['shareWithEmail', email]); return 'Доступ предоставлен.'; }, async shareBackWithEmail(email, uid) { calls.push(['shareBackWithEmail', email, uid]); return 'Доступ предоставлен.'; },
       async resendInvitation(email) { calls.push(['resendInvitation', email]); return 'Приглашение отправлено.'; },
       async getInvitationStatuses(emails) { return Object.fromEntries(emails.map((email) => [email, { lastSentAt: 0, cooldownUntil: 0 }])); },
       async setSharing(uid, active) { calls.push([uid, active]); },
@@ -133,6 +133,20 @@ export async function runSocialUiTests(test, assert, equal) {
       assert(oldPage.querySelector('.sent-invitations-message').textContent === '', 'successful resend does not show a success message below the invitations table');
     } finally { cleanupOld(); oldPage.remove(); }
   });
+  await test('existing friends never appear in the sent invitations table even if a stale pending row remains', async () => {
+    const page = document.createElement('div'); document.body.append(page);
+    const social = stub({
+      friends: [{ uid: 'inviter', displayName: 'Inviter', email: 'inviter@gmail.com', inbound: true, outbound: false }],
+      invitations: [{ inviteeEmail: 'inviter@gmail.com', active: true, createdAt: Date.now() - 1000 }],
+    });
+    social.getInvitationStatuses = async () => ({ 'inviter@gmail.com': { invitationStatus: 'pending', lastSentAt: Date.now() - 1000 } });
+    const cleanup = mountFriends(page, social, () => {});
+    try {
+      await tick(); await tick();
+      assert(page.querySelector('.sent-invitations-section').hidden, 'an existing participant is never shown as a sent invitation');
+      assert(!page.querySelector('.friends-count').textContent.includes('отправлено еще'), 'stale invite does not consume the displayed invitation quota');
+    } finally { cleanup(); page.remove(); }
+  });
   await test('cancelled invitations are excluded from the friends summary', async () => {
     const page = document.createElement('div'); document.body.append(page);
     const social = stub({ friends: [{ uid: 'friend', displayName: 'Friend', email: 'friend@gmail.com' }], invitations: [{ inviteeEmail: 'cancelled@gmail.com', active: true }] });
@@ -233,7 +247,7 @@ export async function runSocialUiTests(test, assert, equal) {
       equal(button.querySelector('span').textContent, '1', 'remaining unloaded event stays unread');
       equal(panel.querySelectorAll('li').length, 50, 'dropdown limited to 50');
       const action = panel.querySelector('li button'); equal(action.textContent, 'ПОДЕЛИТЬСЯ В ОТВЕТ', 'exact reciprocal text');
-      action.click(); await tick(); equal(social.calls[1], 'user0@gmail.com', 'reverse direction granted through Google Drive email sharing');
+      action.click(); await tick(); equal(social.calls[1], ['shareBackWithEmail', 'user0@gmail.com', '0'], 'reciprocal sharing uses a dedicated Drive-only action, not invitation sending');
       assert(panel.querySelectorAll('li')[1].textContent.includes('Вы уже делитесь') && !panel.querySelectorAll('li')[1].querySelector('button'), 'mutual state is text');
       document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
       assert(panel.hidden && document.activeElement === button, 'Escape closes and restores button focus');

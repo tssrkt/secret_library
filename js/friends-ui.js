@@ -1,5 +1,5 @@
 import { createPaginator, paginateItems } from './pagination.js';
-import { socialError } from './social-runtime.js?v=20261108-bounded-friend-discovery';
+import { socialError } from './social-runtime.js?v=20261108-reciprocal-share-only';
 
 const HOUR_MS = 60 * 60 * 1000;
 
@@ -103,6 +103,9 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
       container.replaceChildren();
       return;
     }
+    const friendEmails = new Set((snapshot.friends || [])
+      .map((friend) => String(friend.email || '').trim().toLowerCase())
+      .filter(Boolean));
     const lastSentTime = (invite) => {
       const email = String(invite.inviteeEmail || '').trim().toLowerCase();
       return invitationStatuses[email] ? Number(invitationStatuses[email].lastSentAt) || 0 : timestampMillis(invite.emailSentAt || invite.createdAt);
@@ -111,7 +114,10 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
       .filter((invite) => {
         const email = String(invite.inviteeEmail || '').trim().toLowerCase();
         const status = invitationStatuses[email]?.invitationStatus;
-        return Boolean(email) && status !== 'revoked' && status !== 'accepted';
+        // A person whose library is already connected is an existing participant,
+        // not a pending invitee. Hide any stale invitation row created by the old
+        // reciprocal-sharing flow.
+        return Boolean(email) && !friendEmails.has(email) && status !== 'revoked' && status !== 'accepted';
       })
       .sort((a, b) => lastSentTime(b) - lastSentTime(a));
     if (!invitations.length) {
