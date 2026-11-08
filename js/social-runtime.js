@@ -1,5 +1,5 @@
 import { startFirebaseSession, endFirebaseSession } from './firebase-session.js';
-import { createSocialStore } from './social-store.js?v=20261108-finalize-invitees';
+import { createSocialStore } from './social-store.js?v=20261108-registered-friends-list';
 import { createSharedLibraryStore } from './shared-library.js?v=20261106-root-discovery';
 import { discoverDriveFriends, grantRootFolderAccess, closeRootFolderAccess } from './drive-sharing.js?v=20261108-bounded-friend-discovery';
 import { findDriveCatalogFile, downloadDriveJsonFile, getCurrentDriveUser } from './drive.js';
@@ -65,6 +65,7 @@ const acceptedLedgerSyncs = new Set();
 const knownContactsSyncs = new Map();
 const FRIEND_CACHE_PREFIX = 'secret-library-social-friends-v1:';
 let driveFriends = [];
+let registeredShareFriends = [];
 let acceptedInviteFriends = [];
 let ledgerInvitationRowsCache = [];
 let lastDriveFriendEmailSignature = '';
@@ -90,6 +91,22 @@ function combineFriendRows() {
   const friends = [...driveFriends];
   const byUid = new Map(friends.map((friend) => [friend.uid, friend]));
   const byEmail = new Map(friends.map((friend) => [String(friend.email || '').trim().toLowerCase(), friend]).filter(([email]) => email));
+  for (const registered of registeredShareFriends) {
+    const email = String(registered.email || '').trim().toLowerCase();
+    const existing = byUid.get(registered.uid) || (email ? byEmail.get(email) : null);
+    if (existing) {
+      existing.inbound ||= registered.inbound === true;
+      existing.outbound ||= registered.outbound === true;
+      if ((!existing.email || String(existing.email).startsWith('email:')) && email) existing.email = email;
+      if (registered.displayName && (!existing.displayName || existing.displayName === existing.email)) existing.displayName = registered.displayName;
+      continue;
+    }
+    const friend = { ...registered, email, inbound: registered.inbound === true,
+      outbound: registered.outbound === true && !closedAccessEmails.has(email), isAdmin: registered.isAdmin === true, catalogId: '' };
+    friends.push(friend);
+    byUid.set(friend.uid, friend);
+    if (email) byEmail.set(email, friend);
+  }
   for (const accepted of acceptedInviteFriends) {
     const email = String(accepted.email || '').trim().toLowerCase();
     const existing = byUid.get(accepted.uid) || byEmail.get(email);
@@ -217,7 +234,10 @@ async function refreshDriveFriends(user, currentGeneration = generation, knownFr
     // Folder discovery, catalog reads and library availability are Google Drive-only.
     // Friend tabs are discovered from Drive permissions and Drive catalogs; a prior
     // local snapshot is only a fallback if Drive unexpectedly returns no friends.
-    const result = await discoverDriveFriends(user, configuredRootFolderId, {}, combineFriendRows());
+    const result = await new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error('Поиск друзей в Google Drive не завершился за 25 секунд. Список зарегистрированных друзей загружен отдельно; повторите обновление, чтобы проверить доступ к библиотекам.')), 25000);
+      discoverDriveFriends(user, configuredRootFolderId, {}, combineFriendRows()).then(resolve, reject).finally(() => clearTimeout(timeout));
+    });
     if (currentGeneration !== generation) return;
     if (result.rootFolderId) configuredRootFolderId = result.rootFolderId;
     // If Drive's catalog search temporarily returns no records, retain the last
@@ -268,6 +288,7 @@ export const social = {
       driveReader?.dispose();
       driveReader = createSharedLibraryStore({ user: { uid: '' } });
       driveFriends = [];
+      registeredShareFriends = [];
       acceptedInviteFriends = [];
       emit({ friends: [], libraries: [], status: 'loading', message: 'Ищем библиотеки друзей в Google Drive…' });
       void refreshDriveFriends(driveUser, current, [], true);
@@ -303,6 +324,14 @@ export const social = {
       // Registration is the invitation gate. Never fail open when Firestore is
       // unavailable or over quota: without a successful check, access is denied.
       await retryTransientAuthOperation(() => store.register());
+      if (current !== generation) return false;
+      try {
+        registeredShareFriends = await store.loadFriends();
+        if (current === generation) emit({ friends: combineFriendRows() });
+      } catch (error) {
+        // Drive discovery remains a fallback, but a failed relationship query must be visible in diagnostics.
+        console.warn('Could not load registered friends and library-sharing relationships:', error);
+      }
       if (current !== generation) return false;
       // Registration verifies the invitation; Firestore rules independently protect private records.
       // Avoid an undeployed callable because deploying a new function requires the paid Blaze plan.
@@ -359,6 +388,7 @@ export const social = {
     shared?.dispose(); shared = null;
     driveReader?.dispose(); driveReader = null;
     driveFriends = [];
+    registeredShareFriends = [];
     acceptedInviteFriends = [];
     ledgerInvitationRowsCache = [];
     configuredRootFolderId = '';

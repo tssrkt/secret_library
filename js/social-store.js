@@ -172,11 +172,45 @@ export function createSocialStore({ db, sdk, user }) {
       if (!existing.exists()) tx.set(contact, { email: contactEmail });
     }));
   }
+  async function loadFriends() {
+    ensureCurrent();
+    const [outgoing, incoming, knownContacts] = await Promise.all([
+      getDocs(query(collection(db, 'libraryShares'), where('ownerUid', '==', uid))),
+      getDocs(query(collection(db, 'libraryShares'), where('viewerUid', '==', uid))),
+      getDocs(collection(db, 'users', uid, 'knownContacts')),
+    ]);
+    const rows = new Map();
+    for (const snapshot of [...outgoing.docs, ...incoming.docs]) {
+      const share = snapshot.data();
+      if (!share?.active) continue;
+      const otherUid = share.ownerUid === uid ? share.viewerUid : share.ownerUid;
+      if (!otherUid || otherUid === uid) continue;
+      const row = rows.get(otherUid) || { uid: otherUid, inbound: false, outbound: false, email: '' };
+      if (share.ownerUid === uid) row.outbound = true;
+      else {
+        row.inbound = true;
+        row.email = normalizeEmail(share.ownerEmail) || row.email;
+      }
+      rows.set(otherUid, row);
+    }
+    const contacts = new Map(knownContacts.docs.map((snapshot) => [snapshot.id, normalizeEmail(snapshot.data()?.email)]));
+    await Promise.all([...rows.values()].map(async (row) => {
+      ensureCurrent();
+      const profile = data(await getDoc(ref('users', row.uid)));
+      if (!profile) { rows.delete(row.uid); return; }
+      row.displayName = String(profile.displayName || row.email || 'Пользователь');
+      row.isAdmin = profile.isAdmin === true;
+      row.email = row.email || contacts.get(row.uid) || '';
+    }));
+    ensureCurrent();
+    return [...rows.values()].sort((a, b) => a.displayName.localeCompare(b.displayName, 'ru') || a.uid.localeCompare(b.uid));
+  }
+
   function subscribe(listener) {
     let stopped = false;
     if (!disposed) listener({ invitations: [], acceptedInvitations: [] });
     return () => { stopped = true; void stopped; };
   }
 
-  return { uid, register, shareWithEmail, setSharing, syncShareEmails, syncKnownContacts, subscribe, dispose() { disposed = true; } };
+  return { uid, register, loadFriends, shareWithEmail, setSharing, syncShareEmails, syncKnownContacts, subscribe, dispose() { disposed = true; } };
 }

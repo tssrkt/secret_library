@@ -288,7 +288,8 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
     }
   }
   const render = () => {
-    const discoveryPending = snapshot.driveDiscoveryStatus === 'loading' || snapshot.driveDiscoveryStatus === 'idle';
+    const hasKnownFriends = Array.isArray(snapshot.friends) && snapshot.friends.length > 0;
+    const discoveryPending = (snapshot.driveDiscoveryStatus === 'loading' || snapshot.driveDiscoveryStatus === 'idle') && !hasKnownFriends;
     const paged = paginateItems(discoveryPending ? [] : snapshot.friends, pageNumber, 50);
     pageNumber = paged.currentPage;
     const count = paged.totalItems;
