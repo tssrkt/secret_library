@@ -654,9 +654,15 @@ function handleInvitationStatuses(input) {
     const current = JSON.parse(properties.getProperty(reservationKey(user.localId, email)) || 'null');
     const invitation = readOwnerInvitationRecord(user.localId, email);
     const lastSentAt = current ? (current.status === 'sent' ? Number(current.at) || 0 : Number(current.lastSentAt) || 0) : 0;
-    if (current || invitation) statuses[email] = { lastSentAt: lastSentAt, cooldownUntil: lastSentAt ? lastSentAt + RESEND_COOLDOWN_MS : 0,
-      invitationStatus: invitation?.status || '', createdAt: Number(invitation?.createdAt) || 0,
-      ...(invitation?.status === 'accepted' ? { accepted: true, acceptedUid: invitation.acceptedUid, acceptedDisplayName: invitation.acceptedDisplayName, acceptedAt: invitation.acceptedAt } : {}) };
+    if (current || invitation) {
+      const directory = fsGet('userDirectory/' + encodeURIComponent(email));
+      const registeredUid = directory && isValidUid(String(directory.uid || '')) ? String(directory.uid) : '';
+      const profile = registeredUid ? fsGet('users/' + encodeURIComponent(registeredUid)) : null;
+      statuses[email] = { lastSentAt: lastSentAt, cooldownUntil: lastSentAt ? lastSentAt + RESEND_COOLDOWN_MS : 0,
+        invitationStatus: invitation?.status || '', createdAt: Number(invitation?.createdAt) || 0,
+        ...(registeredUid ? { registered: true, registeredUid, registeredDisplayName: String(profile?.displayName || email).slice(0, 160) } : {}),
+        ...(invitation?.status === 'accepted' ? { accepted: true, acceptedUid: invitation.acceptedUid, acceptedDisplayName: invitation.acceptedDisplayName, acceptedAt: invitation.acceptedAt } : {}) };
+    }
   });
   const admin = fsGet('adminUsers/' + user.localId);
   statuses.__quota = {

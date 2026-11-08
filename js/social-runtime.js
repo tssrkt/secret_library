@@ -75,10 +75,11 @@ function combineFriendRows() {
     const email = String(accepted.email || '').trim().toLowerCase();
     const existing = byUid.get(accepted.uid) || byEmail.get(email);
     if (existing) {
-      if (!closedAccessEmails.has(email)) existing.outbound = true;
+      if (accepted.outbound === true && !closedAccessEmails.has(email)) existing.outbound = true;
       continue;
     }
-    const friend = { uid: accepted.uid, email, displayName: accepted.displayName || email, inbound: false, outbound: !closedAccessEmails.has(email), isAdmin: false, catalogId: '' };
+    const friend = { uid: accepted.uid, email, displayName: accepted.displayName || email,
+      inbound: accepted.inbound === true, outbound: accepted.outbound === true && !closedAccessEmails.has(email), isAdmin: false, catalogId: '' };
     friends.push(friend);
     byUid.set(friend.uid, friend);
     if (email) byEmail.set(email, friend);
@@ -142,9 +143,21 @@ async function syncAcceptedInvitationStatuses(emails, currentGeneration = genera
     const email = String(rawEmail).trim().toLowerCase();
     if (!email) continue;
     if (status?.invitationStatus === 'pending') serverPendingRows.push({ inviteeEmail: email, ownerUid: invitationUser.uid, active: true, createdAt: Number(status.createdAt) || Date.now(), emailSentAt: Number(status.lastSentAt) || 0, source: 'apps-script' });
+    if (status?.registered === true && status.registeredUid) {
+      // Legacy reciprocal-sharing records may list an existing inviter as an
+      // invitee. Resolve that registered participant from the server directory
+      // and surface them as a friend instead of keeping a stale invitation row.
+      const registered = { uid: String(status.registeredUid), email,
+        displayName: String(status.registeredDisplayName || email), inbound: true, outbound: false };
+      const index = acceptedInviteFriends.findIndex((friend) => String(friend.email || '').trim().toLowerCase() === email);
+      if (index >= 0) acceptedInviteFriends[index] = { ...acceptedInviteFriends[index], ...registered };
+      else acceptedInviteFriends.push(registered);
+      acceptedEmails.push(email);
+      continue;
+    }
     if (status?.accepted !== true || !status.acceptedUid) continue;
     acceptedEmails.push(email);
-    const accepted = { uid: String(status.acceptedUid), email, displayName: String(status.acceptedDisplayName || email) };
+    const accepted = { uid: String(status.acceptedUid), email, displayName: String(status.acceptedDisplayName || email), inbound: true, outbound: true };
     const index = acceptedInviteFriends.findIndex((friend) => String(friend.email || "").trim().toLowerCase() === email);
     if (index >= 0) acceptedInviteFriends[index] = { ...acceptedInviteFriends[index], ...accepted };
     else acceptedInviteFriends.push(accepted);

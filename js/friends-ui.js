@@ -1,5 +1,5 @@
 import { createPaginator, paginateItems } from './pagination.js';
-import { socialError } from './social-runtime.js?v=20261108-reciprocal-share-only';
+import { socialError } from './social-runtime.js?v=20261108-registered-inviters';
 
 const HOUR_MS = 60 * 60 * 1000;
 
@@ -121,7 +121,10 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
         // A person whose library is already connected is an existing participant,
         // not a pending invitee. Hide any stale invitation row created by the old
         // reciprocal-sharing flow.
-        return Boolean(email) && !friendEmails.has(email) && status !== 'revoked' && status !== 'accepted';
+        // The server registry also checks userDirectory. An already-registered
+        // participant is a friend, never a pending invitation—even if an old
+        // reciprocal-sharing bug left a stale invitation record behind.
+        return Boolean(email) && !friendEmails.has(email) && !invitationStatuses[email]?.registered && status !== 'revoked' && status !== 'accepted';
       })
       .sort((a, b) => lastSentTime(b) - lastSentTime(a));
     if (!invitations.length) {
@@ -283,6 +286,7 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
       const pendingEmails = new Set((invitationStatusesLoaded ? snapshot.invitations || [] : [])
         .map((invite) => String(invite.inviteeEmail || '').trim().toLowerCase())
         .filter((email) => email && !friendEmails.has(email)
+          && !invitationStatuses[email]?.registered
           && invitationStatuses[email]?.invitationStatus !== 'accepted'
           && invitationStatuses[email]?.invitationStatus !== 'revoked'));
       let summary = `У вас ${count.toLocaleString('ru-RU')} ${plural(count, 'друг', 'друга', 'друзей')}`;
