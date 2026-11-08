@@ -76,6 +76,9 @@ async function publishLibrary(index, settings = null) {
 let publishingFor = null;
 const friendLibrariesStatus = document.querySelector('#friend-libraries-status');
 social.subscribe((state) => {
+  if (state.status === 'error' && /Регистрация в Тайной Библиотеке возможна только по приглашению/i.test(state.message || '')) {
+    ui.showError('Для входа на сайт необходимо приглашение.');
+  }
   if (friendLibrariesStatus) {
     const inboundCount = (state.friends || []).filter((friend) => friend.inbound).length;
     if (state.driveDiscoveryStatus === 'loading') {
