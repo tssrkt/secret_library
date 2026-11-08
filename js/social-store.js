@@ -66,7 +66,7 @@ export function createSocialStore({ db, sdk, user }) {
       const pending = await getDocs(collection(db, 'pendingInvites', email, 'shares'));
       await forEachConcurrent(pending.docs, 10, (snapshot) => claimInvitation(snapshot.ref));
     }
-    if (uid !== founderUid) {
+    if (uid !== founderUid && typeof user.getIdToken === 'function') {
       const idToken = await user.getIdToken();
       await finalizeInviteeRegistration({ idToken });
     }
