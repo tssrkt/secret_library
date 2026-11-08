@@ -6,6 +6,25 @@ import { findDriveCatalogFile, downloadDriveJsonFile, getCurrentDriveUser } from
 import { sendInvitationEmail, getInvitationStatuses as fetchInvitationStatuses, acceptInvitation as acceptInvitationToken, cancelInvitation as cancelInvitationToken } from './invitation-mailer.js?v=20261107-cancel-invitation-response';
 import { createInvitationLedger, acceptedInvitationFriends, invitationLedgerRows, mergeInvitationRows } from './invitation-ledger.js?v=20261107-ledger-server-discovery';
 
+const TRANSIENT_AUTH_CODES = new Set([
+  'unavailable', 'deadline-exceeded', 'internal', 'unknown',
+  'auth/network-request-failed', 'network-error',
+]);
+
+async function retryTransientAuthOperation(operation, attempts = 3) {
+  for (let attempt = 0; ; attempt++) {
+    try { return await operation(); }
+    catch (error) {
+      const code = String(error?.code || '').toLowerCase();
+      const message = String(error?.message || '').toLowerCase();
+      const transient = TRANSIENT_AUTH_CODES.has(code)
+        || /network request failed|service temporarily unavailable|internal error/.test(message);
+      if (!transient || attempt + 1 >= attempts) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 350 * (attempt + 1)));
+    }
+  }
+}
+
 export function socialError(error) {
   if (error?.code?.includes('permission-denied')) return 'Нет доступа к социальным данным. Проверьте настройки Firebase и повторите попытку.';
   if (error?.code?.includes('unavailable') || error?.code?.includes('network')) return 'Не удалось связаться с Firebase. Проверьте подключение и повторите попытку.';
@@ -252,7 +271,7 @@ export const social = {
       acceptedInviteFriends = [];
       emit({ friends: [], libraries: [], status: 'loading', message: 'Ищем библиотеки друзей в Google Drive…' });
       void refreshDriveFriends(driveUser, current, [], true);
-      const session = await startFirebaseSession(token);
+      const session = await retryTransientAuthOperation(() => startFirebaseSession(token));
       if (current !== generation) return false;
       if (!session) { settleConnectionReady(false); return false; }
       // Keep invitation sending available as soon as Firebase Auth is ready. The
@@ -294,7 +313,7 @@ export const social = {
       // Firestore pendingInvites as the invitation authority.
       // Registration is the invitation gate. Never fail open when Firestore is
       // unavailable or over quota: without a successful check, access is denied.
-      await store.register();
+      await retryTransientAuthOperation(() => store.register());
       if (current !== generation) return false;
       // Registration verifies the invitation; Firestore rules independently protect private records.
       // Avoid an undeployed callable because deploying a new function requires the paid Blaze plan.
