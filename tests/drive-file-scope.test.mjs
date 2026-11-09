@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { DRIVE_SCOPES, GOOGLE_CLOUD_PROJECT_NUMBER, GOOGLE_CLIENT_ID, GOOGLE_PICKER_API_KEY } from '../js/config.js';
 import { deleteDriveFile } from '../js/drive.js';
 import { AUTH_SESSION_KEY } from '../js/auth.js';
-import { assertDrivePickerSelection, authorizeDriveItem, configureDrivePickerView, DRIVE_ITEM_AUTHORIZATION_MARKER_PREFIX, forgetDriveItemAuthorization, rememberDriveItemAuthorization } from '../js/google-picker.js';
+import { assertDrivePickerSelection, authorizeDriveItem, configureDrivePickerView, DRIVE_ITEM_AUTHORIZATION_MARKER_PREFIX, forgetDriveItemAuthorization, readPickerResponse, rememberDriveItemAuthorization } from '../js/google-picker.js';
 
 test('ordinary Google Drive file deletion is blocked before any API request', async () => {
   await assert.rejects(deleteDriveFile('ordinary-book-id'), (error) => {
@@ -67,6 +67,81 @@ test('Picker rejects a selected object whose ID differs even if its name matches
     { id: 'expected-folder-id', name: 'Остальное' });
 });
 
+test('Picker response accepts documented response keys and normalizes action casing', () => {
+  const picker = { Response: { ACTION: 'action', DOCUMENTS: 'docs' }, Action: { PICKED: 'PICKED', CANCEL: 'CANCEL', ERROR: 'ERROR' } };
+  const selected = { id: 'folder-1', name: 'Books' };
+  assert.deepEqual(readPickerResponse({ action: 'picked', docs: [selected] }, picker), {
+    action: 'picked', docs: [selected], picked: true, cancelled: false, failed: false,
+  });
+  assert.equal(readPickerResponse({ action: 'CANCEL' }, picker).cancelled, true);
+  assert.equal(readPickerResponse({ action: 'error' }, picker).failed, true);
+});
+
+test('Picker response supports API-defined keys when they differ from shorthand names', () => {
+  const picker = { Response: { ACTION: 'responseAction', DOCUMENTS: 'responseDocs' }, Action: { PICKED: 'picked', CANCEL: 'cancel', ERROR: 'error' } };
+  const selected = { id: 'folder-2' };
+  const response = readPickerResponse({ responseAction: 'PICKED', responseDocs: [selected] }, picker);
+  assert.equal(response.picked, true);
+  assert.deepEqual(response.docs, [selected]);
+});
+
+test('folder authorization configures list mode and accepts the Picker selection callback', async () => {
+  const previousWindow = globalThis.window;
+  const previousLocalStorage = globalThis.localStorage;
+  const previousGoogle = globalThis.google;
+  const values = new Map();
+  const storage = {
+    getItem: (key) => values.get(key) ?? null,
+    setItem: (key, value) => values.set(key, String(value)),
+    removeItem: (key) => values.delete(key),
+  };
+  const calls = [];
+  let callback;
+  class DocsView {
+    constructor(id) { this.id = id; }
+    setMode(value) { calls.push(['mode', value]); return this; }
+    setIncludeFolders(value) { calls.push(['includeFolders', value]); return this; }
+    setFileIds(value) { calls.push(['fileIds', value]); return this; }
+    setSelectFolderEnabled(value) { calls.push(['selectFolder', value]); return this; }
+  }
+  class PickerBuilder {
+    setAppId(value) { calls.push(['appId', value]); return this; }
+    setDeveloperKey() { return this; }
+    setOAuthToken() { return this; }
+    setOrigin() { return this; }
+    setTitle() { return this; }
+    addView(view) { calls.push(['view', view.id]); return this; }
+    setCallback(value) { callback = value; return this; }
+    build() { return { setVisible: () => callback({ action: 'picked', docs: [{ id: 'folder-1', name: 'Books' }] }) }; }
+  }
+  globalThis.localStorage = storage;
+  globalThis.window = { localStorage: storage, sessionStorage: storage, location: { protocol: 'http:', host: 'localhost:8000' } };
+  globalThis.google = {
+    picker: {
+      DocsView, PickerBuilder, ViewId: { FOLDERS: 'folders', DOCS: 'docs' },
+      DocsViewMode: { LIST: 'list' }, Action: { PICKED: 'PICKED', CANCEL: 'CANCEL', ERROR: 'ERROR' },
+      Response: { ACTION: 'action', DOCUMENTS: 'docs' },
+    },
+  };
+  const auth = await import('../js/auth.js?v=20261109-oauth-picker-diagnostics');
+  auth.restoreAuthSession({ session: {
+    getItem: () => JSON.stringify({ accessToken: 'test-token', expiresAt: Date.now() + 3600000, user: { emailAddress: 'picker-test@example.com' } }),
+    removeItem: () => {},
+  } });
+  try {
+    assert.equal(await authorizeDriveItem({ id: 'folder-1', name: 'Books', isFolder: true }), true);
+    assert.ok(calls.some(([name, value]) => name === 'mode' && value === 'list'));
+    assert.ok(calls.some(([name, value]) => name === 'includeFolders' && value === true));
+    assert.ok(calls.some(([name, value]) => name === 'selectFolder' && value === true));
+    assert.ok(calls.some(([name, value]) => name === 'fileIds' && value === 'folder-1'));
+  } finally {
+    auth.clearAccessToken();
+    if (previousWindow === undefined) delete globalThis.window; else globalThis.window = previousWindow;
+    if (previousLocalStorage === undefined) delete globalThis.localStorage; else globalThis.localStorage = previousLocalStorage;
+    if (previousGoogle === undefined) delete globalThis.google; else globalThis.google = previousGoogle;
+  }
+});
+
 test('Picker authorization marker version invalidates stale v1 selections', () => {
   assert.equal(DRIVE_ITEM_AUTHORIZATION_MARKER_PREFIX, 'secret-library-drive-file-authorized-v2:');
   assert.notEqual(DRIVE_ITEM_AUTHORIZATION_MARKER_PREFIX, 'secret-library-drive-file-authorized-v1:');
@@ -77,8 +152,10 @@ test('Google Picker selection has a timeout and reports terminal callback errors
   const source = await readFile(new URL('../js/google-picker.js', import.meta.url), 'utf8');
   assert.match(source, /selectionTimer = setTimeout\(\(\) => \{[\s\S]*?Google Picker не завершил выбор за 45 секунд/);
   assert.match(source, /clearTimeout\(selectionTimer\)/);
-  assert.match(source, /data\.action === picker\.Action\.ERROR \|\| data\.action === 'error'/);
+  assert.match(source, /readPickerResponse\(data, picker\)/);
   assert.match(source, /Google Picker сообщил об ошибке/);
+  assert.match(source, /DocsViewMode\?\.LIST/);
+  assert.match(source, /callbackState/);
   assert.match(source, /picker_selection_timeout/);
   assert.match(source, /picker_callback_error/);
   assert.match(source, /pickerProviderCode/);

@@ -44,6 +44,22 @@ export function configureDrivePickerView(view, { id, mimeType = '', isFolder = f
   return view;
 }
 
+export function readPickerResponse(data, picker) {
+  const response = picker?.Response || {};
+  const rawAction = data?.[response.ACTION || 'action'] ?? data?.action;
+  const action = typeof rawAction === 'string' ? rawAction.trim().toLowerCase() : '';
+  const rawDocs = data?.[response.DOCUMENTS || 'docs'] ?? data?.docs;
+  const docs = Array.isArray(rawDocs) ? rawDocs : [];
+  const actionValue = (name) => String(picker?.Action?.[name] ?? name).trim().toLowerCase();
+  return {
+    action,
+    docs,
+    picked: action === actionValue('PICKED'),
+    cancelled: action === actionValue('CANCEL'),
+    failed: action === actionValue('ERROR') || action === 'error',
+  };
+}
+
 export function assertDrivePickerSelection(selected, expectedId, name = '') {
   if (!selected || selected.id !== expectedId) {
     throw new Error('Выбран другой объект. Закройте окно и выберите «' + (name || 'нужный объект') + '» с тем же идентификатором.');
@@ -106,6 +122,12 @@ export async function authorizeDriveItem({ id, name = '', mimeType = '', isFolde
   const token = await ensureAccessToken();
   const picker = globalThis.google.picker;
   const view = new picker.DocsView(isFolder ? picker.ViewId.FOLDERS : picker.ViewId.DOCS);
+  // drive.file does not grant thumbnail access. Google's Picker guidance recommends
+  // list mode for this scope; it also avoids preview loading interfering with selection.
+  if (picker.DocsViewMode?.LIST && typeof view.setMode === 'function') {
+    view.setMode(picker.DocsViewMode.LIST);
+  }
+  if (isFolder && typeof view.setIncludeFolders === 'function') view.setIncludeFolders(true);
   // Never search by name: duplicate names are common in Drive. Restrict the view
   // to the exact target ID and retain the callback ID check as a second safeguard.
   configureDrivePickerView(view, { id, mimeType, isFolder });
@@ -113,6 +135,8 @@ export async function authorizeDriveItem({ id, name = '', mimeType = '', isFolde
   return new Promise((resolve, reject) => {
     let settled = false;
     let selectionTimer;
+    let callbackCount = 0;
+    let lastAction = 'none';
     const finish = (value, error) => {
       if (settled) return;
       settled = true;
@@ -120,8 +144,9 @@ export async function authorizeDriveItem({ id, name = '', mimeType = '', isFolde
       if (error) reject(error); else resolve(value);
     };
     selectionTimer = setTimeout(() => {
-      finish(null, Object.assign(new Error('Google Picker не завершил выбор за 45 секунд (code: picker_selection_timeout). Закройте окно, проверьте доступ к Google Drive и попробуйте ещё раз.'), {
-        code: 'picker_selection_timeout', details: { timeoutMs: 45000, isFolder },
+      const callbackState = callbackCount ? lastAction : 'no_callback';
+      finish(null, Object.assign(new Error(`Google Picker не завершил выбор за 45 секунд (code: picker_selection_timeout; callback: ${callbackState}). Закройте окно, проверьте доступ к Google Drive и попробуйте ещё раз.`), {
+        code: 'picker_selection_timeout', details: { timeoutMs: 45000, isFolder, callbackCount, lastAction },
       }));
     }, 45000);
     const builder = new picker.PickerBuilder()
@@ -134,31 +159,34 @@ export async function authorizeDriveItem({ id, name = '', mimeType = '', isFolde
         : 'Подтвердите доступ к существующему файлу')
       .addView(view)
       .setCallback((data) => {
-        if (!data || typeof data.action !== 'string') {
-          finish(null, new Error('Google Picker вернул неизвестный ответ. Повторите выбор папки или файла.'));
+        callbackCount += 1;
+        const response = readPickerResponse(data, picker);
+        lastAction = response.action || 'missing_action';
+        if (!response.action) {
+          finish(null, new Error('Google Picker вернул ответ без действия (code: picker_invalid_response). Повторите выбор папки или файла.'));
           return;
         }
-        if (data.action === picker.Action.CANCEL) {
+        if (response.cancelled) {
           finish(false);
           return;
         }
-        if (data.action === picker.Action.ERROR || data.action === 'error') {
+        if (response.failed) {
           const providerCode = pickerProviderCode(data);
           // Log only stable error codes, never the full provider payload or OAuth token.
           console.warn('[Secret Library] Google Picker error', {
-            action: data.action,
+            action: response.action,
             providerCode: providerCode || 'not-provided',
             isFolder,
           });
           const diagnostic = providerCode ? `; provider: ${providerCode}` : '';
           finish(null, Object.assign(new Error(`Google Picker сообщил об ошибке (code: picker_callback_error${diagnostic}). Проверьте доступ к Google Drive и ограничения API key.`), {
-            code: 'picker_callback_error', details: { action: data.action, providerCode: providerCode || null, isFolder },
+            code: 'picker_callback_error', details: { action: response.action, providerCode: providerCode || null, isFolder },
           }));
           return;
         }
         // LOADED and other non-terminal lifecycle events are expected; keep waiting for PICKED/CANCEL.
-        if (data.action !== picker.Action.PICKED) return;
-        const selected = data.docs?.[0];
+        if (!response.picked) return;
+        const selected = response.docs[0];
         if (!selected) {
           finish(false);
           return;
