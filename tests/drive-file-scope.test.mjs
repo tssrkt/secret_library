@@ -79,6 +79,11 @@ test('Google Picker selection has a timeout and reports terminal callback errors
   assert.match(source, /clearTimeout\(selectionTimer\)/);
   assert.match(source, /data\.action === picker\.Action\.ERROR \|\| data\.action === 'error'/);
   assert.match(source, /Google Picker сообщил об ошибке/);
+  assert.match(source, /picker_selection_timeout/);
+  assert.match(source, /picker_callback_error/);
+  assert.match(source, /pickerProviderCode/);
+  assert.match(source, /providerCode: providerCode/);
+  assert.match(source, /never the full provider payload or OAuth token/);
 });
 
 test('old OAuth sessions are not restored after scope migration', () => {
@@ -102,7 +107,7 @@ test('a failed Drive API operation can invalidate the remembered Picker selectio
   };
   globalThis.localStorage = storage;
   globalThis.window = { sessionStorage: storage, localStorage: storage };
-  const auth = await import('../js/auth.js?v=20261108-drive-file-picker-folder-fix');
+  const auth = await import('../js/auth.js?v=20261109-oauth-picker-diagnostics');
   auth.restoreAuthSession({ session: {
     getItem: () => JSON.stringify({ accessToken: 'test-token', expiresAt: Date.now() + 3600000, user: { emailAddress: 'user@example.com' } }),
     removeItem: () => {},

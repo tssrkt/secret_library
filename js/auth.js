@@ -142,10 +142,15 @@ export async function recoverAuthSession({
 }
 
 export class AuthError extends Error {
-  constructor(message, code = 'auth_error') {
+  constructor(message, code = 'auth_error', details = null) {
     super(message);
     this.name = 'AuthError';
     this.code = code;
+    // Diagnostics must never contain OAuth tokens or full provider responses.
+    this.details = details && typeof details === 'object' ? {
+      provider: 'google-identity-services',
+      ...details,
+    } : null;
   }
 }
 
@@ -238,7 +243,11 @@ export function requestAccessToken({ prompt = 'consent' } = {}) {
   promise = new Promise((resolve, reject) => {
     let settled = false;
     let popupErrorTimer;
-    const timer = setTimeout(() => fail(new AuthError('Google did not complete authorization.', 'auth_timeout')), 60000);
+    const startedAt = Date.now();
+    const timer = setTimeout(() => fail(new AuthError(
+      'Google не завершил авторизацию за 60 секунд (auth_timeout). Проверьте, не осталось ли окно входа открытым или заблокированным браузером, затем повторите попытку.',
+      'auth_timeout', { prompt: effectivePrompt, elapsedMs: Date.now() - startedAt },
+    )), 60000);
     const fail = (error) => {
       if (settled) return;
       settled = true;
@@ -294,9 +303,12 @@ export function requestAccessToken({ prompt = 'consent' } = {}) {
       // GIS may report a popup/COOP error just before delivering the token response.
       // Give the success callback a short grace period so a completed consent is not rejected.
       clearTimeout(popupErrorTimer);
-      const type = error?.type || 'unknown';
+      const type = typeof error?.type === 'string' ? error.type.slice(0, 80) : 'unknown';
       popupErrorTimer = setTimeout(() => {
-        fail(new AuthError(`Google OAuth did not return a token (popup error: ${type}).`, type));
+        fail(new AuthError(
+          `Google OAuth не вернул токен (popup error: ${type}; code: oauth_popup_error). Проверьте блокировку всплывающих окон и повторите вход в том же окне сайта.`,
+          type, { prompt: effectivePrompt, elapsedMs: Date.now() - startedAt, phase: 'oauth_popup' },
+        ));
       }, 1500);
     };
     try {

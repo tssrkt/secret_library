@@ -1,8 +1,17 @@
 import { FOLDER_MIME_TYPE, GOOGLE_CLOUD_PROJECT_NUMBER, GOOGLE_PICKER_API_KEY } from './config.js';
-import { ensureAccessToken, getSessionUserEmail } from './auth.js?v=20261108-drive-file-picker-folder-fix';
+import { ensureAccessToken, getSessionUserEmail } from './auth.js?v=20261109-oauth-picker-diagnostics';
 
 let pickerLoadPromise = null;
 export const DRIVE_ITEM_AUTHORIZATION_MARKER_PREFIX = 'secret-library-drive-file-authorized-v2:';
+
+function pickerProviderCode(data) {
+  const candidates = [data?.error?.code, data?.error?.status, data?.error?.type, data?.errorCode, data?.code];
+  for (const value of candidates) {
+    const code = typeof value === 'string' || typeof value === 'number' ? String(value) : '';
+    if (/^[A-Za-z0-9_.:-]{1,80}$/.test(code)) return code;
+  }
+  return '';
+}
 
 function authorizationMarkerKey(id) {
   return DRIVE_ITEM_AUTHORIZATION_MARKER_PREFIX + encodeURIComponent(getSessionUserEmail()) + ':' + id;
@@ -111,7 +120,9 @@ export async function authorizeDriveItem({ id, name = '', mimeType = '', isFolde
       if (error) reject(error); else resolve(value);
     };
     selectionTimer = setTimeout(() => {
-      finish(null, new Error('Google Picker не завершил выбор за 45 секунд. Закройте окно, проверьте доступ к Google Drive и попробуйте ещё раз.'));
+      finish(null, Object.assign(new Error('Google Picker не завершил выбор за 45 секунд (code: picker_selection_timeout). Закройте окно, проверьте доступ к Google Drive и попробуйте ещё раз.'), {
+        code: 'picker_selection_timeout', details: { timeoutMs: 45000, isFolder },
+      }));
     }, 45000);
     const builder = new picker.PickerBuilder()
       .setAppId(GOOGLE_CLOUD_PROJECT_NUMBER)
@@ -132,7 +143,17 @@ export async function authorizeDriveItem({ id, name = '', mimeType = '', isFolde
           return;
         }
         if (data.action === picker.Action.ERROR || data.action === 'error') {
-          finish(null, new Error('Google Picker сообщил об ошибке. Проверьте доступ к Google Drive и настройки API key.'));
+          const providerCode = pickerProviderCode(data);
+          // Log only stable error codes, never the full provider payload or OAuth token.
+          console.warn('[Secret Library] Google Picker error', {
+            action: data.action,
+            providerCode: providerCode || 'not-provided',
+            isFolder,
+          });
+          const diagnostic = providerCode ? `; provider: ${providerCode}` : '';
+          finish(null, Object.assign(new Error(`Google Picker сообщил об ошибке (code: picker_callback_error${diagnostic}). Проверьте доступ к Google Drive и ограничения API key.`), {
+            code: 'picker_callback_error', details: { action: data.action, providerCode: providerCode || null, isFolder },
+          }));
           return;
         }
         // LOADED and other non-terminal lifecycle events are expected; keep waiting for PICKED/CANCEL.
@@ -150,7 +171,10 @@ export async function authorizeDriveItem({ id, name = '', mimeType = '', isFolde
     try {
       builder.build().setVisible(true);
     } catch (error) {
-      finish(null, new Error('Не удалось открыть Google Picker: ' + (error?.message || error)));
+      const detail = typeof error?.message === 'string' ? error.message.slice(0, 160) : 'unknown';
+      finish(null, Object.assign(new Error('Не удалось открыть Google Picker (code: picker_build_failed): ' + detail), {
+        code: 'picker_build_failed', details: { isFolder },
+      }));
     }
   });
 }

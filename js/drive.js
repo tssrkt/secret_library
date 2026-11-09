@@ -1,5 +1,5 @@
 import { FOLDER_MIME_TYPE, SHARED_CATALOG_FILE_NAME } from './config.js';
-import { ensureAccessToken, renewAccessToken } from './auth.js?v=20261108-drive-file-picker-folder-fix';
+import { ensureAccessToken, renewAccessToken } from './auth.js?v=20261109-oauth-picker-diagnostics';
 
 const API_ROOT = 'https://www.googleapis.com/drive/v3';
 const UPLOAD_ROOT = 'https://www.googleapis.com/upload/drive/v3';

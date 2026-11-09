@@ -1,6 +1,6 @@
 import { SHARED_CATALOG_FILE_NAME, FOLDER_MIME_TYPE } from './config.js';
 import { driveFetch, downloadDriveJsonFile, findDriveCatalogFile } from './drive.js?v=20261109-drive-error-diagnostics';
-import { ensureDriveFolderAuthorized, forgetDriveItemAuthorization } from './google-picker.js?v=20261109-drive-picker-auth-recovery';
+import { ensureDriveFolderAuthorized, forgetDriveItemAuthorization } from './google-picker.js?v=20261109-oauth-picker-diagnostics';
 
 const normalizeEmail = (value) => typeof value === 'string' ? value.trim().toLowerCase() : '';
 const isEmailPrefixName = (name, email) => {

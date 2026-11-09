@@ -15,7 +15,7 @@ import { createUserSettingsController } from './user-settings-ui.js?v=20261108-f
 import { mountFriends } from './friends-ui.js?v=20261108-registered-sharing-relationship';
 import { createNotificationsController } from './notifications-ui.js?v=20261108-reciprocal-share-only';
 import { social } from './social-runtime.js?v=20261109-drive-picker-auth-recovery';
-import { getAccessToken } from './auth.js?v=20261108-drive-file-picker-folder-fix';
+import { getAccessToken } from './auth.js?v=20261109-oauth-picker-diagnostics';
 import { loadUserSettings, saveUserSettings } from './user-settings.js';
 
 const genresRu = await loadGenreDictionary().catch(() => ({}));

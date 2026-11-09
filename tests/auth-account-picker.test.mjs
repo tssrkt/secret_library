@@ -55,6 +55,16 @@ test('accepts the completed token response when GIS reports a popup error first'
   clearAccessToken();
 });
 
+test('OAuth failures expose a safe diagnostic code without serializing provider responses', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const source = await readFile(new URL('../js/auth.js', import.meta.url), 'utf8');
+  assert.match(source, /oauth_popup_error/);
+  assert.match(source, /auth_timeout/);
+  assert.match(source, /elapsedMs: Date\.now\(\) - startedAt/);
+  assert.match(source, /Diagnostics must never contain OAuth tokens or full provider responses/);
+  assert.doesNotMatch(source, /JSON\.stringify\(error\)/);
+});
+
 test('rejects a token response that still includes broad Drive access', async () => {
   const clients = setup();
   await initializeAuth();
