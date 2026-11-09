@@ -72,6 +72,15 @@ test('Picker authorization marker version invalidates stale v1 selections', () =
   assert.notEqual(DRIVE_ITEM_AUTHORIZATION_MARKER_PREFIX, 'secret-library-drive-file-authorized-v1:');
 });
 
+test('Google Picker selection has a timeout and reports terminal callback errors', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const source = await readFile(new URL('../js/google-picker.js', import.meta.url), 'utf8');
+  assert.match(source, /selectionTimer = setTimeout\(\(\) => \{[\s\S]*?Google Picker не завершил выбор за 45 секунд/);
+  assert.match(source, /clearTimeout\(selectionTimer\)/);
+  assert.match(source, /data\.action === picker\.Action\.ERROR \|\| data\.action === 'error'/);
+  assert.match(source, /Google Picker сообщил об ошибке/);
+});
+
 test('old OAuth sessions are not restored after scope migration', () => {
   assert.equal(AUTH_SESSION_KEY, 'secret-library-google-session-v2');
 });

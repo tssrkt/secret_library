@@ -103,11 +103,16 @@ export async function authorizeDriveItem({ id, name = '', mimeType = '', isFolde
 
   return new Promise((resolve, reject) => {
     let settled = false;
+    let selectionTimer;
     const finish = (value, error) => {
       if (settled) return;
       settled = true;
+      clearTimeout(selectionTimer);
       if (error) reject(error); else resolve(value);
     };
+    selectionTimer = setTimeout(() => {
+      finish(null, new Error('Google Picker не завершил выбор за 45 секунд. Закройте окно, проверьте доступ к Google Drive и попробуйте ещё раз.'));
+    }, 45000);
     const builder = new picker.PickerBuilder()
       .setAppId(GOOGLE_CLOUD_PROJECT_NUMBER)
       .setDeveloperKey(GOOGLE_PICKER_API_KEY)
@@ -118,10 +123,19 @@ export async function authorizeDriveItem({ id, name = '', mimeType = '', isFolde
         : 'Подтвердите доступ к существующему файлу')
       .addView(view)
       .setCallback((data) => {
+        if (!data || typeof data.action !== 'string') {
+          finish(null, new Error('Google Picker вернул неизвестный ответ. Повторите выбор папки или файла.'));
+          return;
+        }
         if (data.action === picker.Action.CANCEL) {
           finish(false);
           return;
         }
+        if (data.action === picker.Action.ERROR || data.action === 'error') {
+          finish(null, new Error('Google Picker сообщил об ошибке. Проверьте доступ к Google Drive и настройки API key.'));
+          return;
+        }
+        // LOADED and other non-terminal lifecycle events are expected; keep waiting for PICKED/CANCEL.
         if (data.action !== picker.Action.PICKED) return;
         const selected = data.docs?.[0];
         if (!selected) {

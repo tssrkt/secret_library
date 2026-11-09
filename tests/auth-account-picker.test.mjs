@@ -7,7 +7,7 @@ function setup() {
   const values = new Map();
   const storage = { getItem: (key) => values.get(key) || null, setItem: (key, value) => values.set(key, String(value)), removeItem: (key) => values.delete(key) };
   globalThis.window = { sessionStorage: storage, localStorage: storage };
-  const oauth2 = { initTokenClient: (options) => {
+  const oauth2 = { revoke: (_token, callback) => callback?.(), initTokenClient: (options) => {
     const client = { ...options, requests: [], requestAccessToken(request) { this.requests.push(request); } };
     clients.push(client);
     return client;
@@ -64,8 +64,31 @@ test('rejects a token response that still includes broad Drive access', async ()
     expires_in: 3600,
     scope: 'https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/drive.appdata https://www.googleapis.com/auth/drive.file',
   });
-  await assert.rejects(pending, /old broad Drive permission/);
+  await assert.rejects(pending, /Старое широкое разрешение Google отозвано/);
   assert.equal((await import('../js/auth.js')).getAccessToken(), null);
+});
+
+test('waits for Google to confirm revocation before rejecting a broad Drive grant', async () => {
+  const clients = setup();
+  let confirmRevoke;
+  google.accounts.oauth2.revoke = (token, callback) => {
+    assert.equal(token, 'unsafe-token');
+    confirmRevoke = callback;
+  };
+  await initializeAuth();
+  const pending = requestAccessToken();
+  clients[0].callback({
+    access_token: 'unsafe-token', expires_in: 3600,
+    scope: 'https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/drive.appdata https://www.googleapis.com/auth/drive.file',
+  });
+  let rejected = false;
+  const result = assert.rejects(pending, /Старое широкое разрешение Google отозвано/).then(() => { rejected = true; });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(rejected, false, 'authorization must remain pending until Google confirms revocation');
+  confirmRevoke({ successful: true });
+  await result;
+  assert.equal(rejected, true);
+  clearAccessToken();
 });
 
 test('rejects partial consent that omits drive.file', async () => {

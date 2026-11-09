@@ -181,6 +181,36 @@ export async function initializeAuth() {
   });
 }
 
+async function revokeOAuthToken(accessToken, timeoutMs = 5000) {
+  const revoke = globalThis.google?.accounts?.oauth2?.revoke;
+  if (typeof revoke !== 'function') throw new AuthError('Google не предоставил API для отзыва старого разрешения.', 'revoke_unavailable');
+  await new Promise((resolve, reject) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      reject(new AuthError('Google не подтвердил отзыв старого разрешения за отведённое время. Повторите вход позже.', 'revoke_timeout'));
+    }, timeoutMs);
+    try {
+      revoke(accessToken, (response) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        if (response?.successful === false || response?.error) {
+          reject(new AuthError('Google не подтвердил отзыв старого разрешения.', 'revoke_failed'));
+          return;
+        }
+        resolve();
+      });
+    } catch (error) {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      reject(new AuthError('Не удалось отозвать старое разрешение Google. Повторите вход.', 'revoke_failed'));
+    }
+  });
+}
+
 export function requestAccessToken({ prompt = 'consent' } = {}) {
   if (!tokenClient) return Promise.reject(new AuthError('Google OAuth is not initialized.'));
   let scopeVersionCurrent = false;
@@ -217,7 +247,7 @@ export function requestAccessToken({ prompt = 'consent' } = {}) {
       reject(error);
     };
     cancelPendingToken = fail;
-    tokenClient.callback = (response) => {
+    tokenClient.callback = async (response) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
@@ -230,14 +260,24 @@ export function requestAccessToken({ prompt = 'consent' } = {}) {
       if (typeof response.scope === 'string') {
         const grantedScopes = new Set(response.scope.split(/\s+/));
         if (grantedScopes.has('https://www.googleapis.com/auth/drive')) {
-          try { google.accounts.oauth2.revoke(response.access_token, () => {}); } catch { /* force a fresh consent on the next attempt */ }
+          try {
+            await revokeOAuthToken(response.access_token);
+          } catch (error) {
+            try { storageOrNull('localStorage')?.removeItem(AUTH_SCOPE_VERSION_KEY); } catch { /* consent is still required on the next attempt */ }
+            reject(new AuthError('Google вернул старое широкое разрешение, но его отзыв не подтверждён. ' + error.message, error.code || 'revoke_failed'));
+            return;
+          }
           try { storageOrNull('localStorage')?.removeItem(AUTH_SCOPE_VERSION_KEY); } catch { /* consent is still required on the next attempt */ }
-          reject(new AuthError('Google still returned the old broad Drive permission. A revocation was requested; sign in again to complete the permission reduction.'));
+          reject(new AuthError('Старое широкое разрешение Google отозвано. Повторите вход, чтобы выдать только необходимые разрешения.'));
           return;
         }
         const missingScopes = DRIVE_SCOPES.split(/\s+/).filter((scope) => !grantedScopes.has(scope));
         if (missingScopes.length) {
-          try { google.accounts.oauth2.revoke(response.access_token, () => {}); } catch { /* do not retain a partial token */ }
+          try { await revokeOAuthToken(response.access_token); }
+          catch (error) {
+            reject(new AuthError('Выданы не все необходимые разрешения Google Drive, а отзыв частичного разрешения не подтверждён. ' + error.message, error.code || 'revoke_failed'));
+            return;
+          }
           reject(new AuthError('Не все необходимые разрешения Google Drive были предоставлены. Повторите вход и разрешите чтение библиотеки, appData и доступ к выбранным через Picker объектам.'));
           return;
         }
