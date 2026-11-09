@@ -45,6 +45,16 @@ test('account selection supersedes an in-flight automatic renewal on a fresh cli
   clearAccessToken();
 });
 
+test('accepts the completed token response when GIS reports a popup error first', async () => {
+  const clients = setup();
+  await initializeAuth();
+  const pending = requestAccessToken();
+  clients[0].error_callback({ type: 'popup_closed' });
+  setTimeout(() => clients[0].callback({ access_token: 'completed-token', expires_in: 3600 }), 25);
+  assert.equal(await pending, 'completed-token');
+  clearAccessToken();
+});
+
 test('rejects a token response that still includes broad Drive access', async () => {
   const clients = setup();
   await initializeAuth();

@@ -207,11 +207,13 @@ export function requestAccessToken({ prompt = 'consent' } = {}) {
   let promise;
   promise = new Promise((resolve, reject) => {
     let settled = false;
+    let popupErrorTimer;
     const timer = setTimeout(() => fail(new AuthError('Google did not complete authorization.', 'auth_timeout')), 60000);
     const fail = (error) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      clearTimeout(popupErrorTimer);
       reject(error);
     };
     cancelPendingToken = fail;
@@ -219,6 +221,7 @@ export function requestAccessToken({ prompt = 'consent' } = {}) {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      clearTimeout(popupErrorTimer);
       if (generation !== tokenGeneration) { reject(new AuthError('Sign-in cancelled.', 'cancelled')); return; }
       if (response.error || !response.access_token) {
         reject(new AuthError('Google authorization did not finish. Please try again.', response.error));
@@ -247,7 +250,15 @@ export function requestAccessToken({ prompt = 'consent' } = {}) {
       scheduleRenewal();
       resolve(accessToken);
     };
-    tokenClient.error_callback = (error) => fail(new AuthError('The authorization window was closed or sign-in was cancelled.', error?.type || 'popup_closed'));
+    tokenClient.error_callback = (error) => {
+      // GIS may report a popup/COOP error just before delivering the token response.
+      // Give the success callback a short grace period so a completed consent is not rejected.
+      clearTimeout(popupErrorTimer);
+      const type = error?.type || 'unknown';
+      popupErrorTimer = setTimeout(() => {
+        fail(new AuthError(`Google OAuth did not return a token (popup error: ${type}).`, type));
+      }, 1500);
+    };
     try {
       // login_hint can bypass account selection even with select_account.
       const options = { prompt: effectivePrompt };
