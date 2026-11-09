@@ -204,6 +204,36 @@ export async function runSocialUiTests(test, assert, equal) {
       assert(!page.querySelector('.friends-table').textContent.includes('private-admin@gmail.com'), 'administrator email never appears, even after the refresh');
     } finally { cleanup(); page.remove(); }
   });
+  await test('administrator email stays hidden and the failed status check is explained', async () => {
+    const page = document.createElement('div'); document.body.append(page);
+    const social = stub({ friends: [{ uid: 'admin-uid', displayName: 'Library owner', email: 'private-admin@gmail.com', inbound: true, outbound: false }] });
+    social.getInvitationStatuses = async () => { throw new Error('status service unavailable'); };
+    const cleanup = mountFriends(page, social, () => {});
+    try {
+      await tick(); await tick();
+      assert(!page.querySelector('.friends-table').textContent.includes('private-admin@gmail.com'), 'email is not disclosed when administrator metadata cannot be verified');
+      assert(page.querySelector('.friends-access-message').textContent.includes('Email скрыты до успешной проверки'), 'the reason emails are hidden is visible');
+    } finally { cleanup(); page.remove(); }
+  });
+
+  await test('friend actions reuse the matching Drive notification email when the friend row is incomplete', async () => {
+    const page = document.createElement('div'); document.body.append(page);
+    const social = stub({
+      friends: [{ uid: 'inviter', displayName: 'Inviter', email: '', inbound: true, outbound: false }],
+      notifications: [{ ownerUid: 'inviter', displayName: 'Inviter', email: 'inviter@gmail.com', unread: false, mutual: false }],
+    });
+    const cleanup = mountFriends(page, social, () => {});
+    try {
+      await tick(); await tick();
+      const row = page.querySelector('.friends-table tbody tr');
+      assert(row.querySelector('.friend-library-button').textContent.includes('inviter@gmail.com'), 'known non-admin email is restored from the matching notification after quota metadata loads');
+      const action = row.querySelector('.settings-save-button');
+      assert(!action.disabled, 'sharing action is enabled when the notification provides the email');
+      action.click(); await tick();
+      assert(social.calls.some((call) => Array.isArray(call) && call[0] === 'shareBackWithEmail' && call[1] === 'inviter@gmail.com' && call[2] === 'inviter'), 'action uses the recovered email and the correct friend UID');
+    } finally { cleanup(); page.remove(); }
+  });
+
   await test('friends table slices before rendering and switches action based on direction', async () => {
     const page = document.createElement('div'); document.body.append(page);
     const friends = Array.from({ length: 51 }, (_, i) => ({ uid: String(i), displayName: `User ${i}`, email: i === 0 ? 'reader@gmail.com' : '', inbound: i !== 1, outbound: i !== 0 }));

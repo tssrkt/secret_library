@@ -1,5 +1,5 @@
 import { createPaginator, paginateItems } from './pagination.js';
-import { socialError } from './social-runtime.js?v=20261108-registered-sharing-relationship';
+import { socialError } from './social-runtime.js?v=20261109-settings-friends-controls';
 
 const HOUR_MS = 60 * 60 * 1000;
 
@@ -61,6 +61,7 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
   const retryButton = shareSection.querySelector('[data-social-retry]');
   const invitationsMessage = invitationsSection.querySelector('.sent-invitations-message');
   const friendsAccessMessage = friendsSection.querySelector('.friends-access-message');
+  const adminStatusError = 'Не удалось проверить список администраторов. Email скрыты до успешной проверки; обновите страницу и попробуйте снова.';
   const closingAccess = new Set();
   retryButton.addEventListener('click', retry);
   let snapshot = { friends: [], invitations: [], status: 'idle' };
@@ -242,6 +243,8 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
       invitationStatuses = next;
       invitationStatusesLoaded = true;
       invitationQuota = next.__quota || invitationQuota;
+      if (next.__quota && friendsAccessMessage.textContent === adminStatusError) friendsAccessMessage.textContent = '';
+      else if (!next.__quota && !invitationQuota && !friendsAccessMessage.textContent) friendsAccessMessage.textContent = adminStatusError;
       // Reconcile the invitation ledger against the authoritative directory before
       // rendering either table. The runtime normally adds registered users to friends;
       // this UI-level reconciliation also prevents a registered account from vanishing
@@ -274,9 +277,10 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
         }, 1200);
       }
     } catch (error) {
-      // Status refresh is secondary to sending. Keep service errors in the single
-      // status line under the email field, never in the sent-invitations section.
+      // Keep the missing administrator verification visible near the friends table;
+      // never leak friend emails when the authoritative admin list could not load.
       if (!closed && revision === statusRefreshRevision) {
+        if (!friendsAccessMessage.textContent || friendsAccessMessage.textContent === adminStatusError) friendsAccessMessage.textContent = adminStatusError;
         renderInvitations();
         if (!quotaMetadataRetryUsed) {
           quotaMetadataRetryUsed = true;
@@ -344,11 +348,15 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
       const openButton = document.createElement('button');
       openButton.type = 'button'; openButton.className = 'friend-library-button';
       openButton.textContent = friend.displayName;
+      // Drive notifications can carry the owner's email while a registered-share
+      // row is still catching up. Reuse that same-owner address for friend actions.
+      const notification = (snapshot.notifications || []).find((item) => String(item.ownerUid || '') === String(friend.uid || ''));
+      const friendEmail = String(friend.email || notification?.email || '').trim().toLowerCase();
       const knownAdminUids = Array.isArray(invitationQuota?.adminUids) ? invitationQuota.adminUids : [];
       const isAdmin = friend.isAdmin === true || friend.uid === 'aA89pCYsKNbWWePmAveUVrG34F82' || knownAdminUids.includes(friend.uid);
       // Never expose a possible administrator's email while the authoritative admin list is still loading.
       if (isAdmin) { const detail = document.createElement('small'); detail.textContent = 'Администратор'; openButton.append(detail); }
-      else if (invitationQuota && friend.email) { const detail = document.createElement('small'); detail.textContent = friend.email; openButton.append(detail); }
+      else if (invitationQuota && friendEmail) { const detail = document.createElement('small'); detail.textContent = friendEmail; openButton.append(detail); }
       openButton.disabled = !friend.inbound || String(friend.uid).startsWith('email:');
       openButton.title = openButton.disabled ? 'Эта библиотека не открыта вам в Google Drive' : 'Открыть библиотеку друга';
       openButton.addEventListener('click', () => { if (!openButton.disabled) openLibrary(friend.uid); });
@@ -369,7 +377,6 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
       actionButton.className = 'settings-save-button';
       const isSharingWithFriend = friend.outbound === true;
       actionButton.textContent = isSharingWithFriend ? 'ЗАКРЫТЬ ДОСТУП' : 'ПОДЕЛИТЬСЯ';
-      const friendEmail = String(friend.email || '').trim().toLowerCase();
       actionButton.disabled = !friendEmail || closingAccess.has(friendEmail);
       actionButton.title = !friendEmail
         ? 'У друга не указан email'
@@ -377,7 +384,7 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
           ? 'Отозвать доступ к корневой папке в Google Drive'
           : 'Открыть другу доступ к корневой папке вашей библиотеки';
       actionButton.addEventListener('click', async () => {
-        const email = String(friend.email || '').trim().toLowerCase();
+        const email = friendEmail;
         if (!email || closingAccess.has(email)) return;
         closingAccess.add(email);
         friendsAccessMessage.textContent = '';

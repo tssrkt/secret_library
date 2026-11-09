@@ -137,10 +137,24 @@ test('invitation grants root-folder reader permission to the invited Google acco
     throw new Error(`Unexpected Drive request: ${path}`);
   };
   const { grantRootFolderAccess } = await import('../js/drive-sharing.js');
-  const result = await grantRootFolderAccess('my-root', ' Friend@Example.com ', { driveFetch: request });
+  const result = await grantRootFolderAccess('my-root', ' Friend@Example.com ', { driveFetch: request, authorizeFolder: async ({ id, isFolder }) => { assert.equal(id, 'my-root'); assert.equal(isFolder, true); } });
   assert.deepEqual(result, { permissionId: 'permission-created', created: true, email: 'friend@example.com' });
   assert.equal(calls.length, 2);
   assert.equal(calls[1].options.method, 'POST');
+});
+
+test('root permission changes stop before Drive requests if Picker authorization is cancelled', async () => {
+  let requests = 0;
+  const request = async () => { requests++; return { permissions: [] }; };
+  const { grantRootFolderAccess, closeRootFolderAccess } = await import('../js/drive-sharing.js');
+  const authorizeFolder = async ({ id, isFolder }) => {
+    assert.equal(id, 'root-id');
+    assert.equal(isFolder, true);
+    throw new Error('Picker authorization cancelled');
+  };
+  await assert.rejects(grantRootFolderAccess('root-id', 'friend@example.com', { driveFetch: request, authorizeFolder }), /Picker authorization cancelled/);
+  await assert.rejects(closeRootFolderAccess('root-id', 'friend@example.com', { driveFetch: request, authorizeFolder }), /Picker authorization cancelled/);
+  assert.equal(requests, 0, 'no Drive permission is read or changed before authorization');
 });
 
 test('invitation does not create a duplicate Drive permission when access already exists', async () => {
@@ -150,7 +164,7 @@ test('invitation does not create a duplicate Drive permission when access alread
     return { permissions: [{ id: 'existing-permission', type: 'user', emailAddress: 'friend@example.com', role: 'reader' }] };
   };
   const { grantRootFolderAccess } = await import('../js/drive-sharing.js');
-  const result = await grantRootFolderAccess('my-root', 'friend@example.com', { driveFetch: request });
+  const result = await grantRootFolderAccess('my-root', 'friend@example.com', { driveFetch: request, authorizeFolder: async () => true });
   assert.deepEqual(result, { permissionId: 'existing-permission', created: false, email: 'friend@example.com' });
   assert.equal(created, false);
 });
@@ -166,7 +180,7 @@ test('invitation downgrades an existing direct editor permission to reader', asy
     return { permissions: [{ id: 'existing-permission', type: 'user', emailAddress: 'friend@example.com', role: 'writer', permissionDetails: [{ inherited: false, role: 'writer', permissionType: 'user' }] }] };
   };
   const { grantRootFolderAccess } = await import('../js/drive-sharing.js');
-  const result = await grantRootFolderAccess('my-root', 'friend@example.com', { driveFetch: request });
+  const result = await grantRootFolderAccess('my-root', 'friend@example.com', { driveFetch: request, authorizeFolder: async () => true });
   assert.deepEqual(result, { permissionId: 'existing-permission', created: false, email: 'friend@example.com' });
   assert.equal(calls.length, 2);
   assert.equal(calls[1].options.method, 'PATCH');
@@ -175,7 +189,7 @@ test('invitation downgrades an existing direct editor permission to reader', asy
 test('inherited editor permissions are not silently accepted as read-only', async () => {
   const request = async () => ({ permissions: [{ id: 'inherited-permission', type: 'user', emailAddress: 'friend@example.com', role: 'writer', permissionDetails: [{ inherited: true, role: 'writer', permissionType: 'user' }] }] });
   const { grantRootFolderAccess } = await import('../js/drive-sharing.js');
-  await assert.rejects(() => grantRootFolderAccess('my-root', 'friend@example.com', { driveFetch: request }), /унаследованы права редактирования/);
+  await assert.rejects(() => grantRootFolderAccess('my-root', 'friend@example.com', { driveFetch: request, authorizeFolder: async () => true }), /унаследованы права редактирования/);
 });
 
 test('matches a published catalog to the known friend email when Drive omits root owner details', async () => {
@@ -290,7 +304,7 @@ test('closeRootFolderAccess revokes only the matching direct Google Drive permis
     return {};
   };
   const { closeRootFolderAccess } = await import('../js/drive-sharing.js');
-  const result = await closeRootFolderAccess('root-id', 'Friend@Example.com', { driveFetch: request });
+  const result = await closeRootFolderAccess('root-id', 'Friend@Example.com', { driveFetch: request, authorizeFolder: async () => true });
   assert.equal(result.revoked, true);
   assert.equal(calls.length, 2);
   assert.match(calls[1].path, /permissions\/friend-permission/);
@@ -304,7 +318,7 @@ test('closeRootFolderAccess refuses to remove inherited permission', async () =>
     return { permissions: [{ id: 'inherited-permission', type: 'user', emailAddress: 'friend@example.com', role: 'reader', permissionDetails: [{ inherited: true }] }] };
   };
   const { closeRootFolderAccess } = await import('../js/drive-sharing.js');
-  await assert.rejects(closeRootFolderAccess('root-id', 'friend@example.com', { driveFetch: request }), /наследуется/);
+  await assert.rejects(closeRootFolderAccess('root-id', 'friend@example.com', { driveFetch: request, authorizeFolder: async () => true }), /наследуется/);
   assert.equal(calls.length, 1);
 });
 

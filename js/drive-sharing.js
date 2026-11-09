@@ -1,6 +1,6 @@
 import { SHARED_CATALOG_FILE_NAME, FOLDER_MIME_TYPE } from './config.js';
 import { driveFetch, downloadDriveJsonFile, findDriveCatalogFile } from './drive.js?v=20261109-drive-error-diagnostics';
-import { ensureDriveFolderAuthorized, forgetDriveItemAuthorization } from './google-picker.js?v=20261109-picker-exact-folder';
+import { ensureDriveFolderAuthorized, forgetDriveItemAuthorization } from './google-picker.js?v=20261109-drive-picker-auth-recovery';
 
 const normalizeEmail = (value) => typeof value === 'string' ? value.trim().toLowerCase() : '';
 const isEmailPrefixName = (name, email) => {
@@ -164,9 +164,13 @@ export async function syncFolderSharingAccess(index, settings, api = {}) {
 // Existing permissions are preserved; rollback only removes a permission created by this attempt.
 export async function grantRootFolderAccess(rootFolderId, email, api = {}) {
   const request = api.driveFetch || driveFetch;
+  const authorizeFolder = api.authorizeFolder || ensureDriveFolderAuthorized;
   const address = normalizeEmail(email);
   if (!rootFolderId) throw new Error('Сначала выберите корневую папку своей библиотеки.');
   if (!address) throw new Error('Укажите корректный email участника.');
+  // drive.file does not authorize an existing folder merely because the app can
+  // read it. Explicitly authorize this exact root before listing or changing ACLs.
+  await authorizeFolder({ id: rootFolderId, isFolder: true });
   const existing = (await listPermissions(rootFolderId, request)).find((permission) =>
     !permission.deleted && permission.type === 'user' && normalizeEmail(permission.emailAddress) === address);
   if (existing) {
@@ -210,9 +214,12 @@ export async function revokeRootFolderAccess(rootFolderId, permission) {
 // Revoke the selected friend's direct permission on the owner's root folder using Drive only.
 export async function closeRootFolderAccess(rootFolderId, email, api = {}) {
   const request = api.driveFetch || driveFetch;
+  const authorizeFolder = api.authorizeFolder || ensureDriveFolderAuthorized;
   const address = normalizeEmail(email);
   if (!rootFolderId) throw new Error('Не удалось определить корневую папку библиотеки. Обновите библиотеку и повторите попытку.');
   if (!address) throw new Error('У этого друга не указан email, поэтому закрыть доступ автоматически нельзя.');
+  // Permission changes require drive.file authorization for the exact root folder.
+  await authorizeFolder({ id: rootFolderId, isFolder: true });
   const permissions = await listPermissions(rootFolderId, request);
   const matching = permissions.filter((permission) => !permission.deleted
     && permission.type === 'user' && normalizeEmail(permission.emailAddress) === address
