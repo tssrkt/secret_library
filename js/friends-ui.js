@@ -79,6 +79,7 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
   let invitationStatusesLoaded = false;
   let invitationQuota = null;
   let quotaMetadataRetryUsed = false;
+  let adminMetadataFriendSignature = null;
   // Keep a just-sent invitation visible while Firestore's live query catches up.
   const optimisticInvitations = new Map();
   let serviceMessage = '';
@@ -438,6 +439,17 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
       if (!actualEmails.has(email) && !friendEmails.has(email)) mergedInvitations.push(invite);
     }
     snapshot = { ...next, invitations: mergedInvitations };
+    const friendSignature = [...(snapshot.friends || []), ...(snapshot.notifications || [])]
+      .map((friend) => `${String(friend.uid || friend.ownerUid || '').trim()}:${String(friend.email || '').trim().toLowerCase()}`)
+      .sort().join('|');
+    if (friendSignature !== adminMetadataFriendSignature) {
+      const hadFriendSnapshot = adminMetadataFriendSignature !== null;
+      adminMetadataFriendSignature = friendSignature;
+      if (hadFriendSnapshot && !invitationQuota) {
+        quotaMetadataRetryUsed = false;
+        void refreshInvitationStatuses();
+      }
+    }
     const inviteSignature = (snapshot.invitations || []).map((invite) => String(invite.inviteeEmail || '').toLowerCase()).sort().join('|');
     if (inviteSignature !== invitationStatusSignature) {
       invitationStatusSignature = inviteSignature;

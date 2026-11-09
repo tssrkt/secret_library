@@ -69,6 +69,7 @@ const invitationLedger = createInvitationLedger();
 const acceptedLedgerSyncs = new Set();
 const knownContactsSyncs = new Map();
 const FRIEND_CACHE_PREFIX = 'secret-library-social-friends-v1:';
+const FRIEND_EMAIL_REPAIR_PREFIX = 'secret-library-friend-email-repair-v1:';
 let driveFriends = [];
 let registeredShareFriends = [];
 let acceptedInviteFriends = [];
@@ -268,7 +269,9 @@ export const social = {
   },
   subscribe(listener) { listeners.add(listener); listener(state); return () => listeners.delete(listener); },
   getState() { return state; },
-  async connect(token, rootFolderId = '') {
+  async connect(token, rootFolderId = '', knownDriveUser = null) {
+    const connectionStartedAt = performance.now();
+    const logConnectionStage = (stage) => console.debug(`[auth-timing] ${stage}: ${Math.round(performance.now() - connectionStartedAt)} ms`);
     settleConnectionReady(false);
     connectionReadyPromise = new Promise((resolve) => { resolveConnectionReady = resolve; });
     configuredRootFolderId = String(rootFolderId || '');
@@ -282,9 +285,21 @@ export const social = {
     shared?.dispose(); shared = null;
     emit({ status: 'loading', driveDiscoveryStatus: 'loading', message: 'Подключение социальной части…', friends: driveFriends, notifications: [], libraries: [], ownRootFolderId: configuredRootFolderId });
     try {
-      // Discover and open friend libraries directly with the Google Drive token.
-      // This path runs independently of Firebase Authentication/Firestore.
-      const driveUser = await getCurrentDriveUser();
+      // Google Drive profile and Firebase session are independent once OAuth has
+      // returned a token. Reuse the already-read profile when the caller has it.
+      const driveUserPromise = knownDriveUser ? Promise.resolve(knownDriveUser) : getCurrentDriveUser();
+      const sessionPromise = retryTransientAuthOperation(() => startFirebaseSession(token));
+      let driveUser;
+      let session;
+      try {
+        [driveUser, session] = await Promise.all([driveUserPromise, sessionPromise]);
+      } catch (error) {
+        // If Drive profile lookup fails while Firebase auth succeeds later, do not
+        // leave a half-open Firebase session behind.
+        void sessionPromise.then((value) => { if (value) return endFirebaseSession(); }).catch(() => {});
+        throw error;
+      }
+      logConnectionStage('drive-profile-and-firebase-session');
       if (current !== generation) return false;
       connectedDriveUser = driveUser;
       emit({ driveUserEmail: String(driveUser?.email || driveUser?.emailAddress || '').trim().toLowerCase() });
@@ -295,7 +310,6 @@ export const social = {
       acceptedInviteFriends = [];
       emit({ friends: [], libraries: [], status: 'loading', message: 'Ищем библиотеки друзей в Google Drive…' });
       void refreshDriveFriends(driveUser, current, [], true);
-      const session = await retryTransientAuthOperation(() => startFirebaseSession(token));
       if (current !== generation) return false;
       if (!session) { settleConnectionReady(false); return false; }
       // Keep invitation sending available as soon as Firebase Auth is ready. The
@@ -304,23 +318,24 @@ export const social = {
       store = createSocialStore(session);
       // Keep shared-library operations unavailable until invitation registration succeeds.
       shared = createSharedLibraryStore({ user: session.user });
-      let knownInvitationEmails = [];
-      try {
-        const savedLedger = await invitationLedger.load(invitationUser.uid);
-        ledgerInvitationRowsCache = invitationLedgerRows(savedLedger.ledger);
-        acceptedInviteFriends = acceptedInvitationFriends(savedLedger.ledger);
-        knownInvitationEmails = [...new Set((savedLedger.ledger.invitations || []).map((item) => String(item.inviteeEmail || '').trim().toLowerCase()).filter(Boolean))];
-        emit({ friends: combineFriendRows(), invitations: mergeInvitationRows([], ledgerInvitationRowsCache) });
-      } catch (error) {
-        if (isQuotaExceeded(error)) notifyQuotaExceeded();
-        ledgerInvitationRowsCache = [];
-        acceptedInviteFriends = [];
-        console.warn('Could not load the Drive invitation ledger:', error);
-      }
-      // Invitation status refresh is independent from the mandatory registration gate.
-      // Run it in the background so a slow Apps Script response cannot delay sign-in.
-      // The UI will receive the authoritative status when the request completes.
+      // Load the local Drive invitation ledger and reconcile its server status in
+      // the background. Neither operation is part of the mandatory registration gate.
       void (async () => {
+        let knownInvitationEmails = [];
+        try {
+          const savedLedger = await invitationLedger.load(invitationUser.uid);
+          if (current !== generation) return;
+          ledgerInvitationRowsCache = invitationLedgerRows(savedLedger.ledger);
+          acceptedInviteFriends = acceptedInvitationFriends(savedLedger.ledger);
+          knownInvitationEmails = [...new Set((savedLedger.ledger.invitations || []).map((item) => String(item.inviteeEmail || '').trim().toLowerCase()).filter(Boolean))];
+          emit({ friends: combineFriendRows(), invitations: mergeInvitationRows([], ledgerInvitationRowsCache) });
+        } catch (error) {
+          if (current !== generation) return;
+          if (isQuotaExceeded(error)) notifyQuotaExceeded();
+          ledgerInvitationRowsCache = [];
+          acceptedInviteFriends = [];
+          console.warn('Could not load the Drive invitation ledger:', error);
+        }
         try {
           await syncAcceptedInvitationStatuses([], current);
           if (current === generation && knownInvitationEmails.length) {
@@ -337,19 +352,10 @@ export const social = {
       // Registration is the invitation gate. Never fail open when Firestore is
       // unavailable or over quota: without a successful check, access is denied.
       await retryTransientAuthOperation(() => store.register());
-      if (current !== generation) return false;
-      try {
-        registeredShareFriends = await store.loadFriends();
-        if (current === generation) emit({ friends: combineFriendRows() });
-      } catch (error) {
-        if (isQuotaExceeded(error)) notifyQuotaExceeded();
-        // Drive discovery remains a fallback, but a failed relationship query must be visible in diagnostics.
-        console.warn('Could not load registered friends and library-sharing relationships:', error);
-      }
+      logConnectionStage('registration-gate-passed');
       if (current !== generation) return false;
       // Registration verifies the invitation; Firestore rules independently protect private records.
       // Avoid an undeployed callable because deploying a new function requires the paid Blaze plan.
-      if (current !== generation) return false;
       emit({ status: 'ready', message: '' });
       settleConnectionReady(true);
       stop = store.subscribe((snapshot) => {
@@ -382,6 +388,37 @@ export const social = {
           if (isQuotaExceeded(error)) { disableFirestoreAfterQuota(current); return; }
           emit({ status: 'error', message: socialError(error) });
         });
+      // The registration gate has passed. Resolve sign-in now; friend relationship
+      // details can be fetched in the background and merged when ready.
+      void store.loadFriends().then(async (friends) => {
+        if (current !== generation) return;
+        registeredShareFriends = friends;
+        emit({ friends: combineFriendRows() });
+        // Older relationship records may predate the known-contact email cache.
+        // Repair it only when an active friend is missing an address, then refresh
+        // the rows once; do not add these extra reads to every sign-in.
+        let emailRepairAttempted = false;
+        try { emailRepairAttempted = sessionStorage.getItem(`${FRIEND_EMAIL_REPAIR_PREFIX}${invitationUser.uid}`) === '1'; } catch { /* optional session storage */ }
+        if (!emailRepairAttempted && friends.some((friend) => !String(friend.email || '').trim())) {
+          try {
+            try { sessionStorage.setItem(`${FRIEND_EMAIL_REPAIR_PREFIX}${invitationUser.uid}`, '1'); } catch { /* repair is still safe without storage */ }
+            await store.syncKnownContacts();
+            if (current !== generation) return;
+            const refreshed = await store.loadFriends();
+            if (current !== generation) return;
+            registeredShareFriends = refreshed;
+            emit({ friends: combineFriendRows() });
+          } catch (error) {
+            if (current !== generation) return;
+            if (isQuotaExceeded(error)) notifyQuotaExceeded();
+            console.warn('Could not repair missing friend email metadata:', error);
+          }
+        }
+      }).catch((error) => {
+        if (current !== generation) return;
+        if (isQuotaExceeded(error)) notifyQuotaExceeded();
+        console.warn('Could not load registered friends and library-sharing relationships:', error);
+      });
       return true;
     } catch (error) {
       if (current === generation) {

@@ -19,8 +19,23 @@ test('app and settings UI share one social-runtime module instance', async () =>
   assert.equal(specifier(ui, 'ui.js'), specifier(friends, 'friends-ui.js'));
 });
 
-test('invitation status refresh does not block the mandatory registration gate', async () => {
+test('invitation ledger and friend details do not block the mandatory registration gate', async () => {
   const runtime = await source('../js/social-runtime.js');
   assert.match(runtime, /void\s*\(async\s*\(\)\s*=>\s*\{[\s\S]*?await syncAcceptedInvitationStatuses\(\[\], current\)/);
   assert.match(runtime, /await retryTransientAuthOperation\(\(\) => store\.register\(\)\)/);
+  assert.match(runtime, /void store\.loadFriends\(\)\.then\(async \(friends\) =>/);
+  assert.match(runtime, /async connect\(token, rootFolderId = '', knownDriveUser = null\)/);
+  assert.match(runtime, /Promise\.all\(\[driveUserPromise, sessionPromise\]\)/);
+});
+
+test('friend list changes trigger a fresh admin metadata check without exposing emails early', async () => {
+  const ui = await source('../js/friends-ui.js');
+  assert.match(ui, /if \(hadFriendSnapshot && !invitationQuota\)\s*\{\s*quotaMetadataRetryUsed = false;\s*void refreshInvitationStatuses\(\);/);
+  assert.match(ui, /else if \(invitationQuota && friendEmail\)/);
+});
+
+test('best-effort invitation finalization cannot block the registration gate', async () => {
+  const store = await source('../js/social-store.js');
+  assert.match(store, /void user\.getIdToken\(\)\.then\(\(idToken\) => finalizeInviteeRegistration\(\{ idToken \}\)\)/);
+  assert.doesNotMatch(store, /await finalizeInviteeRegistration\(/);
 });

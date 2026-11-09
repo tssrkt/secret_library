@@ -412,7 +412,7 @@ async function afterAuthorization() {
   reconnectRequired = false;
   ui.setReconnectRequired(false);
   // Enforce the invitation gate before showing any authorized UI, including the root-folder picker.
-  const registered = await social.connect(getAccessToken(), activeRootFolderId || '');
+  const registered = await social.connect(getAccessToken(), activeRootFolderId || '', user);
   if (!registered) {
     // A rejected sign-in must also clear any catalog left over from a previous session.
     libraryAccessGranted = false;
@@ -542,6 +542,8 @@ async function changeRootFolder() {
 async function signIn() {
   if (metadataController) return;
   const attempt = authAttempts.begin();
+  const authStartedAt = performance.now();
+  const logAuthStage = (stage) => console.debug(`[auth-timing] ${stage}: ${Math.round(performance.now() - authStartedAt)} ms`);
   ui.clearError();
   ui.setBusy(true);
   ui.setStatus('Ожидаем выбора Google-аккаунта…');
@@ -549,11 +551,13 @@ async function signIn() {
     // An explicit sign-in must let the user choose the account. A blank prompt
     // can silently reuse a different Google account and fail the invite gate.
     await requestAccessToken({ prompt: 'select_account' });
+    logAuthStage('google-oauth');
     if (!authAttempts.isCurrent(attempt)) {
       clearAccessToken();
       return;
     }
     await afterAuthorization();
+    logAuthStage('authorized-ui-ready');
   } catch (error) {
     if (authAttempts.isCurrent(attempt)) {
       ui.showError(readableError(error));
