@@ -6,6 +6,20 @@ import { socialError } from '../js/social-runtime.js';
 
 if (!globalThis.crypto) globalThis.crypto = webcrypto;
 
+test('shared catalog lifecycle never deletes Drive files and uses a tombstone when unpublished', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const driveSource = await readFile(new URL('../js/drive.js', import.meta.url), 'utf8');
+  const sharedSource = await readFile(new URL('../js/shared-library.js', import.meta.url), 'utf8');
+  const deleteImplementation = driveSource.match(/export async function deleteDriveFile\(fileId\) \{([\s\S]*?)\n\}/)?.[1] || '';
+  assert.match(deleteImplementation, /drive_file_deletion_blocked/);
+  assert.doesNotMatch(deleteImplementation, /driveFetch|method:\s*['"]DELETE['"]/);
+  assert.doesNotMatch(sharedSource, /deleteDriveFile\s*\(/);
+  assert.match(sharedSource, /existing = null;/);
+  assert.match(driveSource, /unpublishedCatalog \|\| inaccessibleMarkedCatalog \|\| null/);
+  assert.match(sharedSource, /published:\s*false/);
+  assert.match(sharedSource, /index\.published === false/);
+});
+
 test('excluded nested folders and all their descendants stay out of the shared catalog', () => {
   const index = {
     version: 4, rootFolderId: 'root', folders: [

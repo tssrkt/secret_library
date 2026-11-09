@@ -1,6 +1,6 @@
 import { SHARED_CATALOG_FILE_NAME } from './config.js';
 import {
-  createDriveJsonFile, deleteDriveFile, downloadDriveJsonFile, findDriveCatalogFile, updateDriveJsonFile,
+  createDriveJsonFile, downloadDriveJsonFile, findDriveCatalogFile, updateDriveJsonFile,
 } from './drive.js';
 import { loadSharedCover } from './shared-cover-cache.js';
 import { ensureDriveItemAuthorized, forgetDriveItemAuthorization, rememberDriveItemAuthorization } from './google-picker.js?v=20261109-drive-picker-auth-recovery';
@@ -61,20 +61,33 @@ export function createSharedLibraryStore({ user, authorizeItem = ensureDriveItem
         const projection = sharedLibraryIndex(index, settings);
         const ownerDisplayName = typeof user.displayName === 'string' ? user.displayName.trim().slice(0, 160) : '';
         const signature = await signatureOf({ projection, ownerDisplayName });
-        const catalog = JSON.stringify({ ...projection, ownerUid: user.uid, ownerDisplayName, signature });
+        const catalog = JSON.stringify({ ...projection, ownerUid: user.uid, ownerDisplayName, signature, published: true });
         let existing = await findDriveCatalogFile(user.uid);
         if (existing && !existing.parents?.includes(index.rootFolderId)) {
           await authorizeItem({ id: existing.id, name: SHARED_CATALOG_FILE_NAME, mimeType: 'application/json' });
-          try { await deleteDriveFile(existing.id); }
+          const current = await downloadDriveJsonFile(existing.id);
+          const tombstone = {
+            version: current?.version || 1,
+            rootFolderId: current?.rootFolderId || existing.parents?.[0] || '',
+            updatedAt: new Date().toISOString(),
+            folders: [], books: [], folderNotes: {}, ownerUid: user.uid,
+            ownerDisplayName: typeof user.displayName === 'string' ? user.displayName.trim().slice(0, 160) : '',
+            signature: current?.signature || await signatureOf({ ownerUid: user.uid, published: false }),
+            published: false,
+          };
+          try { await updateDriveJsonFile(existing.id, JSON.stringify(tombstone)); }
           catch (error) {
             if (error?.status === 403) forgetAuthorization(existing.id);
             throw error;
           }
+          // Do not move the old file: that would preserve direct Drive permissions
+          // from the old root. Leave an unpublished tombstone and create a fresh
+          // catalog in the newly selected root, inheriting only its permissions.
           existing = null;
         }
         if (existing) {
           const current = await downloadDriveJsonFile(existing.id);
-          if (current?.signature === signature && current.rootFolderId === index.rootFolderId && (current.ownerDisplayName || '') === ownerDisplayName) {
+          if (current?.published !== false && current?.signature === signature && current.rootFolderId === index.rootFolderId && (current.ownerDisplayName || '') === ownerDisplayName) {
             catalogIds.set(user.uid, existing.id);
             return { fileId: existing.id, revision: signature };
           }
@@ -103,7 +116,18 @@ export function createSharedLibraryStore({ user, authorizeItem = ensureDriveItem
         const existing = await findDriveCatalogFile(user.uid);
         if (existing) {
           await authorizeItem({ id: existing.id, name: SHARED_CATALOG_FILE_NAME, mimeType: 'application/json' });
-          try { await deleteDriveFile(existing.id); }
+          const current = await downloadDriveJsonFile(existing.id);
+          const tombstone = {
+            version: current?.version || 1,
+            rootFolderId: current?.rootFolderId || existing.parents?.[0] || '',
+            updatedAt: new Date().toISOString(),
+            folders: [], books: [], folderNotes: {},
+            ownerUid: user.uid,
+            ownerDisplayName: typeof user.displayName === 'string' ? user.displayName.trim().slice(0, 160) : '',
+            signature: current?.signature || await signatureOf({ ownerUid: user.uid, published: false }),
+            published: false,
+          };
+          try { await updateDriveJsonFile(existing.id, JSON.stringify(tombstone)); }
           catch (error) {
             if (error?.status === 403) forgetAuthorization(existing.id);
             throw error;
@@ -124,6 +148,7 @@ export function createSharedLibraryStore({ user, authorizeItem = ensureDriveItem
           ensureCurrent();
           if (index.ownerUid !== owner || !Array.isArray(index.books) || !Array.isArray(index.folders) || !index.rootFolderId
               || typeof index.signature !== 'string') throw new Error('Каталог библиотеки повреждён или не соответствует владельцу.');
+          if (index.published === false) throw new Error('Владелец библиотеки снял публикацию.');
           return index;
         } catch (error) {
           if (attempt === 0 && file.cached && (error?.status === 403 || error?.status === 404)) {

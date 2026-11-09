@@ -1,8 +1,27 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { DRIVE_SCOPES, GOOGLE_CLOUD_PROJECT_NUMBER, GOOGLE_CLIENT_ID, GOOGLE_PICKER_API_KEY } from '../js/config.js';
+import { deleteDriveFile } from '../js/drive.js';
 import { AUTH_SESSION_KEY } from '../js/auth.js';
 import { assertDrivePickerSelection, authorizeDriveItem, configureDrivePickerView, DRIVE_ITEM_AUTHORIZATION_MARKER_PREFIX, forgetDriveItemAuthorization, rememberDriveItemAuthorization } from '../js/google-picker.js';
+
+test('ordinary Google Drive file deletion is blocked before any API request', async () => {
+  await assert.rejects(deleteDriveFile('ordinary-book-id'), (error) => {
+    assert.equal(error.code, 'drive_file_deletion_blocked');
+    assert.equal(error.fileId, 'ordinary-book-id');
+    return /Удаление обычных файлов Google Drive запрещено/.test(error.message);
+  });
+});
+
+test('appData cleanup verifies the file parent before sending DELETE', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const source = await readFile(new URL('../js/drive.js', import.meta.url), 'utf8');
+  const implementation = source.match(/export async function deleteAppDataFile\(fileId\) \{([\s\S]*?)\n\}/)?.[1] || '';
+  assert.match(implementation, /fields: 'id,parents'/);
+  assert.match(implementation, /file\.parents\.includes\('appDataFolder'\)/);
+  assert.match(implementation, /appdata_deletion_blocked/);
+  assert.match(implementation, /method: 'DELETE'/);
+});
 
 test('OAuth scopes keep broad read and appData but remove broad Drive mutation scope', () => {
   const scopes = DRIVE_SCOPES.split(/\s+/);

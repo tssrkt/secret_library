@@ -310,6 +310,8 @@ export async function findDriveCatalogFile(ownerUid) {
   // Search all Drive files visible to this account, including files inherited from
   // shared folders; then match the app-private owner marker returned by the API.
   let pageToken = '';
+  let unpublishedCatalog = null;
+  let inaccessibleMarkedCatalog = null;
   do {
     const query = `name = '${SHARED_CATALOG_FILE_NAME}' and trashed = false`;
     const params = new URLSearchParams({ q: query, spaces: 'drive', pageSize: '100',
@@ -317,30 +319,41 @@ export async function findDriveCatalogFile(ownerUid) {
     if (pageToken) params.set('pageToken', pageToken);
     const result = await driveFetch(`/files?${params}`, { readJson: true });
     const candidates = result.files || [];
-    // appProperties are private to this OAuth application and may be absent from
-    // results in some sharing configurations. Prefer the marker, but verify the
-    // catalog payload as a fallback instead of incorrectly reporting it missing.
-    const marked = candidates.find((file) => file.appProperties?.secretLibraryOwnerUid === ownerUid);
-    if (marked) return marked;
-    for (const candidate of candidates) {
+    // Prefer appProperties matches to avoid reading unrelated catalogs. If a prior
+    // root left a tombstone, keep searching for a live catalog belonging to this owner.
+    const orderedCandidates = [
+      ...candidates.filter((file) => file.appProperties?.secretLibraryOwnerUid === ownerUid),
+      ...candidates.filter((file) => file.appProperties?.secretLibraryOwnerUid !== ownerUid),
+    ];
+    for (const candidate of orderedCandidates) {
       if (candidate.mimeType !== 'application/json') continue;
+      const markedForOwner = candidate.appProperties?.secretLibraryOwnerUid === ownerUid;
       try {
         const catalog = await downloadDriveJsonFile(candidate.id);
-        if (catalog?.ownerUid === ownerUid) return candidate;
+        if (catalog?.ownerUid !== ownerUid) continue;
+        if (catalog.published === false) {
+          unpublishedCatalog ||= candidate;
+          continue;
+        }
+        return candidate;
       } catch (error) {
-        // A catalog belonging to another account may not be readable to this user.
-        // Keep searching other candidates; the requested owner's access will be
-        // reported accurately if no matching catalog can be found.
         if (error?.status !== 403 && error?.status !== 404) throw error;
+        // Preserve the most likely owner catalog as a fallback so load() can
+        // surface the original permission error if no readable live catalog exists.
+        if (markedForOwner && error?.status === 403) inaccessibleMarkedCatalog ||= candidate;
       }
     }
     pageToken = result.nextPageToken || '';
   } while (pageToken);
-  return null;
+  return unpublishedCatalog || inaccessibleMarkedCatalog || null;
 }
 
+// Fail closed: ordinary Drive files may contain the user's books and must never be
+// deleted by the application. Internal appDataFolder cleanup uses deleteAppDataFile.
 export async function deleteDriveFile(fileId) {
-  await driveFetch(`/files/${encodeURIComponent(fileId)}?supportsAllDrives=true`, { method: 'DELETE' });
+  throw Object.assign(new Error('Удаление обычных файлов Google Drive запрещено в целях безопасности.'), {
+    code: 'drive_file_deletion_blocked', fileId,
+  });
 }
 
 export async function createAppDataBlob(name, blob) {
@@ -362,5 +375,13 @@ export async function downloadAppDataBlob(fileId, signal) {
 }
 
 export async function deleteAppDataFile(fileId) {
+  if (!fileId) throw new Error('Не задан ID служебного файла приложения.');
+  const params = new URLSearchParams({ fields: 'id,parents' });
+  const file = await driveFetch(`/files/${encodeURIComponent(fileId)}?${params}`, { readJson: true });
+  if (!Array.isArray(file.parents) || !file.parents.includes('appDataFolder')) {
+    throw Object.assign(new Error('Удаление разрешено только для файлов в appDataFolder.'), {
+      code: 'appdata_deletion_blocked', fileId,
+    });
+  }
   await driveFetch(`/files/${encodeURIComponent(fileId)}`, { method: 'DELETE' });
 }
