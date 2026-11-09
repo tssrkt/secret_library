@@ -17,7 +17,7 @@ import {
 import { prepareIndexingRun, createRetryEligibilityCheck } from './indexing-run.js';
 import * as ui from './ui.js?v=20261109-drive-picker-auth-recovery';
 import { errorDetails, recordIndexingError } from './indexing-errors.js';
-import { social, socialError } from './social-runtime.js?v=20261109-drive-picker-auth-recovery';
+import { social, socialError } from './social-runtime.js?v=20261109-settings-friends-controls';
 import { getAccessToken } from './auth.js?v=20261109-oauth-picker-diagnostics';
 import { checkpointKey, loadCheckpoint, saveCheckpoint, deleteCheckpoint, commitCheckpoint } from './indexing-checkpoint.js';
 import { createLibraryTabs } from './library-tabs.js';

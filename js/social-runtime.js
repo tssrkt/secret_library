@@ -317,15 +317,21 @@ export const social = {
         acceptedInviteFriends = [];
         console.warn('Could not load the Drive invitation ledger:', error);
       }
-      // Apps Script is the source of truth. Always request the full owner registry, not only emails found in the secondary Drive ledger, so invitations missing from that cache are restored. Reconstruct the invitation list and accepted
-      // friends even when the secondary Drive appData ledger is unavailable.
-      try {
-        await syncAcceptedInvitationStatuses([], current);
-        if (knownInvitationEmails.length) await syncAcceptedInvitationStatuses(knownInvitationEmails, current);
-      } catch (error) {
-        if (isQuotaExceeded(error)) notifyQuotaExceeded();
-        console.warn('Could not refresh invitation acceptance statuses:', error);
-      }
+      // Invitation status refresh is independent from the mandatory registration gate.
+      // Run it in the background so a slow Apps Script response cannot delay sign-in.
+      // The UI will receive the authoritative status when the request completes.
+      void (async () => {
+        try {
+          await syncAcceptedInvitationStatuses([], current);
+          if (current === generation && knownInvitationEmails.length) {
+            await syncAcceptedInvitationStatuses(knownInvitationEmails, current);
+          }
+        } catch (error) {
+          if (current !== generation) return;
+          if (isQuotaExceeded(error)) notifyQuotaExceeded();
+          console.warn('Could not refresh invitation acceptance statuses:', error);
+        }
+      })();
       // Registration now updates the server-provisioned profile instead of relying on
       // Firestore pendingInvites as the invitation authority.
       // Registration is the invitation gate. Never fail open when Firestore is
