@@ -138,6 +138,48 @@ test('failed Drive catalog creation can be retried successfully', async () => {
   assert.equal(creates, 2, 'retry performs a new create attempt after the failed request');
 });
 
+test('changing the root tombstones the old catalog and creates a new one without moving or deleting files', async () => {
+  const oldCatalog = {
+    version: 4, rootFolderId: 'old-root', folders: [{ id: 'old-root', parentId: null, name: 'Old root' }],
+    books: [], folderNotes: {}, ownerUid: 'owner', ownerDisplayName: 'Owner', signature: 'old-signature', published: true,
+  };
+  let tombstoneBody = '';
+  let createBody = '';
+  let deleteCalls = 0;
+  globalThis.fetch = async (input, options = {}) => {
+    const url = new URL(String(input));
+    if (url.pathname === '/drive/v3/files') {
+      const body = { files: [{ id: 'old-catalog', name: 'secret-library-catalog.json', mimeType: 'application/json',
+        parents: ['old-root'], appProperties: { secretLibraryOwnerUid: 'owner' } }] };
+      return { ok: true, status: 200, json: async () => body, clone() { return { json: async () => body }; } };
+    }
+    if (url.pathname === '/drive/v3/files/old-catalog' && url.searchParams.get('alt') === 'media') {
+      return { ok: true, status: 200, json: async () => oldCatalog, clone() { return { json: async () => oldCatalog }; } };
+    }
+    if (url.pathname === '/upload/drive/v3/files/old-catalog' && options.method === 'PATCH') {
+      tombstoneBody = String(options.body);
+      const body = { id: 'old-catalog' };
+      return { ok: true, status: 200, json: async () => body, clone() { return { json: async () => body }; } };
+    }
+    if (url.pathname === '/upload/drive/v3/files' && options.method === 'POST') {
+      createBody = String(options.body);
+      const body = { id: 'new-catalog', name: 'secret-library-catalog.json', mimeType: 'application/json', parents: ['new-root'] };
+      return { ok: true, status: 200, json: async () => body, clone() { return { json: async () => body }; } };
+    }
+    if (options.method === 'DELETE') deleteCalls++;
+    const body = { error: { message: 'Unexpected Drive request: ' + options.method + ' ' + url.pathname } };
+    return { ok: false, status: 400, headers: { get: () => null }, json: async () => body, clone() { return { json: async () => body }; } };
+  };
+  const store = createSharedLibraryStore({ user: { uid: 'owner', displayName: 'Owner' }, authorizeItem: async () => true, rememberAuthorization: () => {}, forgetAuthorization: () => {} });
+  const index = { version: 4, rootFolderId: 'new-root', folders: [{ id: 'new-root', parentId: null, name: 'New root' }], books: [] };
+  const result = await store.publish(index, { sharing: { excludedFolderIds: [] } });
+  assert.equal(result.fileId, 'new-catalog');
+  assert.match(tombstoneBody, /"published":false/);
+  assert.match(tombstoneBody, /"rootFolderId":"old-root"/);
+  assert.match(createBody, /"parents":\["new-root"\]/);
+  assert.equal(deleteCalls, 0, 'root changes do not delete either the old catalog or ordinary Drive files');
+});
+
 test('published Drive catalog is created in the selected root without exposing private cover IDs', async () => {
   let requestBody = '';
   globalThis.fetch = async (input, options = {}) => {
