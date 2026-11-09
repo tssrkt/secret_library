@@ -1,5 +1,5 @@
 import { SHARED_CATALOG_FILE_NAME, FOLDER_MIME_TYPE } from './config.js';
-import { driveFetch, downloadDriveJsonFile, findDriveCatalogFile } from './drive.js';
+import { driveFetch, downloadDriveJsonFile, findDriveCatalogFile } from './drive.js?v=20261109-drive-error-diagnostics';
 import { ensureDriveFolderAuthorized } from './google-picker.js?v=20261108-drive-file-picker-folder-fix';
 
 const normalizeEmail = (value) => typeof value === 'string' ? value.trim().toLowerCase() : '';
@@ -95,13 +95,19 @@ export async function syncFolderSharingAccess(index, settings, api = {}) {
       const params = new URLSearchParams({ fields: 'id,mimeType,inheritedPermissionsDisabled,capabilities(canDisableInheritedPermissions,canEnableInheritedPermissions)', supportsAllDrives: 'true' });
       let current;
       try {
-        current = await request(`/files/${encodeURIComponent(folder.id)}?${params}`, { readJson: true });
+        current = await request(`/files/${encodeURIComponent(folder.id)}?${params}`, {
+          readJson: true,
+          diagnostics: { stage: 'folder-sharing-metadata', folderId: folder.id, folderName: folder.name },
+        });
       } catch (error) {
         // With drive.file, a folder may be invisible until the user selects that exact folder in Picker.
         // Authorize on the first 403, then repeat the metadata read before deciding whether to PATCH.
         if (error?.status !== 403) throw error;
         await authorizeFolder({ id: folder.id, name: folder.name, mimeType: FOLDER_MIME_TYPE, isFolder: true });
-        current = await request(`/files/${encodeURIComponent(folder.id)}?${params}`, { readJson: true });
+        current = await request(`/files/${encodeURIComponent(folder.id)}?${params}`, {
+          readJson: true,
+          diagnostics: { stage: 'folder-sharing-metadata-after-picker', folderId: folder.id, folderName: folder.name },
+        });
       }
       if (current.mimeType !== FOLDER_MIME_TYPE) throw new Error(`«${folder.name}» больше не является папкой Google Drive.`);
       const previous = current.inheritedPermissionsDisabled === true;
@@ -114,6 +120,7 @@ export async function syncFolderSharingAccess(index, settings, api = {}) {
       await request(`/files/${encodeURIComponent(folder.id)}?${updateParams}`, {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ inheritedPermissionsDisabled: desired }), readJson: true,
+        diagnostics: { stage: 'folder-sharing-update', folderId: folder.id, folderName: folder.name },
       });
       changed.push({ id: folder.id, previous });
     }
@@ -128,7 +135,13 @@ export async function syncFolderSharingAccess(index, settings, api = {}) {
         });
       } catch { /* preserve the original failure; the next save can reconcile access */ }
     }
-    throw new Error(`Не удалось применить ограничения доступа в Google Drive. Настройки не сохранены. ${error?.message || error}`);
+    const diagnostic = [
+      error?.stage ? `stage: ${error.stage}` : '',
+      error?.status ? `HTTP ${error.status}` : '',
+      error?.reason ? `причина: ${error.reason}` : '',
+      error?.apiMessage ? `ответ Google: ${error.apiMessage}` : '',
+    ].filter(Boolean).join('; ');
+    throw new Error(`Не удалось применить ограничения доступа в Google Drive. Настройки не сохранены. ${diagnostic || error?.message || error}`);
   }
   return changed;
 }

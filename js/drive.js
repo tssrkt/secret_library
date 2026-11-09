@@ -16,12 +16,14 @@ async function readDownloadBody(response, method, signal) {
 }
 
 export class DriveError extends Error {
-  constructor(message, { status = 0, code = 'drive_error', reason = '', retryable = false } = {}) {
+  constructor(message, { status = 0, code = 'drive_error', reason = '', apiMessage = '', details = [], retryable = false } = {}) {
     super(message);
     this.name = 'DriveError';
     this.status = status;
     this.code = code;
     this.reason = reason;
+    this.apiMessage = apiMessage;
+    this.details = Array.isArray(details) ? details : [];
     this.retryable = retryable;
   }
 }
@@ -122,8 +124,10 @@ export async function driveFetch(path, options = {}, retry = 0, apiRoot = API_RO
     status: response.status,
     code: response.status === 401 ? 'unauthorized' : missingDriveScope ? 'insufficient_scope' : 'drive_error',
     retryable,
+    reason,
+    apiMessage,
+    details: errorBody?.error?.errors || [],
   });
-  error.reason = reason;
   if (/quota/i.test(reason) || /quota/i.test(apiMessage)) {
     error.message += ` (Google Drive HTTP ${response.status}; reason: ${reason || 'not provided'})`;
   }

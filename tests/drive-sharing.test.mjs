@@ -343,3 +343,37 @@ test('authorizes a folder in Picker and retries metadata after an initial 403', 
   assert.equal(state.inheritedPermissionsDisabled, true);
   assert.equal(calls.at(-1).options.method, 'PATCH');
 });
+
+
+test('preserves Google API diagnostics when folder metadata is still denied after Picker authorization', async () => {
+  let calls = 0;
+  let pickerCalls = 0;
+  const request = async () => {
+    calls += 1;
+    const error = new Error(calls === 1 ? 'Forbidden' : 'No access after Picker');
+    error.status = 403;
+    error.stage = calls === 1 ? 'folder-sharing-metadata' : 'folder-sharing-metadata-after-picker';
+    error.reason = 'insufficientFilePermissions';
+    error.apiMessage = 'The user does not have sufficient permissions for this file.';
+    throw error;
+  };
+  const { syncFolderSharingAccess } = await import('../js/drive-sharing.js');
+  await assert.rejects(
+    syncFolderSharingAccess({ rootFolderId: 'root', folders: [
+      { id: 'root', parentId: null, name: 'Root' },
+      { id: 'private-folder', parentId: 'root', name: 'Private folder' },
+    ] }, { sharing: { excludedFolderIds: ['private-folder'] } }, {
+      driveFetch: request,
+      authorizeFolder: async () => { pickerCalls += 1; return true; },
+    }),
+    (error) => {
+      assert.match(error.message, /folder-sharing-metadata-after-picker/);
+      assert.match(error.message, /HTTP 403/);
+      assert.match(error.message, /insufficientFilePermissions/);
+      assert.match(error.message, /The user does not have sufficient permissions/);
+      return true;
+    },
+  );
+  assert.equal(calls, 2);
+  assert.equal(pickerCalls, 1);
+});
