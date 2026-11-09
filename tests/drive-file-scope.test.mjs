@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { DRIVE_SCOPES, GOOGLE_PICKER_API_KEY } from '../js/config.js';
+import { DRIVE_SCOPES, GOOGLE_CLOUD_PROJECT_NUMBER, GOOGLE_CLIENT_ID, GOOGLE_PICKER_API_KEY } from '../js/config.js';
 import { AUTH_SESSION_KEY } from '../js/auth.js';
 import { authorizeDriveItem } from '../js/google-picker.js';
 
@@ -10,6 +10,11 @@ test('OAuth scopes keep broad read and appData but remove broad Drive mutation s
   assert.ok(scopes.includes('https://www.googleapis.com/auth/drive.appdata'));
   assert.ok(scopes.includes('https://www.googleapis.com/auth/drive.file'));
   assert.ok(!scopes.includes('https://www.googleapis.com/auth/drive'));
+});
+
+test('Google Picker app ID matches the OAuth client project number', () => {
+  assert.equal(GOOGLE_CLOUD_PROJECT_NUMBER, '194069938786');
+  assert.equal(GOOGLE_CLOUD_PROJECT_NUMBER, GOOGLE_CLIENT_ID.split('-')[0]);
 });
 
 test('old OAuth sessions are not restored after scope migration', () => {

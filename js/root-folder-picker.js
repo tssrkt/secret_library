@@ -1,4 +1,4 @@
-import { authorizeDriveFolder } from './google-picker.js?v=20261108-drive-file-picker-folder-fix';
+import { authorizeDriveFolder } from './google-picker.js?v=20261109-drive-picker-app-id';
 
 export function chooseRootFolder({ listChildren, getFolder, onExit = () => {}, description = 'Выберите папку в корне Google Диска. Сайт будет сканировать её и все вложенные папки.', documentRef = document }) {
   return new Promise((resolve, reject) => {

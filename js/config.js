@@ -1,5 +1,6 @@
 // Web OAuth Client ID is public by design. Never add a client secret here.
 export const GOOGLE_CLIENT_ID = '194069938786-5cbuhjli3skvq9ccbaee0nd1qjviqi9a.apps.googleusercontent.com';
+export const GOOGLE_CLOUD_PROJECT_NUMBER = GOOGLE_CLIENT_ID.split('-')[0];
 // Set this to the deployed Google Apps Script /exec URL after creating the free mailer.
 export const INVITATION_MAILER_URL = 'https://script.google.com/macros/s/AKfycbxHkcOAN0KT9se7SbroftyCEDGM2F1ErLOoZ_P-SkPT7PLf_A4JT0XqV5u9mub8iLFc/exec';
 export const ROOT_FOLDER_ID = '1Zx4Og7OR0_ERmYFzrWVDlyWBQ2cscN4f';

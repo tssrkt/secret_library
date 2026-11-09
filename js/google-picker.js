@@ -1,4 +1,4 @@
-import { FOLDER_MIME_TYPE, GOOGLE_PICKER_API_KEY } from './config.js?v=20261108-drive-file-picker-folder-fix';
+import { FOLDER_MIME_TYPE, GOOGLE_CLOUD_PROJECT_NUMBER, GOOGLE_PICKER_API_KEY } from './config.js';
 import { ensureAccessToken, getSessionUserEmail } from './auth.js?v=20261108-drive-file-picker-folder-fix';
 
 let pickerLoadPromise = null;
@@ -87,6 +87,7 @@ export async function authorizeDriveItem({ id, name = '', mimeType = '', isFolde
       if (error) reject(error); else resolve(value);
     };
     const builder = new picker.PickerBuilder()
+      .setAppId(GOOGLE_CLOUD_PROJECT_NUMBER)
       .setDeveloperKey(GOOGLE_PICKER_API_KEY)
       .setOAuthToken(token)
       .setOrigin(window.location.protocol + '//' + window.location.host)
