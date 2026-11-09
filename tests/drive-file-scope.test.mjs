@@ -133,7 +133,7 @@ test('folder authorization configures list mode and accepts the Picker selection
     assert.ok(calls.some(([name, value]) => name === 'mode' && value === 'list'));
     assert.ok(calls.some(([name, value]) => name === 'includeFolders' && value === true));
     assert.ok(calls.some(([name, value]) => name === 'selectFolder' && value === true));
-    assert.ok(!calls.some(([name]) => name === 'fileIds'), 'first-time Picker authorization must not filter out an item not yet visible to drive.file');
+    assert.ok(calls.some(([name, value]) => name === 'fileIds' && value === 'folder-1'), 'Picker authorization must show only the exact selected folder');
   } finally {
     auth.clearAccessToken();
     if (previousWindow === undefined) delete globalThis.window; else globalThis.window = previousWindow;

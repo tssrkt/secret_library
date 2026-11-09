@@ -33,11 +33,9 @@ export function forgetDriveItemAuthorization(id) {
   try { globalThis.localStorage?.removeItem(authorizationMarkerKey(id)); } catch { /* marker is only an optimization */ }
 }
 
-// During first-time authorization, do not filter the Picker to the target ID:
-// the item may not yet be visible to the drive.file grant. Let the user browse,
-// then enforce the exact ID in the PICKED callback. Restricting by ID here can
-// leave Picker on a sign-in/empty-content screen for a not-yet-authorized item.
-export function configureDrivePickerView(view, { id, mimeType = '', isFolder = false, restrictToId = false } = {}) {
+// Restrict the Picker to the exact item chosen through the app UI. Never expose
+// a browseable list of other Drive folders during this authorization step.
+export function configureDrivePickerView(view, { id, mimeType = '', isFolder = false, restrictToId = true } = {}) {
   if (!id) throw new Error('Не удалось определить объект Google Drive для авторизации.');
   if (restrictToId) {
     if (typeof view?.setFileIds !== 'function') throw new Error('Google Picker не поддерживает выбор объекта по точному идентификатору.');
@@ -134,7 +132,7 @@ export async function authorizeDriveItem({ id, name = '', mimeType = '', isFolde
   if (isFolder && typeof view.setIncludeFolders === 'function') view.setIncludeFolders(true);
   // Never search by name: duplicate names are common in Drive. Restrict the view
   // to the exact target ID and retain the callback ID check as a second safeguard.
-  configureDrivePickerView(view, { id, mimeType, isFolder });
+  configureDrivePickerView(view, { id, mimeType, isFolder, restrictToId: true });
 
   return new Promise((resolve, reject) => {
     let settled = false;
