@@ -17,6 +17,24 @@ export function rememberDriveItemAuthorization(id) {
   try { globalThis.localStorage?.setItem(authorizationMarkerKey(id), '1'); } catch { /* marker is only an optimization */ }
 }
 
+// Limit Picker to the exact Drive ID supplied by the caller. Names are not unique,
+// and setFileIds must not be combined with setParent or setEnableDrives.
+export function configureDrivePickerView(view, { id, mimeType = '', isFolder = false } = {}) {
+  if (!id) throw new Error('Не удалось определить объект Google Drive для авторизации.');
+  if (typeof view?.setFileIds !== 'function') throw new Error('Google Picker не поддерживает выбор объекта по точному идентификатору.');
+  view.setFileIds(id);
+  if (isFolder) view.setSelectFolderEnabled(true);
+  else if (mimeType) view.setMimeTypes(mimeType);
+  return view;
+}
+
+export function assertDrivePickerSelection(selected, expectedId, name = '') {
+  if (!selected || selected.id !== expectedId) {
+    throw new Error('Выбран другой объект. Закройте окно и выберите «' + (name || 'нужный объект') + '» с тем же идентификатором.');
+  }
+  return selected;
+}
+
 function loadPickerApi() {
   if (globalThis.google?.picker?.PickerBuilder) return Promise.resolve();
   if (pickerLoadPromise) return pickerLoadPromise;
@@ -72,12 +90,9 @@ export async function authorizeDriveItem({ id, name = '', mimeType = '', isFolde
   const token = await ensureAccessToken();
   const picker = globalThis.google.picker;
   const view = new picker.DocsView(isFolder ? picker.ViewId.FOLDERS : picker.ViewId.DOCS);
-  if (isFolder) {
-    // ViewId.FOLDERS already filters to folders. Do not override that view with
-    // setMimeTypes: Picker can otherwise fall back to ordinary files (for example JSON).
-    view.setSelectFolderEnabled(true);
-  } else if (mimeType) view.setMimeTypes(mimeType);
-  if (name) view.setQuery(name);
+  // Never search by name: duplicate names are common in Drive. Restrict the view
+  // to the exact target ID and retain the callback ID check as a second safeguard.
+  configureDrivePickerView(view, { id, mimeType, isFolder });
 
   return new Promise((resolve, reject) => {
     let settled = false;
@@ -106,10 +121,8 @@ export async function authorizeDriveItem({ id, name = '', mimeType = '', isFolde
           finish(false);
           return;
         }
-        if (selected.id !== id) {
-          finish(null, new Error('Выбран другой объект. Закройте окно и выберите «' + (name || 'нужный объект') + '» с тем же идентификатором.'));
-          return;
-        }
+        try { assertDrivePickerSelection(selected, id, name); }
+        catch (error) { finish(null, error); return; }
         rememberDriveItemAuthorization(id);
         finish(true);
       });

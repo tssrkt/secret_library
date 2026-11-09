@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { DRIVE_SCOPES, GOOGLE_CLOUD_PROJECT_NUMBER, GOOGLE_CLIENT_ID, GOOGLE_PICKER_API_KEY } from '../js/config.js';
 import { AUTH_SESSION_KEY } from '../js/auth.js';
-import { authorizeDriveItem, DRIVE_ITEM_AUTHORIZATION_MARKER_PREFIX } from '../js/google-picker.js';
+import { assertDrivePickerSelection, authorizeDriveItem, configureDrivePickerView, DRIVE_ITEM_AUTHORIZATION_MARKER_PREFIX } from '../js/google-picker.js';
 
 test('OAuth scopes keep broad read and appData but remove broad Drive mutation scope', () => {
   const scopes = DRIVE_SCOPES.split(/\s+/);
@@ -15,6 +15,37 @@ test('OAuth scopes keep broad read and appData but remove broad Drive mutation s
 test('Google Picker app ID matches the OAuth client project number', () => {
   assert.equal(GOOGLE_CLOUD_PROJECT_NUMBER, '194069938786');
   assert.equal(GOOGLE_CLOUD_PROJECT_NUMBER, GOOGLE_CLIENT_ID.split('-')[0]);
+});
+
+test('Picker view is restricted to the exact folder ID, not a duplicate-prone name query', () => {
+  const calls = [];
+  const view = {
+    setFileIds: (value) => calls.push(['fileIds', value]),
+    setSelectFolderEnabled: (value) => calls.push(['selectFolder', value]),
+    setMimeTypes: (value) => calls.push(['mimeTypes', value]),
+    setQuery: (value) => calls.push(['query', value]),
+  };
+  configureDrivePickerView(view, { id: 'exact-folder-id', name: 'Остальное', isFolder: true });
+  assert.deepEqual(calls, [['fileIds', 'exact-folder-id'], ['selectFolder', true]]);
+  assert.ok(!calls.some(([method]) => method === 'query'));
+});
+
+test('Picker view is restricted to the exact file ID while retaining the file type filter', () => {
+  const calls = [];
+  const view = {
+    setFileIds: (value) => calls.push(['fileIds', value]),
+    setSelectFolderEnabled: (value) => calls.push(['selectFolder', value]),
+    setMimeTypes: (value) => calls.push(['mimeTypes', value]),
+  };
+  configureDrivePickerView(view, { id: 'exact-catalog-id', mimeType: 'application/json' });
+  assert.deepEqual(calls, [['fileIds', 'exact-catalog-id'], ['mimeTypes', 'application/json']]);
+});
+
+test('Picker rejects a selected object whose ID differs even if its name matches', () => {
+  assert.throws(() => assertDrivePickerSelection({ id: 'wrong-folder-id', name: 'Остальное' }, 'expected-folder-id', 'Остальное'),
+    /Выбран другой объект/);
+  assert.deepEqual(assertDrivePickerSelection({ id: 'expected-folder-id', name: 'Остальное' }, 'expected-folder-id', 'Остальное'),
+    { id: 'expected-folder-id', name: 'Остальное' });
 });
 
 test('Picker authorization marker version invalidates stale v1 selections', () => {
