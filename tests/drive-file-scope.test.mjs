@@ -44,7 +44,7 @@ test('Picker view is restricted to the exact folder ID, not a duplicate-prone na
     setMimeTypes: (value) => calls.push(['mimeTypes', value]),
     setQuery: (value) => calls.push(['query', value]),
   };
-  configureDrivePickerView(view, { id: 'exact-folder-id', name: 'Остальное', isFolder: true });
+  configureDrivePickerView(view, { id: 'exact-folder-id', name: 'Остальное', isFolder: true, restrictToId: true });
   assert.deepEqual(calls, [['fileIds', 'exact-folder-id'], ['selectFolder', true]]);
   assert.ok(!calls.some(([method]) => method === 'query'));
 });
@@ -56,7 +56,7 @@ test('Picker view is restricted to the exact file ID while retaining the file ty
     setSelectFolderEnabled: (value) => calls.push(['selectFolder', value]),
     setMimeTypes: (value) => calls.push(['mimeTypes', value]),
   };
-  configureDrivePickerView(view, { id: 'exact-catalog-id', mimeType: 'application/json' });
+  configureDrivePickerView(view, { id: 'exact-catalog-id', mimeType: 'application/json', restrictToId: true });
   assert.deepEqual(calls, [['fileIds', 'exact-catalog-id'], ['mimeTypes', 'application/json']]);
 });
 
@@ -133,7 +133,7 @@ test('folder authorization configures list mode and accepts the Picker selection
     assert.ok(calls.some(([name, value]) => name === 'mode' && value === 'list'));
     assert.ok(calls.some(([name, value]) => name === 'includeFolders' && value === true));
     assert.ok(calls.some(([name, value]) => name === 'selectFolder' && value === true));
-    assert.ok(calls.some(([name, value]) => name === 'fileIds' && value === 'folder-1'));
+    assert.ok(!calls.some(([name]) => name === 'fileIds'), 'first-time Picker authorization must not filter out an item not yet visible to drive.file');
   } finally {
     auth.clearAccessToken();
     if (previousWindow === undefined) delete globalThis.window; else globalThis.window = previousWindow;
