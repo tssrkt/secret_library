@@ -15,16 +15,16 @@ import {
   canResumeBuildingIndex, prepareBuildingIndex, updateBuildProgress, validateCompletedIndex,
 } from './index-build.js';
 import { prepareIndexingRun, createRetryEligibilityCheck } from './indexing-run.js';
-import * as ui from './ui.js?v=20261109-drive-picker-exact-id';
+import * as ui from './ui.js?v=20261109-drive-picker-auth-recovery';
 import { errorDetails, recordIndexingError } from './indexing-errors.js';
-import { social, socialError } from './social-runtime.js?v=20261109-drive-picker-exact-id';
+import { social, socialError } from './social-runtime.js?v=20261109-drive-picker-auth-recovery';
 import { getAccessToken } from './auth.js?v=20261108-drive-file-picker-folder-fix';
 import { checkpointKey, loadCheckpoint, saveCheckpoint, deleteCheckpoint, commitCheckpoint } from './indexing-checkpoint.js';
 import { createLibraryTabs } from './library-tabs.js';
 import { createLibrarySelection } from './library-selection.js?v=20261107-stable-friend-loading';
 import { loadUserSettings, loadRootFolderPreference, loadRootFolderResourceKey, saveRootFolderPreference } from './user-settings.js';
-import { chooseRootFolder } from './root-folder-picker.js?v=20261109-drive-picker-exact-id';
-import { ensureDriveFolderAuthorized } from './google-picker.js?v=20261109-drive-picker-exact-id';
+import { chooseRootFolder } from './root-folder-picker.js?v=20261109-drive-picker-auth-recovery';
+import { ensureDriveFolderAuthorized } from './google-picker.js?v=20261109-drive-picker-auth-recovery';
 import { firebaseConfigured } from './firebase-config.js';
 import { hasMinimumBooks, MINIMUM_LIBRARY_BOOKS } from './library-access.js';
 

@@ -1,6 +1,6 @@
 import { SHARED_CATALOG_FILE_NAME, FOLDER_MIME_TYPE } from './config.js';
 import { driveFetch, downloadDriveJsonFile, findDriveCatalogFile } from './drive.js?v=20261109-drive-error-diagnostics';
-import { ensureDriveFolderAuthorized } from './google-picker.js?v=20261109-drive-picker-exact-id';
+import { ensureDriveFolderAuthorized, forgetDriveItemAuthorization } from './google-picker.js?v=20261109-drive-picker-auth-recovery';
 
 const normalizeEmail = (value) => typeof value === 'string' ? value.trim().toLowerCase() : '';
 const isEmailPrefixName = (name, email) => {
@@ -87,6 +87,7 @@ async function listPermissions(folderId, request = driveFetch) {
 export async function syncFolderSharingAccess(index, settings, api = {}) {
   const request = api.driveFetch || driveFetch;
   const authorizeFolder = api.authorizeFolder || ensureDriveFolderAuthorized;
+  const forgetFolderAuthorization = api.forgetFolderAuthorization || forgetDriveItemAuthorization;
   const excluded = new Set(settings?.sharing?.excludedFolderIds || []);
   const changed = [];
   try {
@@ -103,11 +104,19 @@ export async function syncFolderSharingAccess(index, settings, api = {}) {
         // With drive.file, a folder may be invisible until the user selects that exact folder in Picker.
         // Authorize on the first 403, then repeat the metadata read before deciding whether to PATCH.
         if (error?.status !== 403) throw error;
+        // A previous Picker selection may have been recorded even though Drive
+        // still rejected the API call. Invalidate it before asking the user again.
+        forgetFolderAuthorization(folder.id);
         await authorizeFolder({ id: folder.id, name: folder.name, mimeType: FOLDER_MIME_TYPE, isFolder: true });
-        current = await request(`/files/${encodeURIComponent(folder.id)}?${params}`, {
-          readJson: true,
-          diagnostics: { stage: 'folder-sharing-metadata-after-picker', folderId: folder.id, folderName: folder.name },
-        });
+        try {
+          current = await request(`/files/${encodeURIComponent(folder.id)}?${params}`, {
+            readJson: true,
+            diagnostics: { stage: 'folder-sharing-metadata-after-picker', folderId: folder.id, folderName: folder.name },
+          });
+        } catch (retryError) {
+          if (retryError?.status === 403) forgetFolderAuthorization(folder.id);
+          throw retryError;
+        }
       }
       if (current.mimeType !== FOLDER_MIME_TYPE) throw new Error(`«${folder.name}» больше не является папкой Google Drive.`);
       const previous = current.inheritedPermissionsDisabled === true;
@@ -117,11 +126,16 @@ export async function syncFolderSharingAccess(index, settings, api = {}) {
       // drive.file does not imply authorization of descendant folders when only the root was picked.
       await authorizeFolder({ id: folder.id, name: folder.name, mimeType: FOLDER_MIME_TYPE, isFolder: true });
       const updateParams = new URLSearchParams({ fields: 'id,inheritedPermissionsDisabled', supportsAllDrives: 'true' });
-      await request(`/files/${encodeURIComponent(folder.id)}?${updateParams}`, {
-        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ inheritedPermissionsDisabled: desired }), readJson: true,
-        diagnostics: { stage: 'folder-sharing-update', folderId: folder.id, folderName: folder.name },
-      });
+      try {
+        await request(`/files/${encodeURIComponent(folder.id)}?${updateParams}`, {
+          method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ inheritedPermissionsDisabled: desired }), readJson: true,
+          diagnostics: { stage: 'folder-sharing-update', folderId: folder.id, folderName: folder.name },
+        });
+      } catch (updateError) {
+        if (updateError?.status === 403) forgetFolderAuthorization(folder.id);
+        throw updateError;
+      }
       changed.push({ id: folder.id, previous });
     }
   } catch (error) {

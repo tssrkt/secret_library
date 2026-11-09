@@ -17,6 +17,13 @@ export function rememberDriveItemAuthorization(id) {
   try { globalThis.localStorage?.setItem(authorizationMarkerKey(id), '1'); } catch { /* marker is only an optimization */ }
 }
 
+// A Picker selection is not proof that Drive accepted a later API operation.
+// Forget the optimization after a 403 so the next attempt can ask again.
+export function forgetDriveItemAuthorization(id) {
+  if (!id || !getSessionUserEmail()) return;
+  try { globalThis.localStorage?.removeItem(authorizationMarkerKey(id)); } catch { /* marker is only an optimization */ }
+}
+
 // Limit Picker to the exact Drive ID supplied by the caller. Names are not unique,
 // and setFileIds must not be combined with setParent or setEnableDrives.
 export function configureDrivePickerView(view, { id, mimeType = '', isFolder = false } = {}) {

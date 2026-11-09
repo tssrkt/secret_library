@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { DRIVE_SCOPES, GOOGLE_CLOUD_PROJECT_NUMBER, GOOGLE_CLIENT_ID, GOOGLE_PICKER_API_KEY } from '../js/config.js';
 import { AUTH_SESSION_KEY } from '../js/auth.js';
-import { assertDrivePickerSelection, authorizeDriveItem, configureDrivePickerView, DRIVE_ITEM_AUTHORIZATION_MARKER_PREFIX } from '../js/google-picker.js';
+import { assertDrivePickerSelection, authorizeDriveItem, configureDrivePickerView, DRIVE_ITEM_AUTHORIZATION_MARKER_PREFIX, forgetDriveItemAuthorization, rememberDriveItemAuthorization } from '../js/google-picker.js';
 
 test('OAuth scopes keep broad read and appData but remove broad Drive mutation scope', () => {
   const scopes = DRIVE_SCOPES.split(/\s+/);
@@ -60,4 +60,34 @@ test('old OAuth sessions are not restored after scope migration', () => {
 test('Picker authorization fails closed when no restricted browser API key is configured', { skip: Boolean(GOOGLE_PICKER_API_KEY) }, async () => {
   await assert.rejects(authorizeDriveItem({ id: 'test-folder', name: 'Test', isFolder: true }),
     /GOOGLE_PICKER_API_KEY/);
+});
+
+
+test('a failed Drive API operation can invalidate the remembered Picker selection', async () => {
+  const previousWindow = globalThis.window;
+  const previousLocalStorage = globalThis.localStorage;
+  const values = new Map();
+  const storage = {
+    getItem: (key) => values.get(key) ?? null,
+    setItem: (key, value) => values.set(key, String(value)),
+    removeItem: (key) => values.delete(key),
+  };
+  globalThis.localStorage = storage;
+  globalThis.window = { sessionStorage: storage, localStorage: storage };
+  const auth = await import('../js/auth.js?v=20261108-drive-file-picker-folder-fix');
+  auth.restoreAuthSession({ session: {
+    getItem: () => JSON.stringify({ accessToken: 'test-token', expiresAt: Date.now() + 3600000, user: { emailAddress: 'user@example.com' } }),
+    removeItem: () => {},
+  } });
+  try {
+    const key = DRIVE_ITEM_AUTHORIZATION_MARKER_PREFIX + encodeURIComponent('user@example.com') + ':folder-id';
+    rememberDriveItemAuthorization('folder-id');
+    assert.equal(storage.getItem(key), '1');
+    forgetDriveItemAuthorization('folder-id');
+    assert.equal(storage.getItem(key), null);
+  } finally {
+    auth.clearAccessToken();
+    if (previousWindow === undefined) delete globalThis.window; else globalThis.window = previousWindow;
+    if (previousLocalStorage === undefined) delete globalThis.localStorage; else globalThis.localStorage = previousLocalStorage;
+  }
 });

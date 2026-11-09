@@ -348,6 +348,7 @@ test('authorizes a folder in Picker and retries metadata after an initial 403', 
 test('preserves Google API diagnostics when folder metadata is still denied after Picker authorization', async () => {
   let calls = 0;
   let pickerCalls = 0;
+  const forgotten = [];
   const request = async () => {
     calls += 1;
     const error = new Error(calls === 1 ? 'Forbidden' : 'No access after Picker');
@@ -365,6 +366,7 @@ test('preserves Google API diagnostics when folder metadata is still denied afte
     ] }, { sharing: { excludedFolderIds: ['private-folder'] } }, {
       driveFetch: request,
       authorizeFolder: async () => { pickerCalls += 1; return true; },
+      forgetFolderAuthorization: (id) => forgotten.push(id),
     }),
     (error) => {
       assert.match(error.message, /folder-sharing-metadata-after-picker/);
@@ -376,4 +378,34 @@ test('preserves Google API diagnostics when folder metadata is still denied afte
   );
   assert.equal(calls, 2);
   assert.equal(pickerCalls, 1);
+  assert.deepEqual(forgotten, ['private-folder', 'private-folder']);
+});
+
+
+test('invalidates Picker authorization when the folder update itself is rejected with 403', async () => {
+  const forgotten = [];
+  const calls = [];
+  const request = async (path, options = {}) => {
+    calls.push({ path, options });
+    if (options.method === 'PATCH') {
+      const error = new Error('appNotAuthorizedToFile');
+      error.status = 403;
+      error.stage = 'folder-sharing-update';
+      error.reason = 'appNotAuthorizedToFile';
+      throw error;
+    }
+    return { id: 'folder-patch-403', mimeType: 'application/vnd.google-apps.folder', inheritedPermissionsDisabled: false,
+      capabilities: { canDisableInheritedPermissions: true, canEnableInheritedPermissions: true } };
+  };
+  const { syncFolderSharingAccess } = await import('../js/drive-sharing.js');
+  await assert.rejects(syncFolderSharingAccess({ rootFolderId: 'root', folders: [
+    { id: 'root', parentId: null, name: 'Root' },
+    { id: 'folder-patch-403', parentId: 'root', name: 'Private folder' },
+  ] }, { sharing: { excludedFolderIds: ['folder-patch-403'] } }, {
+    driveFetch: request,
+    authorizeFolder: async () => true,
+    forgetFolderAuthorization: (id) => forgotten.push(id),
+  }), /folder-sharing-update.*appNotAuthorizedToFile|appNotAuthorizedToFile.*folder-sharing-update/);
+  assert.deepEqual(forgotten, ['folder-patch-403']);
+  assert.equal(calls.at(-1).options.method, 'PATCH');
 });

@@ -3,7 +3,7 @@ import {
   createDriveJsonFile, deleteDriveFile, downloadDriveJsonFile, findDriveCatalogFile, updateDriveJsonFile,
 } from './drive.js';
 import { loadSharedCover } from './shared-cover-cache.js';
-import { ensureDriveItemAuthorized, rememberDriveItemAuthorization } from './google-picker.js?v=20261109-drive-picker-exact-id';
+import { ensureDriveItemAuthorized, forgetDriveItemAuthorization, rememberDriveItemAuthorization } from './google-picker.js?v=20261109-drive-picker-auth-recovery';
 
 // A read-only projection of the owner's index. Books remain in their original Drive folders.
 export function sharedLibraryIndex(index, settings) {
@@ -40,7 +40,7 @@ async function signatureOf(value) {
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
-export function createSharedLibraryStore({ user, authorizeItem = ensureDriveItemAuthorized, rememberAuthorization = rememberDriveItemAuthorization }) {
+export function createSharedLibraryStore({ user, authorizeItem = ensureDriveItemAuthorized, rememberAuthorization = rememberDriveItemAuthorization, forgetAuthorization = forgetDriveItemAuthorization }) {
   let disposed = false;
   let queue = Promise.resolve();
   const catalogIds = new Map();
@@ -65,7 +65,11 @@ export function createSharedLibraryStore({ user, authorizeItem = ensureDriveItem
         let existing = await findDriveCatalogFile(user.uid);
         if (existing && !existing.parents?.includes(index.rootFolderId)) {
           await authorizeItem({ id: existing.id, name: SHARED_CATALOG_FILE_NAME, mimeType: 'application/json' });
-          await deleteDriveFile(existing.id);
+          try { await deleteDriveFile(existing.id); }
+          catch (error) {
+            if (error?.status === 403) forgetAuthorization(existing.id);
+            throw error;
+          }
           existing = null;
         }
         if (existing) {
@@ -78,7 +82,11 @@ export function createSharedLibraryStore({ user, authorizeItem = ensureDriveItem
         ensureCurrent();
         if (existing) {
           await authorizeItem({ id: existing.id, name: SHARED_CATALOG_FILE_NAME, mimeType: 'application/json' });
-          await updateDriveJsonFile(existing.id, catalog);
+          try { await updateDriveJsonFile(existing.id, catalog); }
+          catch (error) {
+            if (error?.status === 403) forgetAuthorization(existing.id);
+            throw error;
+          }
         } else {
           existing = await createDriveJsonFile(SHARED_CATALOG_FILE_NAME, index.rootFolderId, catalog, user.uid);
           rememberAuthorization(existing.id);
@@ -95,7 +103,11 @@ export function createSharedLibraryStore({ user, authorizeItem = ensureDriveItem
         const existing = await findDriveCatalogFile(user.uid);
         if (existing) {
           await authorizeItem({ id: existing.id, name: SHARED_CATALOG_FILE_NAME, mimeType: 'application/json' });
-          await deleteDriveFile(existing.id);
+          try { await deleteDriveFile(existing.id); }
+          catch (error) {
+            if (error?.status === 403) forgetAuthorization(existing.id);
+            throw error;
+          }
         }
         catalogIds.delete(user.uid);
       };
