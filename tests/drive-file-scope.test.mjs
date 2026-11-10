@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { DRIVE_SCOPES, GOOGLE_CLOUD_PROJECT_NUMBER, GOOGLE_CLIENT_ID, GOOGLE_PICKER_API_KEY } from '../js/config.js';
-import { deleteDriveFile } from '../js/drive.js';
+import { deleteDriveFile, driveFetch } from '../js/drive.js';
 import { AUTH_SESSION_KEY } from '../js/auth.js';
 import { assertDrivePickerSelection, authorizeDriveItem, configureDrivePickerView, DRIVE_ITEM_AUTHORIZATION_MARKER_PREFIX, forgetDriveItemAuthorization, readPickerResponse, rememberDriveItemAuthorization } from '../js/google-picker.js';
 
@@ -29,6 +29,47 @@ test('OAuth scopes keep broad read and appData but remove broad Drive mutation s
   assert.ok(scopes.includes('https://www.googleapis.com/auth/drive.appdata'));
   assert.ok(scopes.includes('https://www.googleapis.com/auth/drive.file'));
   assert.ok(!scopes.includes('https://www.googleapis.com/auth/drive'));
+});
+
+test('Drive 403 errors distinguish app authorization from account permissions without logging private data', async () => {
+  const auth = await import('../js/auth.js?v=20261109-oauth-picker-diagnostics');
+  const previousFetch = globalThis.fetch;
+  const previousWarn = console.warn;
+  const warnings = [];
+  auth.restoreAuthSession({ session: {
+    getItem: () => JSON.stringify({ accessToken: 'test-token', expiresAt: Date.now() + 3600000, user: { emailAddress: 'private@example.com' } }),
+    removeItem: () => {},
+  } });
+  console.warn = (...args) => warnings.push(args);
+  try {
+    for (const item of [
+      { reason: 'appNotAuthorizedToFile', code: 'app_not_authorized_to_file', message: /не подтвердил разрешение приложения/ },
+      { reason: 'insufficientFilePermissions', code: 'insufficient_file_permissions', message: /недостаточно прав/ },
+    ]) {
+      globalThis.fetch = async () => new Response(JSON.stringify({ error: {
+        code: 403,
+        message: item.reason === 'appNotAuthorizedToFile'
+          ? 'The user has not granted the app access to the file private-file-id.'
+          : 'The user does not have sufficient permissions for this file.',
+        errors: [{ reason: item.reason }],
+      } }), { status: 403, headers: { 'Content-Type': 'application/json' } });
+      await assert.rejects(driveFetch('/files/private-file-id/permissions', { diagnostics: { stage: 'sharing-permissions-list' } }), (error) => {
+        assert.equal(error.status, 403);
+        assert.equal(error.reason, item.reason);
+        assert.equal(error.code, item.code);
+        assert.match(error.message, item.message);
+        return true;
+      });
+    }
+    assert.equal(warnings.length, 2);
+    assert.equal(warnings[0][1].stage, 'sharing-permissions-list');
+    assert.equal(warnings[0][1].reason, 'appNotAuthorizedToFile');
+    assert.doesNotMatch(JSON.stringify(warnings), /private-file-id|private@example\.com|test-token/);
+  } finally {
+    auth.clearAccessToken();
+    console.warn = previousWarn;
+    if (previousFetch === undefined) delete globalThis.fetch; else globalThis.fetch = previousFetch;
+  }
 });
 
 test('Google Picker app ID matches the OAuth client project number', () => {

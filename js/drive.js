@@ -111,6 +111,8 @@ export async function driveFetch(path, options = {}, retry = 0, apiRoot = API_RO
   const apiMessage = errorBody?.error?.message || '';
   const missingDriveScope = response.status === 403
     && /insufficient authentication scopes|insufficientpermissions|insufficient permissions/i.test(apiMessage);
+  const appNotAuthorizedToFile = response.status === 403 && reason === 'appNotAuthorizedToFile';
+  const insufficientFilePermissions = response.status === 403 && reason === 'insufficientFilePermissions';
   const messages = {
     401: 'Сеанс Google истек. Войдите снова.',
     403: retryable ? 'Google Drive временно ограничил число запросов. Повторите позже.' : 'Нет доступа к запрошенным данным Google Drive.',
@@ -120,9 +122,13 @@ export async function driveFetch(path, options = {}, retry = 0, apiRoot = API_RO
   };
   const error = new DriveError(missingDriveScope
     ? 'Чтобы выдавать доступ к папке, нужно обновить разрешения Google Drive. Выйдите из сайта и войдите снова, подтвердив новые разрешения.'
-    : messages[response.status] || apiMessage || 'Google Drive вернул ошибку.', {
+    : appNotAuthorizedToFile
+      ? 'Google Drive не подтвердил разрешение приложения для этой папки. Повторно подтвердите доступ именно к корневой папке библиотеки.'
+      : insufficientFilePermissions
+        ? 'У текущего аккаунта недостаточно прав для изменения доступа к этой папке. Проверьте, что вы вошли под аккаунтом владельца библиотеки.'
+        : messages[response.status] || apiMessage || 'Google Drive вернул ошибку.', {
     status: response.status,
-    code: response.status === 401 ? 'unauthorized' : missingDriveScope ? 'insufficient_scope' : 'drive_error',
+    code: response.status === 401 ? 'unauthorized' : missingDriveScope ? 'insufficient_scope' : appNotAuthorizedToFile ? 'app_not_authorized_to_file' : insufficientFilePermissions ? 'insufficient_file_permissions' : 'drive_error',
     retryable,
     reason,
     apiMessage,
@@ -132,6 +138,15 @@ export async function driveFetch(path, options = {}, retry = 0, apiRoot = API_RO
     error.message += ` (Google Drive HTTP ${response.status}; reason: ${reason || 'not provided'})`;
   }
   error.contentRange = response.headers.get('Content-Range');
+  if (response.status === 403) {
+    // Keep diagnostics actionable without logging tokens, emails, file IDs, or raw provider payloads.
+    console.warn('[Secret Library] Google Drive permission denied', {
+      stage: error.stage || diagnostics.stage || 'unknown',
+      status: response.status,
+      reason: reason || 'not provided',
+      code: error.code,
+    });
+  }
   throw report(error, retry ? 'exhausted' : 'not-retried');
 }
 

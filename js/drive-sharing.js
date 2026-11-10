@@ -1,5 +1,5 @@
 import { SHARED_CATALOG_FILE_NAME, FOLDER_MIME_TYPE } from './config.js';
-import { driveFetch, downloadDriveJsonFile, findDriveCatalogFile } from './drive.js?v=20261109-drive-error-diagnostics';
+import { driveFetch, downloadDriveJsonFile, findDriveCatalogFile } from './drive.js?v=20261110-permission-diagnostics';
 import { ensureDriveFolderAuthorized, forgetDriveItemAuthorization } from './google-picker.js?v=20261109-picker-exact-folder';
 
 const normalizeEmail = (value) => typeof value === 'string' ? value.trim().toLowerCase() : '';
@@ -79,7 +79,10 @@ async function listPermissions(folderId, request = driveFetch) {
     pageSize: '100',
     supportsAllDrives: 'true',
   });
-  return listPages(`/files/${encodeURIComponent(folderId)}/permissions`, params, request);
+  return listPages(`/files/${encodeURIComponent(folderId)}/permissions`, params, (path, options = {}) => request(path, {
+    ...options,
+    diagnostics: { ...options.diagnostics, stage: 'sharing-permissions-list' },
+  }));
 }
 
 // Make the folder checkbox control real Google Drive access as well as catalog visibility.
@@ -184,6 +187,7 @@ export async function grantRootFolderAccess(rootFolderId, email, api = {}) {
       const updated = await request(`/files/${encodeURIComponent(rootFolderId)}/permissions/${encodeURIComponent(existing.id)}?${params}`, {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ role: 'reader' }), readJson: true,
+        diagnostics: { stage: 'sharing-permissions-update' },
       });
       if (updated?.role && updated.role !== 'reader') {
         throw new Error(`Не удалось ограничить доступ ${address} только чтением.`);
@@ -196,6 +200,7 @@ export async function grantRootFolderAccess(rootFolderId, email, api = {}) {
   const created = await request(`/files/${encodeURIComponent(rootFolderId)}/permissions?${params}`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ type: 'user', role: 'reader', emailAddress: address }), readJson: true,
+    diagnostics: { stage: 'sharing-permissions-create' },
   });
   if (!created?.id) throw new Error('Google Drive не подтвердил выдачу доступа к корневой папке.');
   return { permissionId: created.id, created: true, email: address };
@@ -204,7 +209,9 @@ export async function grantRootFolderAccess(rootFolderId, email, api = {}) {
 export async function revokeRootFolderAccess(rootFolderId, permission) {
   if (!rootFolderId || !permission?.created || !permission.permissionId) return;
   const params = new URLSearchParams({ supportsAllDrives: 'true' });
-  await driveFetch(`/files/${encodeURIComponent(rootFolderId)}/permissions/${encodeURIComponent(permission.permissionId)}?${params}`, { method: 'DELETE' });
+  await driveFetch(`/files/${encodeURIComponent(rootFolderId)}/permissions/${encodeURIComponent(permission.permissionId)}?${params}`, {
+    method: 'DELETE', diagnostics: { stage: 'sharing-permissions-delete' },
+  });
 }
 
 // Revoke the selected friend's direct permission on the owner's root folder using Drive only.
@@ -229,7 +236,7 @@ export async function closeRootFolderAccess(rootFolderId, email, api = {}) {
   for (const permission of matching) {
     const params = new URLSearchParams({ supportsAllDrives: 'true' });
     const path = '/files/' + encodeURIComponent(rootFolderId) + '/permissions/' + encodeURIComponent(permission.id) + '?' + params;
-    await request(path, { method: 'DELETE' });
+    await request(path, { method: 'DELETE', diagnostics: { stage: 'sharing-permissions-delete' } });
   }
   return { revoked: true, email: address };
 }
