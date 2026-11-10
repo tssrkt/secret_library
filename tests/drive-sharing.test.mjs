@@ -297,6 +297,52 @@ test('closeRootFolderAccess revokes only the matching direct Google Drive permis
   assert.equal(calls[1].options.method, 'DELETE');
 });
 
+test('closeRootFolderAccess re-authorizes the exact root folder after a permissions-list 403', async () => {
+  const calls = [];
+  let authorized = false;
+  const request = async (path, options = {}) => {
+    calls.push({ path, options });
+    if (!authorized) { const error = new Error('Access denied'); error.status = 403; throw error; }
+    if (path.includes('/permissions?')) return { permissions: [{ id: 'friend-permission', type: 'user', emailAddress: 'friend@example.com', role: 'reader', permissionDetails: [{ inherited: false }] }] };
+    return {};
+  };
+  const authorizedFolders = [];
+  const forgotten = [];
+  const { closeRootFolderAccess } = await import('../js/drive-sharing.js');
+  const result = await closeRootFolderAccess('root-id', 'friend@example.com', {
+    driveFetch: request,
+    forgetFolderAuthorization: (id) => forgotten.push(id),
+    authorizeFolder: async (folder) => { authorizedFolders.push(folder); authorized = true; },
+  });
+  assert.equal(result.revoked, true);
+  assert.deepEqual(forgotten, ['root-id']);
+  assert.deepEqual(authorizedFolders.map(({ id, isFolder }) => ({ id, isFolder })), [{ id: 'root-id', isFolder: true }]);
+  assert.equal(calls.length, 3);
+  assert.equal(calls[2].options.method, 'DELETE');
+});
+
+test('closeRootFolderAccess re-authorizes and retries a permission deletion rejected with 403', async () => {
+  const calls = [];
+  let deleteDeniedOnce = true;
+  const request = async (path, options = {}) => {
+    calls.push({ path, options });
+    if (path.includes('/permissions?')) return { permissions: [{ id: 'friend-permission', type: 'user', emailAddress: 'friend@example.com', role: 'reader', permissionDetails: [{ inherited: false }] }] };
+    if (options.method === 'DELETE' && deleteDeniedOnce) { deleteDeniedOnce = false; const error = new Error('Access denied'); error.status = 403; throw error; }
+    return {};
+  };
+  const authorizedFolders = [];
+  const forgotten = [];
+  const { closeRootFolderAccess } = await import('../js/drive-sharing.js');
+  const result = await closeRootFolderAccess('root-id', 'friend@example.com', {
+    driveFetch: request,
+    forgetFolderAuthorization: (id) => forgotten.push(id),
+    authorizeFolder: async (folder) => authorizedFolders.push(folder),
+  });
+  assert.equal(result.revoked, true);
+  assert.deepEqual(forgotten, ['root-id']);
+  assert.equal(authorizedFolders.length, 1);
+  assert.equal(calls.filter(({ options }) => options.method === 'DELETE').length, 2);
+});
 test('closeRootFolderAccess refuses to remove inherited permission', async () => {
   const calls = [];
   const request = async (path, options = {}) => {
