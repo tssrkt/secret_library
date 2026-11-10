@@ -16,6 +16,7 @@ function authorizeMailer() {
 
 function doPost(e) {
   let requestId = '';
+  let responseOrigin = SITE_ORIGIN;
   let stage = 'parse-request';
   let reservation = null;
   let emailSent = false;
@@ -25,24 +26,25 @@ function doPost(e) {
     if (!raw || raw.length > 12000) throw new Error('Некорректный запрос.');
     const input = JSON.parse(raw);
     requestId = String(input.requestId || '');
+    responseOrigin = resolveResponseOrigin(input.origin);
     if (!/^[a-zA-Z0-9_-]{12,80}$/.test(requestId)) throw new Error('Некорректный идентификатор запроса.');
     if (input.action === 'getInvitationStatuses') {
       stage = 'invitation-status-request';
-      return responsePage(requestId, true, '', handleInvitationStatuses(input));
+      return responsePage(requestId, true, '', handleInvitationStatuses(input), responseOrigin);
     }
     if (input.action === 'cancelInvitation') {
       stage = 'cancel-invitation-request';
-      return responsePage(requestId, true, '', handleCancelInvitation(input));
+      return responsePage(requestId, true, '', handleCancelInvitation(input), responseOrigin);
     }
     if (input.action === 'finalizeInviteeRegistration') {
       stage = 'finalize-invitee-registration';
-      return responsePage(requestId, true, '', finalizeInviteeRegistration(input));
+      return responsePage(requestId, true, '', finalizeInviteeRegistration(input), responseOrigin);
     }
     if (input.action) {
       adminRequest = true;
       stage = 'admin-request';
       const result = handleAdminRequest(input);
-      return adminResponsePage(requestId, true, '', result);
+      return adminResponsePage(requestId, true, '', result, responseOrigin);
     }
     const email = normalizeEmail(input.email);
     const idToken = String(input.idToken || '');
@@ -59,7 +61,7 @@ function doPost(e) {
 
     stage = 'verify-server-invitation';
     const invitation = readOwnerInvitationRecord(user.localId, email);
-    if (invitation && invitation.status === 'accepted') return responsePage(requestId, true, 'Invitation has already been accepted.');
+    if (invitation && invitation.status === 'accepted') return responsePage(requestId, true, 'Invitation has already been accepted.', undefined, responseOrigin);
     stage = 'check-blocked-recipient';
     if (isBlockedInvitationEmail(email)) {
       deactivateBlockedInvitation(email, user.localId);
@@ -77,7 +79,7 @@ function doPost(e) {
     reservation = reserveSend(user.localId, email, null);
     if (reservation.status === 'cooldown' || reservation.status === 'sending') {
       // Do not reveal whether an address belongs to an existing member.
-      return responsePage(requestId, true, 'Запрос обработан. Если получателю нужно приглашение, письмо отправлено.');
+      return responsePage(requestId, true, 'Запрос обработан. Если получателю нужно приглашение, письмо отправлено.', undefined, responseOrigin);
     }
 
     stage = 'recheck-blocked-recipient';
@@ -105,7 +107,7 @@ function doPost(e) {
     stage = 'mark-sent';
     finishSend(user.localId, email, true, reservation.reservationId);
     reservation = null;
-    return responsePage(requestId, true, invitationSuccessMessage(user.localId, invitationCount));
+    return responsePage(requestId, true, invitationSuccessMessage(user.localId, invitationCount), undefined, responseOrigin);
   } catch (error) {
     if (reservation && reservation.status === 'reserved' && !emailSent) {
       try { finishSend(reservation.uid, reservation.email, false, reservation.reservationId); } catch (_) {}
@@ -116,8 +118,8 @@ function doPost(e) {
       message: error && error.message ? String(error.message).slice(0, 500) : 'No error message'
     });
     return adminRequest
-      ? adminResponsePage(requestId, false, publicAdminError(error), null)
-      : responsePage(requestId, false, publicError(error));
+      ? adminResponsePage(requestId, false, publicAdminError(error), null, responseOrigin)
+      : responsePage(requestId, false, publicError(error), undefined, responseOrigin);
   }
 }
 
@@ -709,7 +711,14 @@ function publicError(error) {
   return 'Не удалось отправить приглашение. Повторите попытку позже.';
 }
 
-function responsePage(requestId, ok, message, data) {
+function resolveResponseOrigin(value) {
+  const origin = String(value || SITE_ORIGIN);
+  const allowedOrigins = [SITE_ORIGIN, 'http://localhost:8000', 'http://127.0.0.1:8000'];
+  if (!allowedOrigins.includes(origin)) throw new Error('Invalid application origin.');
+  return origin;
+}
+
+function responsePage(requestId, ok, message, data, origin = SITE_ORIGIN) {
   const result = JSON.stringify({
     type: 'secret-library-invite-result',
     requestId: requestId,
@@ -721,7 +730,7 @@ function responsePage(requestId, ok, message, data) {
   });
   const html = '<!doctype html><html><head><meta charset="utf-8"></head><body>' +
     '<p>Операция завершена. Вернитесь в Тайную Библиотеку.</p>' +
-    '<script>window.top.postMessage(' + result + ', ' + JSON.stringify(SITE_ORIGIN) + ');</script>' +
+    '<script>window.top.postMessage(' + result + ', ' + JSON.stringify(origin) + ');</script>' +
     '</body></html>';
   return HtmlService.createHtmlOutput(html)
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
@@ -1791,10 +1800,10 @@ function publicAdminError(error) {
   return '\u041e\u0448\u0438\u0431\u043a\u0430 Apps Script: ' + safe;
 }
 
-function adminResponsePage(requestId, ok, message, result) {
+function adminResponsePage(requestId, ok, message, result, origin = SITE_ORIGIN) {
   const payload = JSON.stringify({ type: 'secret-library-admin-result', requestId, ok, message, result })
     .replace(/</g, '\\u003c');
   const html = '<!doctype html><html><head><meta charset="utf-8"></head><body><script>window.top.postMessage(' +
-    payload + ', ' + JSON.stringify(SITE_ORIGIN) + ');</script></body></html>';
+    payload + ', ' + JSON.stringify(origin) + ');</script></body></html>';
   return HtmlService.createHtmlOutput(html).setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
 }

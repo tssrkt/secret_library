@@ -44,7 +44,7 @@ function gasRequest(action, payload) {
     let idToken;
     try { idToken = await session.user.getIdToken(); }
     catch (error) { reject(error); return; }
-    field.value = JSON.stringify({ requestId, action, idToken, data: payload || {} });
+    field.value = JSON.stringify({ requestId, action, idToken, data: payload || {}, origin: window.location.origin });
     form.append(field);
     const cleanup = () => { window.removeEventListener('message', onMessage); clearTimeout(timer); form.remove(); iframe.remove(); };
     const onMessage = event => {

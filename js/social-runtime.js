@@ -3,7 +3,7 @@ import { createSocialStore } from './social-store.js?v=20261108-registered-shari
 import { createSharedLibraryStore } from './shared-library.js?v=20261109-drive-picker-auth-recovery';
 import { discoverDriveFriends, grantRootFolderAccess, closeRootFolderAccess } from './drive-sharing.js?v=20261109-drive-picker-auth-recovery';
 import { findDriveCatalogFile, downloadDriveJsonFile, getCurrentDriveUser } from './drive.js';
-import { sendInvitationEmail, getInvitationStatuses as fetchInvitationStatuses, cancelInvitation as cancelInvitationToken } from './invitation-mailer.js?v=20261108-email-registry-auth';
+import { sendInvitationEmail, getInvitationStatuses as fetchInvitationStatuses, cancelInvitation as cancelInvitationToken } from './invitation-mailer.js?v=20261110-local-origin-avatar-fix';
 import { createInvitationLedger, acceptedInvitationFriends, invitationLedgerRows, mergeInvitationRows } from './invitation-ledger.js?v=20261107-ledger-server-discovery';
 
 const TRANSIENT_AUTH_CODES = new Set([
@@ -301,6 +301,7 @@ export const social = {
       // Keep invitation sending available as soon as Firebase Auth is ready. The
       // invitation API is independent of Firestore registration and subscriptions.
       invitationUser = session.user;
+      emit({ driveUserPhotoLink: String(driveUser?.photoLink || ''), firebasePhotoURL: String(session.user?.photoURL || '') });
       store = createSocialStore(session);
       // Keep shared-library operations unavailable until invitation registration succeeds.
       shared = createSharedLibraryStore({ user: session.user });

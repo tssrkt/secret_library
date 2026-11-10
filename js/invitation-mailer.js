@@ -20,7 +20,7 @@ function submitMailerPayload(payload, returnData = false) {
   const input = document.createElement('input');
   input.type = 'hidden';
   input.name = 'payload';
-  input.value = JSON.stringify({ ...payload, requestId });
+  input.value = JSON.stringify({ ...payload, requestId, origin: window.location.origin });
   form.append(input);
 
   return new Promise((resolve, reject) => {

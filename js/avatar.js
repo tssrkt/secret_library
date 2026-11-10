@@ -37,10 +37,24 @@ export function createAvatarController(button, image, placeholder) {
     image.onload = null;
     image.onerror = null;
     showPlaceholder(user.displayName || '');
-    if (!user.photoLink) return Promise.resolve(false);
+    const photoCandidates = [...new Set([user.photoLink, user.photoURL].filter((value) => typeof value === 'string' && value.trim()))];
+    if (!photoCandidates.length) return Promise.resolve(false);
 
     return new Promise((resolve) => {
       settlePending = resolve;
+      let candidateIndex = 0;
+      const tryNextPhoto = () => {
+        if (requestVersion !== version) return;
+        if (candidateIndex >= photoCandidates.length) {
+          image.onload = null;
+          image.onerror = null;
+          settlePending = null;
+          showPlaceholder(user.displayName || '');
+          resolve(false);
+          return;
+        }
+        image.src = photoCandidates[candidateIndex++];
+      };
       image.onload = () => {
         if (requestVersion !== version) return;
         placeholder.hidden = true;
@@ -52,13 +66,9 @@ export function createAvatarController(button, image, placeholder) {
       };
       image.onerror = () => {
         if (requestVersion !== version) return;
-        image.onload = null;
-        image.onerror = null;
-        settlePending = null;
-        showPlaceholder(user.displayName || '');
-        resolve(false);
+        tryNextPhoto();
       };
-      image.src = user.photoLink;
+      tryNextPhoto();
     });
   };
 

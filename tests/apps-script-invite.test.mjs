@@ -158,6 +158,19 @@ test('invitation statuses resolve registered recipients even without a server in
   assert.match(result.content, /"friend@gmail.com":\{"lastSentAt":\d+,"cooldownUntil":\d+,"invitationStatus":"","createdAt":0,"registered":true,"registeredUid":"existing-user-uid"/);
 });
 
+test('invitation service replies to the allowlisted localhost origin', () => {
+  const app = harness();
+  const result = app.invoke({ action: 'getInvitationStatuses', emails: [], origin: 'http://localhost:8000' });
+  assert.match(result.content, /window\.top\.postMessage\([\s\S]*?, \"http:\/\/localhost:8000\"\)/);
+});
+
+test('invitation service never reflects an untrusted origin', () => {
+  const app = harness();
+  const result = app.invoke({ action: 'getInvitationStatuses', emails: [], origin: 'https://attacker.example' });
+  assert.match(result.content, /https:\/\/tssrkt\.github\.io/);
+  assert.doesNotMatch(result.content, /attacker\.example/);
+});
+
 test('invitation status metadata includes active administrator UIDs and excludes inactive admins', () => {
   const app = harness();
   app.context.fsList = path => path === 'adminUsers' ? [

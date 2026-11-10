@@ -1,6 +1,6 @@
 import { setupDropdown } from './dropdown.js';
 import { buildLibraryLookups, folderHasLibraryChildren } from './library-view-model.js';
-import { accountIdentity, createAvatarController } from './avatar.js';
+import { accountIdentity, createAvatarController } from './avatar.js?v=20261110-local-origin-avatar-fix';
 import { createBookCard, hasPreviousVersionMetadataFailure } from './book-card.js';
 import { createAnnotationModalController } from './annotation-modal.js';
 import { loadCover as loadOwnCover } from './cover-cache.js';

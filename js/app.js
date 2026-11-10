@@ -15,9 +15,9 @@ import {
   canResumeBuildingIndex, prepareBuildingIndex, updateBuildProgress, validateCompletedIndex,
 } from './index-build.js';
 import { prepareIndexingRun, createRetryEligibilityCheck } from './indexing-run.js';
-import * as ui from './ui.js?v=20261109-drive-picker-auth-recovery';
+import * as ui from './ui.js?v=20261110-local-origin-avatar-fix';
 import { errorDetails, recordIndexingError } from './indexing-errors.js';
-import { social, socialError } from './social-runtime.js?v=20261109-drive-picker-auth-recovery';
+import { social, socialError } from './social-runtime.js?v=20261110-local-origin-avatar-fix';
 import { getAccessToken } from './auth.js?v=20261109-oauth-picker-diagnostics';
 import { checkpointKey, loadCheckpoint, saveCheckpoint, deleteCheckpoint, commitCheckpoint } from './indexing-checkpoint.js';
 import { createLibraryTabs } from './library-tabs.js';
@@ -455,7 +455,7 @@ async function afterAuthorization() {
   }
   localCheckpointKey = checkpointKey(authorizedOwner, activeRootFolderId);
   ui.setAuthorized(true);
-  void ui.setUserAvatar(user);
+  void ui.setUserAvatar({ ...user, photoURL: social.getState().firebasePhotoURL || '' });
   ui.clearError();
   if (sameOwner && currentIndex) {
     // A previously rejected library may have gained books in Drive since the last scan.
