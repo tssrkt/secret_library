@@ -401,7 +401,7 @@ test('closeRootFolderAccess reports permission-delete 403 without retrying or op
   assert.equal(calls.filter(({ options }) => options.method === 'DELETE').length, 1);
   assert.equal(pickerCalls, 0);
 });
-test('closeRootFolderAccess reauthorizes the exact root folder after a permissions-list authorization error', async () => {
+test('closeRootFolderAccess does not open Picker after a permissions-list authorization error', async () => {
   let listCalls = 0;
   let pickerCalls = 0;
   let forgotten = 0;
@@ -424,25 +424,18 @@ test('closeRootFolderAccess reauthorizes the exact root folder after a permissio
     return {};
   };
   const { closeRootFolderAccess } = await import('../js/drive-sharing.js');
-  const result = await closeRootFolderAccess('root-id', 'friend@example.com', {
+  await assert.rejects(closeRootFolderAccess('root-id', 'friend@example.com', {
     driveFetch: request,
-    authorizeFolder: async (folder) => {
-      pickerCalls += 1;
-      assert.deepEqual(folder, { id: 'root-id', name: 'корневая папка библиотеки', mimeType: 'application/vnd.google-apps.folder', isFolder: true });
-      return true;
-    },
+    authorizeFolder: async () => { pickerCalls += 1; return true; },
     forgetFolderAuthorization: (id) => { assert.equal(id, 'root-id'); forgotten += 1; },
-  });
-  assert.equal(result.revoked, true);
-  assert.equal(listCalls, 2);
-  assert.equal(pickerCalls, 1);
-  assert.equal(forgotten, 1);
-  assert.equal(deleted.length, 1);
-  assert.match(deleted[0], /permissions\/friend-permission/);
-  assert.doesNotMatch(deleted[0], /other-permission/);
+  }), /permissions-list.*appNotAuthorizedToChild|appNotAuthorizedToChild.*permissions-list/);
+  assert.equal(listCalls, 1);
+  assert.equal(pickerCalls, 0);
+  assert.equal(forgotten, 0);
+  assert.equal(deleted.length, 0);
 });
 
-test('closeRootFolderAccess reauthorizes once when deletion itself reports appNotAuthorizedToFile', async () => {
+test('closeRootFolderAccess never opens Picker when deletion reports appNotAuthorizedToFile', async () => {
   let listCalls = 0;
   let deleteCalls = 0;
   let pickerCalls = 0;
@@ -467,18 +460,17 @@ test('closeRootFolderAccess reauthorizes once when deletion itself reports appNo
     return {};
   };
   const { closeRootFolderAccess } = await import('../js/drive-sharing.js');
-  const result = await closeRootFolderAccess('root-id', 'friend@example.com', {
+  await assert.rejects(closeRootFolderAccess('root-id', 'friend@example.com', {
     driveFetch: request,
     authorizeFolder: async () => { pickerCalls += 1; return true; },
     forgetFolderAuthorization: () => {},
-  });
-  assert.equal(result.revoked, true);
-  assert.equal(listCalls, 2);
-  assert.equal(deleteCalls, 2);
-  assert.equal(pickerCalls, 1);
+  }), /permissions-delete.*appNotAuthorizedToFile|appNotAuthorizedToFile.*permissions-delete/);
+  assert.equal(listCalls, 1);
+  assert.equal(deleteCalls, 1);
+  assert.equal(pickerCalls, 0);
 });
 
-test('closeRootFolderAccess reports authorization failure if Picker confirmation does not fix it', async () => {
+test('closeRootFolderAccess reports authorization failure without opening Picker', async () => {
   let listCalls = 0;
   let pickerCalls = 0;
   const request = async (path) => {
@@ -496,12 +488,12 @@ test('closeRootFolderAccess reports authorization failure if Picker confirmation
     driveFetch: request,
     authorizeFolder: async () => { pickerCalls += 1; return true; },
     forgetFolderAuthorization: () => {},
-  }), /отказал на этапе «permissions-list» даже после повторного подтверждения корневой папки/);
-  assert.equal(listCalls, 2);
-  assert.equal(pickerCalls, 1);
+  }), /отказал на этапе «permissions-list».*окно выбора папки не открывалось/);
+  assert.equal(listCalls, 1);
+  assert.equal(pickerCalls, 0);
 });
 
-test('closeRootFolderAccess does not report success when Picker authorization is cancelled', async () => {
+test('closeRootFolderAccess does not open Picker or report success after authorization failure', async () => {
   let pickerCalls = 0;
   const request = async (path) => {
     if (path.includes('/permissions?')) {
@@ -515,10 +507,10 @@ test('closeRootFolderAccess does not report success when Picker authorization is
   const { closeRootFolderAccess } = await import('../js/drive-sharing.js');
   await assert.rejects(closeRootFolderAccess('root-id', 'friend@example.com', {
     driveFetch: request,
-    authorizeFolder: async () => { pickerCalls += 1; throw new Error('Авторизация папки отменена.'); },
+    authorizeFolder: async () => { pickerCalls += 1; throw new Error('Picker should not open'); },
     forgetFolderAuthorization: () => {},
-  }), /Авторизация папки отменена/);
-  assert.equal(pickerCalls, 1);
+  }), /permissions-list.*appNotAuthorizedToChild|appNotAuthorizedToChild.*permissions-list/);
+  assert.equal(pickerCalls, 0);
 });
 
 test('closeRootFolderAccess refuses to remove inherited permission', async () => {
@@ -614,7 +606,7 @@ test('does not invalidate Picker state or open Picker when a folder update is re
   assert.equal(calls.at(-1).options.method, 'PATCH');
 });
 
-test('diagnoses parent and at most ten immediate children after appNotAuthorizedToChild', async () => {
+test('diagnoses parent and at most ten immediate children after appNotAuthorizedToChild without retrying', async () => {
   const calls = [];
   const request = async (path, options = {}) => {
     calls.push({ path, options });
@@ -652,6 +644,6 @@ test('diagnoses parent and at most ten immediate children after appNotAuthorized
     assert.match(error.message, /проверена только первая страница/);
     return true;
   });
-  assert.equal(calls.filter(({ options }) => options.method === 'DELETE').length, 2);
+  assert.equal(calls.filter(({ options }) => options.method === 'DELETE').length, 1);
   assert.equal(calls.some(({ options }) => options.method === 'PATCH' || options.method === 'POST'), false);
 });

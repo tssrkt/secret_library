@@ -239,19 +239,16 @@ export async function revokeRootFolderAccess(rootFolderId, permission) {
   });
 }
 
-// Revoke only a direct permission on the selected root folder. If drive.file has not
-// authorized this exact folder, ask for one explicit Picker confirmation and retry once.
+// Revoke only a direct permission on the selected root folder. Closing access must
+// never open Google Picker: report authorization failures without prompting or retrying.
 export async function closeRootFolderAccess(rootFolderId, email, api = {}) {
   const request = api.driveFetch || driveFetch;
-  const authorizeFolder = api.authorizeFolder || ensureDriveFolderAuthorized;
-  const forgetFolderAuthorization = api.forgetFolderAuthorization || forgetDriveItemAuthorization;
   const address = normalizeEmail(email);
   if (!rootFolderId) throw new Error('Не удалось определить корневую папку библиотеки. Обновите библиотеку и повторите попытку.');
   if (!address) throw new Error('У этого друга не указан email, поэтому закрыть доступ автоматически нельзя.');
 
   let folderMetadata = null;
   let metadataDiagnostic = '';
-  let pickerRetried = false;
   try {
     const readMetadata = api.getFolderMetadata || ((id) => getFolderMetadata(id, {
       request,
@@ -265,10 +262,8 @@ export async function closeRootFolderAccess(rootFolderId, email, api = {}) {
     }
 
     let failedOperationStage = 'permissions-list';
-    for (let attempt = 0; attempt < 2; attempt += 1) {
-      try {
-        failedOperationStage = 'permissions-list';
-        const permissions = await listPermissions(rootFolderId, request);
+    try {
+      const permissions = await listPermissions(rootFolderId, request);
         const matching = permissions.filter((permission) => !permission.deleted
           && permission.type === 'user' && normalizeEmail(permission.emailAddress) === address
           && permission.role !== 'owner');
@@ -288,25 +283,12 @@ export async function closeRootFolderAccess(rootFolderId, email, api = {}) {
           await request(path, { method: 'DELETE', diagnostics: { stage: 'sharing-permissions-delete' } });
         }
         return { revoked: true, email: address, diagnostics: { isAppAuthorized: folderMetadata?.isAppAuthorized, canShare: folderMetadata?.capabilities?.canShare } };
-      } catch (error) {
-        if (error?.status === 403 && ['appNotAuthorizedToChild', 'appNotAuthorizedToFile'].includes(error?.reason)) {
-          error.sharingOperationStage = failedOperationStage;
-        }
-        const canRetryAuthorization = attempt === 0 && error?.status === 403
-          && ['appNotAuthorizedToChild', 'appNotAuthorizedToFile'].includes(error?.reason);
-        if (!canRetryAuthorization) throw error;
-        forgetFolderAuthorization(rootFolderId);
-        await authorizeFolder({ id: rootFolderId, name: 'корневая папка библиотеки', mimeType: FOLDER_MIME_TYPE, isFolder: true });
-        pickerRetried = true;
-        try {
-          folderMetadata = await readMetadata(rootFolderId);
-          metadataDiagnostic = `после Picker: isAppAuthorized=${typeof folderMetadata?.isAppAuthorized === 'boolean' ? folderMetadata.isAppAuthorized : 'не предоставлено'}, canShare=${typeof folderMetadata?.capabilities?.canShare === 'boolean' ? folderMetadata.capabilities.canShare : 'не предоставлено'}`;
-        } catch (metadataError) {
-          metadataDiagnostic = `после Picker метаданные недоступны${metadataError?.status ? ` (HTTP ${metadataError.status})` : ''}`;
-        }
+    } catch (error) {
+      if (error?.status === 403 && ['appNotAuthorizedToChild', 'appNotAuthorizedToFile'].includes(error?.reason)) {
+        error.sharingOperationStage = failedOperationStage;
       }
+      throw error;
     }
-    throw new Error('Не удалось подтвердить закрытие доступа к корневой папке Google Drive.');
   } catch (error) {
     const diagnosticSuffix = metadataDiagnostic ? ` Диагностика корневой папки: ${metadataDiagnostic}.` : '';
     if (error?.status === 403 && ['appNotAuthorizedToChild', 'appNotAuthorizedToFile'].includes(error?.reason)) {
@@ -314,9 +296,7 @@ export async function closeRootFolderAccess(rootFolderId, email, api = {}) {
       const extendedDiagnostic = `${diagnosticSuffix} Диагностика родителя и дочерних элементов: ${childDiagnostic}.`;
       const operation = error?.sharingOperationStage || 'операция разрешений';
       const reason = error?.reason ? ` Причина Google: ${error.reason}.` : '';
-      const explanation = pickerRetried
-        ? `Google Drive отказал на этапе «${operation}» даже после повторного подтверждения корневой папки. Это не подтверждает закрытие доступа. Проверьте права владельца и повторите попытку.`
-        : `Google Drive отказал на этапе «${operation}» при текущей авторизации приложения. Это не подтверждает закрытие доступа. Повторите попытку и проверьте права владельца.`;
+      const explanation = `Google Drive отказал на этапе «${operation}» при текущей авторизации приложения. Это не подтверждает закрытие доступа. Проверьте права владельца; окно выбора папки не открывалось.`;
       throw new Error(explanation + reason + extendedDiagnostic);
     }
     if (error?.status === 403) {
