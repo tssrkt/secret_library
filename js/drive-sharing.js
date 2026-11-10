@@ -208,28 +208,14 @@ export async function revokeRootFolderAccess(rootFolderId, permission) {
 }
 
 // Revoke the selected friend's direct permission on the owner's root folder using Drive only.
+// Sharing controls never open Picker automatically: a 403 must be reported as a failed operation.
 export async function closeRootFolderAccess(rootFolderId, email, api = {}) {
   const request = api.driveFetch || driveFetch;
-  const authorizeFolder = api.authorizeFolder || ensureDriveFolderAuthorized;
-  const forgetFolderAuthorization = api.forgetFolderAuthorization || forgetDriveItemAuthorization;
   const address = normalizeEmail(email);
   if (!rootFolderId) throw new Error('Не удалось определить корневую папку библиотеки. Обновите библиотеку и повторите попытку.');
   if (!address) throw new Error('У этого друга не указан email, поэтому закрыть доступ автоматически нельзя.');
-  const rootFolder = { id: rootFolderId, name: 'корневая папка библиотеки', mimeType: FOLDER_MIME_TYPE, isFolder: true };
-  const authorizeAfterDeniedRequest = async (error) => {
-    if (error?.status !== 403) throw error;
-    // A saved Picker marker is only an optimization. If Drive denies this operation,
-    // invalidate it and require a fresh selection of this exact root folder.
-    forgetFolderAuthorization(rootFolderId);
-    await authorizeFolder(rootFolder);
-  };
-  let permissions;
-  try {
-    permissions = await listPermissions(rootFolderId, request);
-  } catch (error) {
-    await authorizeAfterDeniedRequest(error);
-    permissions = await listPermissions(rootFolderId, request);
-  }
+
+  const permissions = await listPermissions(rootFolderId, request);
   const matching = permissions.filter((permission) => !permission.deleted
     && permission.type === 'user' && normalizeEmail(permission.emailAddress) === address
     && permission.role !== 'owner');
@@ -243,13 +229,7 @@ export async function closeRootFolderAccess(rootFolderId, email, api = {}) {
   for (const permission of matching) {
     const params = new URLSearchParams({ supportsAllDrives: 'true' });
     const path = '/files/' + encodeURIComponent(rootFolderId) + '/permissions/' + encodeURIComponent(permission.id) + '?' + params;
-    try {
-      await request(path, { method: 'DELETE' });
-    } catch (error) {
-      await authorizeAfterDeniedRequest(error);
-      // Retry the exact permission deletion once after re-authorizing the root folder.
-      await request(path, { method: 'DELETE' });
-    }
+    await request(path, { method: 'DELETE' });
   }
   return { revoked: true, email: address };
 }
