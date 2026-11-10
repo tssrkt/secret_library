@@ -112,6 +112,7 @@ export async function driveFetch(path, options = {}, retry = 0, apiRoot = API_RO
   const missingDriveScope = response.status === 403
     && /insufficient authentication scopes|insufficientpermissions|insufficient permissions/i.test(apiMessage);
   const appNotAuthorizedToFile = response.status === 403 && reason === 'appNotAuthorizedToFile';
+  const appNotAuthorizedToChild = response.status === 403 && reason === 'appNotAuthorizedToChild';
   const insufficientFilePermissions = response.status === 403 && reason === 'insufficientFilePermissions';
   const messages = {
     401: 'Сеанс Google истек. Войдите снова.',
@@ -124,11 +125,13 @@ export async function driveFetch(path, options = {}, retry = 0, apiRoot = API_RO
     ? 'Чтобы выдавать доступ к папке, нужно обновить разрешения Google Drive. Выйдите из сайта и войдите снова, подтвердив новые разрешения.'
     : appNotAuthorizedToFile
       ? 'Google Drive не подтвердил разрешение приложения для этой папки. Повторно подтвердите доступ именно к корневой папке библиотеки.'
-      : insufficientFilePermissions
-        ? 'У текущего аккаунта недостаточно прав для изменения доступа к этой папке. Проверьте, что вы вошли под аккаунтом владельца библиотеки.'
-        : messages[response.status] || apiMessage || 'Google Drive вернул ошибку.', {
+      : appNotAuthorizedToChild
+        ? 'Google Drive не разрешил изменить доступ к этому объекту. Возможно, разрешение унаследовано от родительской папки или объект не авторизован для приложения. Проверьте доступ на родительском уровне и повторно подтвердите папку через выбор в Google Picker.'
+        : insufficientFilePermissions
+          ? 'У текущего аккаунта недостаточно прав для изменения доступа к этой папке. Проверьте, что вы вошли под аккаунтом владельца библиотеки.'
+          : messages[response.status] || apiMessage || 'Google Drive вернул ошибку.', {
     status: response.status,
-    code: response.status === 401 ? 'unauthorized' : missingDriveScope ? 'insufficient_scope' : appNotAuthorizedToFile ? 'app_not_authorized_to_file' : insufficientFilePermissions ? 'insufficient_file_permissions' : 'drive_error',
+    code: response.status === 401 ? 'unauthorized' : missingDriveScope ? 'insufficient_scope' : appNotAuthorizedToFile ? 'app_not_authorized_to_file' : appNotAuthorizedToChild ? 'app_not_authorized_to_child' : insufficientFilePermissions ? 'insufficient_file_permissions' : 'drive_error',
     retryable,
     reason,
     apiMessage,

@@ -143,6 +143,40 @@ test('invitation grants root-folder reader permission to the invited Google acco
   assert.equal(calls[1].options.method, 'POST');
 });
 
+test('invitation reauthorizes the exact root folder once after appNotAuthorizedToChild', async () => {
+  let permissionListCalls = 0;
+  let authorizationCalls = 0;
+  let forgotten = 0;
+  const request = async (path, options = {}) => {
+    if (path.includes('/permissions?') && options.method === 'POST') return { id: 'permission-created-after-picker' };
+    if (path.includes('/permissions?fields=nextPageToken%2Cpermissions%28id%2Ctype%2CemailAddress%2CdisplayName%2Crole%2Cdeleted%2CpermissionDetails%28inherited%2Crole%2CpermissionType%29%29')) {
+      permissionListCalls += 1;
+      if (permissionListCalls === 1) {
+        const error = new Error('appNotAuthorizedToChild');
+        error.status = 403;
+        error.reason = 'appNotAuthorizedToChild';
+        throw error;
+      }
+      return { permissions: [] };
+    }
+    throw new Error(`Unexpected Drive request: ${path}`);
+  };
+  const { grantRootFolderAccess } = await import('../js/drive-sharing.js');
+  const result = await grantRootFolderAccess('my-root', 'friend@example.com', {
+    driveFetch: request,
+    authorizeFolder: async (folder) => {
+      authorizationCalls += 1;
+      assert.deepEqual(folder, { id: 'my-root', name: 'корневая папка библиотеки', mimeType: 'application/vnd.google-apps.folder', isFolder: true });
+      return true;
+    },
+    forgetFolderAuthorization: (id) => { assert.equal(id, 'my-root'); forgotten += 1; },
+  });
+  assert.deepEqual(result, { permissionId: 'permission-created-after-picker', created: true, email: 'friend@example.com' });
+  assert.equal(permissionListCalls, 2);
+  assert.equal(authorizationCalls, 1);
+  assert.equal(forgotten, 1);
+});
+
 test('invitation does not create a duplicate Drive permission when access already exists', async () => {
   let created = false;
   const request = async (path, options = {}) => {

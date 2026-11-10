@@ -1,5 +1,5 @@
 import { SHARED_CATALOG_FILE_NAME, FOLDER_MIME_TYPE } from './config.js';
-import { driveFetch, downloadDriveJsonFile, findDriveCatalogFile } from './drive.js?v=20261110-permission-diagnostics';
+import { driveFetch, downloadDriveJsonFile, findDriveCatalogFile } from './drive.js?v=20261110-child-auth-recovery';
 import { ensureDriveFolderAuthorized, forgetDriveItemAuthorization } from './google-picker.js?v=20261109-picker-exact-folder';
 
 const normalizeEmail = (value) => typeof value === 'string' ? value.trim().toLowerCase() : '';
@@ -164,46 +164,58 @@ export async function syncFolderSharingAccess(index, settings, api = {}) {
 }
 
 // Grant access to the owner's selected root folder before sending an invitation.
-// Existing permissions are preserved; rollback only removes a permission created by this attempt.
+// Existing permissions are preserved; retry only once after explicit Picker authorization.
 export async function grantRootFolderAccess(rootFolderId, email, api = {}) {
   const request = api.driveFetch || driveFetch;
+  const authorizeFolder = api.authorizeFolder || ensureDriveFolderAuthorized;
+  const forgetFolderAuthorization = api.forgetFolderAuthorization || forgetDriveItemAuthorization;
   const address = normalizeEmail(email);
   if (!rootFolderId) throw new Error('Сначала выберите корневую папку своей библиотеки.');
   if (!address) throw new Error('Укажите корректный email участника.');
-  const existing = (await listPermissions(rootFolderId, request)).find((permission) =>
-    !permission.deleted && permission.type === 'user' && normalizeEmail(permission.emailAddress) === address);
-  if (existing) {
-    // Never leave a direct editor permission in place when an invitation is sent.
-    // Inherited permissions cannot be changed here, so fail visibly instead.
-    if (existing.role === 'owner') {
-      return { permissionId: existing.id || '', created: false, email: address };
-    }
-    if (existing.role !== 'reader') {
-      const inherited = (existing.permissionDetails || []).some((detail) => detail.inherited === true);
-      if (inherited) {
-        throw new Error(`Для ${address} унаследованы права редактирования Google Drive. Измените доступ на родительской папке на чтение и повторите приглашение.`);
-      }
-      const params = new URLSearchParams({ supportsAllDrives: 'true', sendNotificationEmail: 'false' });
-      const updated = await request(`/files/${encodeURIComponent(rootFolderId)}/permissions/${encodeURIComponent(existing.id)}?${params}`, {
-        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ role: 'reader' }), readJson: true,
-        diagnostics: { stage: 'sharing-permissions-update' },
-      });
-      if (updated?.role && updated.role !== 'reader') {
-        throw new Error(`Не удалось ограничить доступ ${address} только чтением.`);
-      }
-    }
-    return { permissionId: existing.id || '', created: false, email: address };
-  }
 
-  const params = new URLSearchParams({ supportsAllDrives: 'true', sendNotificationEmail: 'false' });
-  const created = await request(`/files/${encodeURIComponent(rootFolderId)}/permissions?${params}`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ type: 'user', role: 'reader', emailAddress: address }), readJson: true,
-    diagnostics: { stage: 'sharing-permissions-create' },
-  });
-  if (!created?.id) throw new Error('Google Drive не подтвердил выдачу доступа к корневой папке.');
-  return { permissionId: created.id, created: true, email: address };
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const existing = (await listPermissions(rootFolderId, request)).find((permission) =>
+        !permission.deleted && permission.type === 'user' && normalizeEmail(permission.emailAddress) === address);
+      if (existing) {
+        if (existing.role === 'owner') {
+          return { permissionId: existing.id || '', created: false, email: address };
+        }
+        if (existing.role !== 'reader') {
+          const inherited = (existing.permissionDetails || []).some((detail) => detail.inherited === true);
+          if (inherited) {
+            throw new Error(`Для ${address} унаследованы права редактирования Google Drive. Измените доступ на родительской папке на чтение и повторите приглашение.`);
+          }
+          const params = new URLSearchParams({ supportsAllDrives: 'true', sendNotificationEmail: 'false' });
+          const updated = await request(`/files/${encodeURIComponent(rootFolderId)}/permissions/${encodeURIComponent(existing.id)}?${params}`, {
+            method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ role: 'reader' }), readJson: true,
+            diagnostics: { stage: 'sharing-permissions-update' },
+          });
+          if (updated?.role && updated.role !== 'reader') {
+            throw new Error(`Не удалось ограничить доступ ${address} только чтением.`);
+          }
+        }
+        return { permissionId: existing.id || '', created: false, email: address };
+      }
+
+      const params = new URLSearchParams({ supportsAllDrives: 'true', sendNotificationEmail: 'false' });
+      const created = await request(`/files/${encodeURIComponent(rootFolderId)}/permissions?${params}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: 'user', role: 'reader', emailAddress: address }), readJson: true,
+        diagnostics: { stage: 'sharing-permissions-create' },
+      });
+      if (!created?.id) throw new Error('Google Drive не подтвердил выдачу доступа к корневой папке.');
+      return { permissionId: created.id, created: true, email: address };
+    } catch (error) {
+      const canRetryAuthorization = attempt === 0 && error?.status === 403
+        && ['appNotAuthorizedToChild', 'appNotAuthorizedToFile'].includes(error?.reason);
+      if (!canRetryAuthorization) throw error;
+      forgetFolderAuthorization(rootFolderId);
+      await authorizeFolder({ id: rootFolderId, name: 'корневая папка библиотеки', mimeType: FOLDER_MIME_TYPE, isFolder: true });
+    }
+  }
+  throw new Error('Не удалось подтвердить доступ к корневой папке Google Drive.');
 }
 
 export async function revokeRootFolderAccess(rootFolderId, permission) {

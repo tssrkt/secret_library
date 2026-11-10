@@ -44,6 +44,7 @@ test('Drive 403 errors distinguish app authorization from account permissions wi
   try {
     for (const item of [
       { reason: 'appNotAuthorizedToFile', code: 'app_not_authorized_to_file', message: /не подтвердил разрешение приложения/ },
+      { reason: 'appNotAuthorizedToChild', code: 'app_not_authorized_to_child', message: /не разрешил изменить доступ к этому объекту/ },
       { reason: 'insufficientFilePermissions', code: 'insufficient_file_permissions', message: /недостаточно прав/ },
     ]) {
       globalThis.fetch = async () => new Response(JSON.stringify({ error: {
@@ -61,7 +62,7 @@ test('Drive 403 errors distinguish app authorization from account permissions wi
         return true;
       });
     }
-    assert.equal(warnings.length, 2);
+    assert.equal(warnings.length, 3);
     assert.equal(warnings[0][1].stage, 'sharing-permissions-list');
     assert.equal(warnings[0][1].reason, 'appNotAuthorizedToFile');
     assert.doesNotMatch(JSON.stringify(warnings), /private-file-id|private@example\.com|test-token/);
