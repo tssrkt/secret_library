@@ -264,8 +264,10 @@ export async function closeRootFolderAccess(rootFolderId, email, api = {}) {
       metadataDiagnostic = `чтение диагностических полей не удалось${metadataError?.status ? ` (HTTP ${metadataError.status})` : ''}`;
     }
 
+    let failedOperationStage = 'permissions-list';
     for (let attempt = 0; attempt < 2; attempt += 1) {
       try {
+        failedOperationStage = 'permissions-list';
         const permissions = await listPermissions(rootFolderId, request);
         const matching = permissions.filter((permission) => !permission.deleted
           && permission.type === 'user' && normalizeEmail(permission.emailAddress) === address
@@ -280,18 +282,28 @@ export async function closeRootFolderAccess(rootFolderId, email, api = {}) {
 
         for (const permission of matching) {
           if (!permission.id) throw new Error('Google Drive не предоставил идентификатор разрешения; доступ не подтверждён как закрытый.');
+          failedOperationStage = 'permissions-delete';
           const params = new URLSearchParams({ supportsAllDrives: 'true' });
           const path = '/files/' + encodeURIComponent(rootFolderId) + '/permissions/' + encodeURIComponent(permission.id) + '?' + params;
           await request(path, { method: 'DELETE', diagnostics: { stage: 'sharing-permissions-delete' } });
         }
         return { revoked: true, email: address, diagnostics: { isAppAuthorized: folderMetadata?.isAppAuthorized, canShare: folderMetadata?.capabilities?.canShare } };
       } catch (error) {
+        if (error?.status === 403 && ['appNotAuthorizedToChild', 'appNotAuthorizedToFile'].includes(error?.reason)) {
+          error.sharingOperationStage = failedOperationStage;
+        }
         const canRetryAuthorization = attempt === 0 && error?.status === 403
           && ['appNotAuthorizedToChild', 'appNotAuthorizedToFile'].includes(error?.reason);
         if (!canRetryAuthorization) throw error;
         forgetFolderAuthorization(rootFolderId);
         await authorizeFolder({ id: rootFolderId, name: 'корневая папка библиотеки', mimeType: FOLDER_MIME_TYPE, isFolder: true });
         pickerRetried = true;
+        try {
+          folderMetadata = await readMetadata(rootFolderId);
+          metadataDiagnostic = `после Picker: isAppAuthorized=${typeof folderMetadata?.isAppAuthorized === 'boolean' ? folderMetadata.isAppAuthorized : 'не предоставлено'}, canShare=${typeof folderMetadata?.capabilities?.canShare === 'boolean' ? folderMetadata.capabilities.canShare : 'не предоставлено'}`;
+        } catch (metadataError) {
+          metadataDiagnostic = `после Picker метаданные недоступны${metadataError?.status ? ` (HTTP ${metadataError.status})` : ''}`;
+        }
       }
     }
     throw new Error('Не удалось подтвердить закрытие доступа к корневой папке Google Drive.');
@@ -300,10 +312,12 @@ export async function closeRootFolderAccess(rootFolderId, email, api = {}) {
     if (error?.status === 403 && ['appNotAuthorizedToChild', 'appNotAuthorizedToFile'].includes(error?.reason)) {
       const childDiagnostic = await diagnoseChildAuthorization(folderMetadata, rootFolderId, request);
       const extendedDiagnostic = `${diagnosticSuffix} Диагностика родителя и дочерних элементов: ${childDiagnostic}.`;
+      const operation = error?.sharingOperationStage || 'операция разрешений';
+      const reason = error?.reason ? ` Причина Google: ${error.reason}.` : '';
       const explanation = pickerRetried
-        ? 'Google Drive не разрешил изменить доступ даже после повторного подтверждения корневой папки. Проверьте разрешения на самой папке и её родителях.'
-        : 'Google Drive не разрешил изменить доступ к этой папке в рамках текущей авторизации приложения. Повторное подтверждение папки не помогло бы без явной авторизации; проверьте разрешения на самой папке и её родителях.';
-      throw new Error(explanation + extendedDiagnostic);
+        ? `Google Drive отказал на этапе «${operation}» даже после повторного подтверждения корневой папки. Это не подтверждает закрытие доступа. Проверьте права владельца и повторите попытку.`
+        : `Google Drive отказал на этапе «${operation}» при текущей авторизации приложения. Это не подтверждает закрытие доступа. Повторите попытку и проверьте права владельца.`;
+      throw new Error(explanation + reason + extendedDiagnostic);
     }
     if (error?.status === 403) {
       throw new Error('Google Drive отказал в закрытии доступа. Проверьте права на папку и разрешения, выданные на родительском уровне.' + diagnosticSuffix);

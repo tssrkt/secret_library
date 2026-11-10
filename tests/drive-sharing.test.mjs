@@ -496,7 +496,7 @@ test('closeRootFolderAccess reports authorization failure if Picker confirmation
     driveFetch: request,
     authorizeFolder: async () => { pickerCalls += 1; return true; },
     forgetFolderAuthorization: () => {},
-  }), /даже после повторного подтверждения корневой папки/);
+  }), /отказал на этапе «permissions-list» даже после повторного подтверждения корневой папки/);
   assert.equal(listCalls, 2);
   assert.equal(pickerCalls, 1);
 });
