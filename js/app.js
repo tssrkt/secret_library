@@ -17,7 +17,7 @@ import {
 import { prepareIndexingRun, createRetryEligibilityCheck } from './indexing-run.js';
 import * as ui from './ui.js?v=20261109-drive-picker-auth-recovery';
 import { errorDetails, recordIndexingError } from './indexing-errors.js';
-import { social, socialError } from './social-runtime.js?v=20261109-drive-picker-auth-recovery';
+import { social, socialError } from './social-runtime.js?v=20261110-friends-loading-stall-fix';
 import { getAccessToken } from './auth.js?v=20261109-oauth-picker-diagnostics';
 import { checkpointKey, loadCheckpoint, saveCheckpoint, deleteCheckpoint, commitCheckpoint } from './indexing-checkpoint.js';
 import { createLibraryTabs } from './library-tabs.js';
@@ -412,7 +412,7 @@ async function afterAuthorization() {
   reconnectRequired = false;
   ui.setReconnectRequired(false);
   // Enforce the invitation gate before showing any authorized UI, including the root-folder picker.
-  const registered = await social.connect(getAccessToken(), activeRootFolderId || '');
+  const registered = await social.connect(getAccessToken(), activeRootFolderId || '', user);
   if (!registered) {
     // A rejected sign-in must also clear any catalog left over from a previous session.
     libraryAccessGranted = false;

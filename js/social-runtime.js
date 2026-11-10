@@ -268,7 +268,7 @@ export const social = {
   },
   subscribe(listener) { listeners.add(listener); listener(state); return () => listeners.delete(listener); },
   getState() { return state; },
-  async connect(token, rootFolderId = '') {
+  async connect(token, rootFolderId = '', knownDriveUser = null) {
     settleConnectionReady(false);
     connectionReadyPromise = new Promise((resolve) => { resolveConnectionReady = resolve; });
     configuredRootFolderId = String(rootFolderId || '');
@@ -284,7 +284,7 @@ export const social = {
     try {
       // Discover and open friend libraries directly with the Google Drive token.
       // This path runs independently of Firebase Authentication/Firestore.
-      const driveUser = await getCurrentDriveUser();
+      const driveUser = knownDriveUser || await getCurrentDriveUser();
       if (current !== generation) return false;
       connectedDriveUser = driveUser;
       emit({ driveUserEmail: String(driveUser?.email || driveUser?.emailAddress || '').trim().toLowerCase() });
