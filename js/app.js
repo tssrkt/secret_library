@@ -409,6 +409,9 @@ async function afterAuthorization() {
     }
   }
   persistAuthSession(user);
+  // Start loading the Google photo while the invitation gate and library checks run.
+  // The avatar remains inside the hidden personal-menu controls until authorization.
+  void ui.setUserAvatar(user);
   reconnectRequired = false;
   ui.setReconnectRequired(false);
   // Enforce the invitation gate before showing any authorized UI, including the root-folder picker.
@@ -455,7 +458,6 @@ async function afterAuthorization() {
   }
   localCheckpointKey = checkpointKey(authorizedOwner, activeRootFolderId);
   ui.setAuthorized(true);
-  void ui.setUserAvatar(user);
   ui.clearError();
   if (sameOwner && currentIndex) {
     // A previously rejected library may have gained books in Drive since the last scan.

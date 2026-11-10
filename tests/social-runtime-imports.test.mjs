@@ -30,12 +30,20 @@ test('invitation ledger and friend details do not block the mandatory registrati
 
 test('friend list changes trigger a fresh admin metadata check without exposing emails early', async () => {
   const ui = await source('../js/friends-ui.js');
-  assert.match(ui, /if \(hadFriendSnapshot && !invitationQuota\)\s*\{\s*quotaMetadataRetryUsed = false;\s*void refreshInvitationStatuses\(\);/);
-  assert.match(ui, /else if \(invitationQuota && friendEmail\)/);
+  assert.match(ui, /if \(hadFriendSnapshot && !Array\.isArray\(invitationQuota\?\.adminUids\)\)\s*\{\s*quotaMetadataRetryCount = 0;\s*void refreshInvitationStatuses\(\);/);
+  assert.match(ui, /if \(Array\.isArray\(next\.__quota\?\.adminUids\)\)/);
+  assert.match(ui, /else if \(Array\.isArray\(invitationQuota\?\.adminUids\) && friendEmail\)/);
+  assert.doesNotMatch(ui, /else if \(invitationQuota && friendEmail\)/);
 });
 
 test('best-effort invitation finalization cannot block the registration gate', async () => {
   const store = await source('../js/social-store.js');
   assert.match(store, /void user\.getIdToken\(\)\.then\(\(idToken\) => finalizeInviteeRegistration\(\{ idToken \}\)\)/);
   assert.doesNotMatch(store, /await finalizeInviteeRegistration\(/);
+});
+
+test('Google avatar loading starts before the invitation gate without moving it', async () => {
+  const app = await source('../js/app.js');
+  assert.match(app, /persistAuthSession\(user\);\s*\/\/ Start loading the Google photo[\s\S]*?void ui\.setUserAvatar\(user\);[\s\S]*?const registered = await social\.connect/);
+  assert.equal((app.match(/ui\.setUserAvatar\(user\)/g) || []).length, 1);
 });

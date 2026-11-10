@@ -78,7 +78,7 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
   let invitationStatuses = {};
   let invitationStatusesLoaded = false;
   let invitationQuota = null;
-  let quotaMetadataRetryUsed = false;
+  let quotaMetadataRetryCount = 0;
   let adminMetadataFriendSignature = null;
   // Keep a just-sent invitation visible while Firestore's live query catches up.
   const optimisticInvitations = new Map();
@@ -243,9 +243,15 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
       if (closed || revision !== statusRefreshRevision) return;
       invitationStatuses = next;
       invitationStatusesLoaded = true;
-      invitationQuota = next.__quota || invitationQuota;
-      if (next.__quota && friendsAccessMessage.textContent === adminStatusError) friendsAccessMessage.textContent = '';
-      else if (!next.__quota && !invitationQuota && !friendsAccessMessage.textContent) friendsAccessMessage.textContent = adminStatusError;
+      // Only trust a complete administrator list. A partial/old response must not
+      // accidentally reveal an administrator's email.
+      if (Array.isArray(next.__quota?.adminUids)) {
+        invitationQuota = next.__quota;
+        quotaMetadataRetryCount = 0;
+        if (friendsAccessMessage.textContent === adminStatusError) friendsAccessMessage.textContent = '';
+      } else if (!Array.isArray(invitationQuota?.adminUids) && !friendsAccessMessage.textContent) {
+        friendsAccessMessage.textContent = adminStatusError;
+      }
       // Reconcile the invitation ledger against the authoritative directory before
       // rendering either table. The runtime normally adds registered users to friends;
       // this UI-level reconciliation also prevents a registered account from vanishing
@@ -271,11 +277,11 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
       }
       snapshot = { ...snapshot, friends };
       render();
-      if (!next.__quota && !invitationQuota && !quotaMetadataRetryUsed) {
-        quotaMetadataRetryUsed = true;
+      if (!Array.isArray(invitationQuota?.adminUids) && quotaMetadataRetryCount < 2) {
+        quotaMetadataRetryCount++;
         setTimeout(() => {
-          if (!closed && !invitationQuota) void refreshInvitationStatuses();
-        }, 1200);
+          if (!closed && !Array.isArray(invitationQuota?.adminUids)) void refreshInvitationStatuses();
+        }, 1200 * quotaMetadataRetryCount);
       }
     } catch (error) {
       // Keep the missing administrator verification visible near the friends table;
@@ -283,11 +289,11 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
       if (!closed && revision === statusRefreshRevision) {
         if (!friendsAccessMessage.textContent || friendsAccessMessage.textContent === adminStatusError) friendsAccessMessage.textContent = adminStatusError;
         renderInvitations();
-        if (!quotaMetadataRetryUsed) {
-          quotaMetadataRetryUsed = true;
+        if (!Array.isArray(invitationQuota?.adminUids) && quotaMetadataRetryCount < 2) {
+          quotaMetadataRetryCount++;
           setTimeout(() => {
-            if (!closed && !invitationQuota) void refreshInvitationStatuses();
-          }, 1200);
+            if (!closed && !Array.isArray(invitationQuota?.adminUids)) void refreshInvitationStatuses();
+          }, 1200 * quotaMetadataRetryCount);
         }
       }
     }
@@ -357,7 +363,7 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
       const isAdmin = friend.isAdmin === true || friend.uid === 'aA89pCYsKNbWWePmAveUVrG34F82' || knownAdminUids.includes(friend.uid);
       // Never expose a possible administrator's email while the authoritative admin list is still loading.
       if (isAdmin) { const detail = document.createElement('small'); detail.textContent = 'Администратор'; openButton.append(detail); }
-      else if (invitationQuota && friendEmail) { const detail = document.createElement('small'); detail.textContent = friendEmail; openButton.append(detail); }
+      else if (Array.isArray(invitationQuota?.adminUids) && friendEmail) { const detail = document.createElement('small'); detail.textContent = friendEmail; openButton.append(detail); }
       openButton.disabled = !friend.inbound || String(friend.uid).startsWith('email:');
       openButton.title = openButton.disabled ? 'Эта библиотека не открыта вам в Google Drive' : 'Открыть библиотеку друга';
       openButton.addEventListener('click', () => { if (!openButton.disabled) openLibrary(friend.uid); });
@@ -445,8 +451,8 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
     if (friendSignature !== adminMetadataFriendSignature) {
       const hadFriendSnapshot = adminMetadataFriendSignature !== null;
       adminMetadataFriendSignature = friendSignature;
-      if (hadFriendSnapshot && !invitationQuota) {
-        quotaMetadataRetryUsed = false;
+      if (hadFriendSnapshot && !Array.isArray(invitationQuota?.adminUids)) {
+        quotaMetadataRetryCount = 0;
         void refreshInvitationStatuses();
       }
     }
