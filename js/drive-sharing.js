@@ -22,6 +22,44 @@ async function listPages(path, params, request = driveFetch) {
   return results;
 }
 
+// Bounded, read-only diagnostics used only after Drive rejects a permission deletion.
+// Inspect the root's parent and at most ten immediate children to avoid a costly tree walk.
+async function diagnoseChildAuthorization(rootMetadata, rootFolderId, request = driveFetch) {
+  const details = [];
+  const parentId = rootMetadata?.parents?.[0];
+  if (parentId) {
+    try {
+      const params = new URLSearchParams({ fields: 'id,name,isAppAuthorized,capabilities(canShare)', supportsAllDrives: 'true' });
+      const parent = await request(`/files/${encodeURIComponent(parentId)}?${params}`, { readJson: true, diagnostics: { stage: 'sharing-parent-diagnostic', folderId: parentId } });
+      details.push(`родитель: isAppAuthorized=${typeof parent.isAppAuthorized === 'boolean' ? parent.isAppAuthorized : 'не определено'}, canShare=${typeof parent.capabilities?.canShare === 'boolean' ? parent.capabilities.canShare : 'не определено'}`);
+    } catch (error) {
+      details.push(`родитель: метаданные недоступны${error?.status ? ` (HTTP ${error.status})` : ''}`);
+    }
+  } else {
+    details.push('родитель: ID не указан в метаданных корневой папки');
+  }
+
+  try {
+    const params = new URLSearchParams({
+      q: `'${escapeDriveQuery(String(rootFolderId))}' in parents and trashed = false`,
+      fields: 'files(id,name,mimeType,isAppAuthorized,capabilities(canShare)),nextPageToken',
+      pageSize: '10',
+      supportsAllDrives: 'true',
+      includeItemsFromAllDrives: 'true',
+    });
+    const page = await request(`/files?${params}`, { readJson: true, diagnostics: { stage: 'sharing-children-diagnostic', folderId: rootFolderId } });
+    const children = page.files || [];
+    const unauthorized = children.filter((item) => item.isAppAuthorized === false);
+    const unknown = children.filter((item) => typeof item.isAppAuthorized !== 'boolean');
+    details.push(`непосредственные элементы (выборка до 10): проверено ${children.length}, isAppAuthorized=false: ${unauthorized.length}, статус не определён: ${unknown.length}`);
+    if (unauthorized.length) details.push(`элементы без авторизации приложения: ${unauthorized.slice(0, 5).map((item) => String(item.name || item.mimeType || 'без имени').slice(0, 80)).join(', ')}`);
+    if (page.nextPageToken) details.push('есть дополнительные элементы; проверена только первая страница');
+  } catch (error) {
+    details.push(`не удалось проверить непосредственные элементы${error?.status ? ` (HTTP ${error.status})` : ''}`);
+  }
+  return details.join('; ');
+}
+
 async function getRootFolder(rootFolderId, request = driveFetch) {
   if (!rootFolderId) return null;
   const params = new URLSearchParams({
@@ -270,7 +308,9 @@ export async function closeRootFolderAccess(rootFolderId, email, api = {}) {
   } catch (error) {
     const diagnosticSuffix = metadataDiagnostic ? ` Диагностика корневой папки: ${metadataDiagnostic}.` : '';
     if (error?.status === 403 && ['appNotAuthorizedToChild', 'appNotAuthorizedToFile'].includes(error?.reason)) {
-      throw new Error('Google Drive не разрешил изменить доступ к этой папке в рамках текущей авторизации приложения. Окно выбора папки не открывалось; проверьте разрешения на самой папке и её родителях.' + diagnosticSuffix);
+      const childDiagnostic = await diagnoseChildAuthorization(folderMetadata, rootFolderId, request);
+      const extendedDiagnostic = `${diagnosticSuffix} Диагностика родителя и дочерних элементов: ${childDiagnostic}.`;
+      throw new Error('Google Drive не разрешил изменить доступ к этой папке в рамках текущей авторизации приложения. Окно выбора папки не открывалось; проверьте разрешения на самой папке и её родителях.' + extendedDiagnostic);
     }
     if (error?.status === 403) {
       throw new Error('Google Drive отказал в закрытии доступа. Проверьте права на папку и разрешения, выданные на родительском уровне.' + diagnosticSuffix);

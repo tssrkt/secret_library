@@ -552,3 +552,43 @@ test('invalidates Picker authorization when the folder update itself is rejected
   assert.deepEqual(forgotten, ['folder-patch-403']);
   assert.equal(calls.at(-1).options.method, 'PATCH');
 });
+
+test('diagnoses parent and at most ten immediate children after appNotAuthorizedToChild', async () => {
+  const calls = [];
+  const request = async (path, options = {}) => {
+    calls.push({ path, options });
+    const url = new URL(path, 'https://drive.googleapis.com');
+    if (url.pathname === '/files/root-id/permissions') {
+      return { permissions: [{ id: 'friend-permission', type: 'user', emailAddress: 'friend@example.com', role: 'reader', permissionDetails: [{ inherited: false }] }] };
+    }
+    if (options.method === 'DELETE') {
+      const error = new Error('appNotAuthorizedToChild');
+      error.status = 403;
+      error.reason = 'appNotAuthorizedToChild';
+      throw error;
+    }
+    if (url.pathname === '/files/parent-id') return { id: 'parent-id', isAppAuthorized: true, capabilities: { canShare: true } };
+    if (url.pathname === '/files') {
+      assert.equal(url.searchParams.get('pageSize'), '10');
+      assert.match(url.searchParams.get('q'), /root-id.*in parents/);
+      return { files: [
+        { id: 'child-a', name: 'Книга A', isAppAuthorized: false },
+        { id: 'child-b', name: 'Книга B', isAppAuthorized: true },
+      ], nextPageToken: 'more' };
+    }
+    throw new Error(`Unexpected Drive request: ${path}`);
+  };
+  const { closeRootFolderAccess } = await import('../js/drive-sharing.js');
+  await assert.rejects(closeRootFolderAccess('root-id', 'friend@example.com', {
+    driveFetch: request,
+    getFolderMetadata: async () => ({ id: 'root-id', parents: ['parent-id'], isAppAuthorized: true, capabilities: { canShare: true } }),
+  }), (error) => {
+    assert.match(error.message, /родитель: isAppAuthorized=true, canShare=true/);
+    assert.match(error.message, /проверено 2, isAppAuthorized=false: 1/);
+    assert.match(error.message, /Книга A/);
+    assert.match(error.message, /проверена только первая страница/);
+    return true;
+  });
+  assert.equal(calls.filter(({ options }) => options.method === 'DELETE').length, 1);
+  assert.equal(calls.some(({ options }) => options.method === 'PATCH' || options.method === 'POST'), false);
+});
