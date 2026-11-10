@@ -153,9 +153,14 @@ export async function driveFetch(path, options = {}, retry = 0, apiRoot = API_RO
   throw report(error, retry ? 'exhausted' : 'not-retried');
 }
 
-export async function getFolder(folderId, { signal, diagnostics = {}, resourceKey } = {}) {
-  const params = new URLSearchParams({ fields: 'id,name,mimeType,parents,resourceKey', supportsAllDrives: 'true' });
-  const folder = await driveFetch(`/files/${encodeURIComponent(folderId)}?${params}`, { signal, readJson: true, diagnostics, resourceKey: resourceKey ? { fileId: folderId, key: resourceKey } : undefined });
+export async function getFolderMetadata(folderId, { signal, diagnostics = {}, resourceKey, request = driveFetch } = {}) {
+  const params = new URLSearchParams({ fields: 'id,name,mimeType,parents,resourceKey,isAppAuthorized,capabilities(canShare)', supportsAllDrives: 'true' });
+  return request(`/files/${encodeURIComponent(folderId)}?${params}`, { signal, readJson: true, diagnostics, resourceKey: resourceKey ? { fileId: folderId, key: resourceKey } : undefined });
+}
+
+export async function getFolder(folderId, { signal, diagnostics = {}, resourceKey, request = driveFetch } = {}) {
+  const params = new URLSearchParams({ fields: 'id,name,mimeType,parents,resourceKey,isAppAuthorized,capabilities(canShare)', supportsAllDrives: 'true' });
+  const folder = await request(`/files/${encodeURIComponent(folderId)}?${params}`, { signal, readJson: true, diagnostics, resourceKey: resourceKey ? { fileId: folderId, key: resourceKey } : undefined });
   if (folder.mimeType !== FOLDER_MIME_TYPE) throw new DriveError('Настроенный rootFolderId не является папкой Google Drive.', { code: 'not_folder' });
   return folder;
 }

@@ -326,9 +326,36 @@ test('closeRootFolderAccess revokes only the matching direct Google Drive permis
   const { closeRootFolderAccess } = await import('../js/drive-sharing.js');
   const result = await closeRootFolderAccess('root-id', 'Friend@Example.com', { driveFetch: request });
   assert.equal(result.revoked, true);
-  assert.equal(calls.length, 2);
-  assert.match(calls[1].path, /permissions\/friend-permission/);
-  assert.equal(calls[1].options.method, 'DELETE');
+  assert.equal(calls.length, 3);
+  assert.match(calls[2].path, /permissions\/friend-permission/);
+  assert.equal(calls[2].options.method, 'DELETE');
+});
+
+test('closeRootFolderAccess reports root authorization diagnostics without changing behavior', async () => {
+  for (const metadata of [
+    { isAppAuthorized: true, capabilities: { canShare: true } },
+    { isAppAuthorized: false, capabilities: { canShare: false } },
+    {},
+  ]) {
+    const calls = [];
+    const request = async (path, options = {}) => {
+      calls.push({ path, options });
+      if (path.includes('/permissions?')) return { permissions: [{ id: 'friend-permission', type: 'user', emailAddress: 'friend@example.com', role: 'reader', permissionDetails: [{ inherited: false }] }] };
+      return {};
+    };
+    const { closeRootFolderAccess } = await import('../js/drive-sharing.js');
+    const result = await closeRootFolderAccess('root-id', 'friend@example.com', {
+      driveFetch: request,
+      getFolderMetadata: async () => metadata,
+    });
+    assert.equal(result.revoked, true);
+    assert.deepEqual(result.diagnostics, {
+      isAppAuthorized: metadata.isAppAuthorized,
+      canShare: metadata.capabilities?.canShare,
+    });
+    assert.equal(calls.filter(({ options }) => options.method === 'DELETE').length, 1);
+    assert.equal(calls.some(({ options }) => options.method === 'PATCH' || options.method === 'POST'), false);
+  }
 });
 
 test('closeRootFolderAccess reports permissions-list 403 without opening Picker', async () => {
@@ -343,7 +370,7 @@ test('closeRootFolderAccess reports permissions-list 403 without opening Picker'
     driveFetch: request,
     authorizeFolder: async () => { pickerCalls++; },
   }), /Google Drive отказал в закрытии доступа/);
-  assert.equal(calls.length, 1);
+  assert.equal(calls.length, 2);
   assert.equal(pickerCalls, 0);
 });
 
@@ -421,7 +448,7 @@ test('closeRootFolderAccess refuses to remove inherited permission', async () =>
   };
   const { closeRootFolderAccess } = await import('../js/drive-sharing.js');
   await assert.rejects(closeRootFolderAccess('root-id', 'friend@example.com', { driveFetch: request }), /наследуется/);
-  assert.equal(calls.length, 1);
+  assert.equal(calls.length, 2);
 });
 
 test('authorizes a folder in Picker and retries metadata after an initial 403', async () => {
