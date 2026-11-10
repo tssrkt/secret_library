@@ -7,7 +7,7 @@ import { loadCover as loadOwnCover } from './cover-cache.js';
 import { loadGenreDictionary } from './genre-labels.js';
 import { createPaginator, paginateItems } from './pagination.js';
 import { metadataActionLabels } from './indexing-state.js';
-import { syncFolderSharingAccess } from './drive-sharing.js?v=20261110-close-access-no-picker';
+import { syncFolderSharingAccess } from './drive-sharing.js?v=20261110-settings-save-no-picker';
 import { filterBooksByDirectValue, russianBookCount } from './direct-filter.js';
 import { createSearchController } from './search-ui.js';
 import { createIndexingErrorsController } from './indexing-errors-ui.js';

@@ -127,56 +127,31 @@ async function listPermissions(folderId, request = driveFetch) {
 // Limited access blocks permissions inherited from the shared root; direct grants remain separate.
 export async function syncFolderSharingAccess(index, settings, api = {}) {
   const request = api.driveFetch || driveFetch;
-  const authorizeFolder = api.authorizeFolder || ensureDriveFolderAuthorized;
-  const forgetFolderAuthorization = api.forgetFolderAuthorization || forgetDriveItemAuthorization;
   const excluded = new Set(settings?.sharing?.excludedFolderIds || []);
   const changed = [];
   try {
     for (const folder of index.folders.filter((item) => item.parentId === index.rootFolderId)) {
       const desired = excluded.has(folder.id);
       const params = new URLSearchParams({ fields: 'id,mimeType,inheritedPermissionsDisabled,capabilities(canDisableInheritedPermissions,canEnableInheritedPermissions)', supportsAllDrives: 'true' });
-      let current;
-      try {
-        current = await request(`/files/${encodeURIComponent(folder.id)}?${params}`, {
-          readJson: true,
-          diagnostics: { stage: 'folder-sharing-metadata', folderId: folder.id, folderName: folder.name },
-        });
-      } catch (error) {
-        // With drive.file, a folder may be invisible until the user selects that exact folder in Picker.
-        // Authorize on the first 403, then repeat the metadata read before deciding whether to PATCH.
-        if (error?.status !== 403) throw error;
-        // A previous Picker selection may have been recorded even though Drive
-        // still rejected the API call. Invalidate it before asking the user again.
-        forgetFolderAuthorization(folder.id);
-        await authorizeFolder({ id: folder.id, name: folder.name, mimeType: FOLDER_MIME_TYPE, isFolder: true });
-        try {
-          current = await request(`/files/${encodeURIComponent(folder.id)}?${params}`, {
-            readJson: true,
-            diagnostics: { stage: 'folder-sharing-metadata-after-picker', folderId: folder.id, folderName: folder.name },
-          });
-        } catch (retryError) {
-          if (retryError?.status === 403) forgetFolderAuthorization(folder.id);
-          throw retryError;
-        }
-      }
+      // Saving settings must never open Google Picker. If the current OAuth grant
+      // cannot access this folder, the error is surfaced and prior settings are retained.
+      const current = await request(`/files/${encodeURIComponent(folder.id)}?${params}`, {
+        readJson: true,
+        diagnostics: { stage: 'folder-sharing-metadata', folderId: folder.id, folderName: folder.name },
+      });
       if (current.mimeType !== FOLDER_MIME_TYPE) throw new Error(`«${folder.name}» больше не является папкой Google Drive.`);
       const previous = current.inheritedPermissionsDisabled === true;
       if (previous === desired) continue;
       const canChange = desired ? current.capabilities?.canDisableInheritedPermissions : current.capabilities?.canEnableInheritedPermissions;
       if (canChange === false) throw new Error(`Google Drive не разрешает изменить наследование доступа к папке «${folder.name}». Проверьте права владельца папки.`);
-      // drive.file does not imply authorization of descendant folders when only the root was picked.
-      await authorizeFolder({ id: folder.id, name: folder.name, mimeType: FOLDER_MIME_TYPE, isFolder: true });
+      // Do not trigger Picker during settings save. Attempt the API operation with
+      // the current grant; a 403 is surfaced honestly rather than authorizing a wrong item.
       const updateParams = new URLSearchParams({ fields: 'id,inheritedPermissionsDisabled', supportsAllDrives: 'true' });
-      try {
-        await request(`/files/${encodeURIComponent(folder.id)}?${updateParams}`, {
-          method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ inheritedPermissionsDisabled: desired }), readJson: true,
-          diagnostics: { stage: 'folder-sharing-update', folderId: folder.id, folderName: folder.name },
-        });
-      } catch (updateError) {
-        if (updateError?.status === 403) forgetFolderAuthorization(folder.id);
-        throw updateError;
-      }
+      await request(`/files/${encodeURIComponent(folder.id)}?${updateParams}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ inheritedPermissionsDisabled: desired }), readJson: true,
+        diagnostics: { stage: 'folder-sharing-update', folderId: folder.id, folderName: folder.name },
+      });
       changed.push({ id: folder.id, previous });
     }
   } catch (error) {

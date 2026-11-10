@@ -302,15 +302,26 @@ test('folder sharing settings enable and disable real Drive limited access', asy
     { id: 'nested', parentId: 'private-folder', name: 'Nested' },
   ] };
   await syncFolderSharingAccess(index, { sharing: { excludedFolderIds: ['private-folder'] } }, { driveFetch: request, authorizeFolder });
-  assert.deepEqual(authorizedFolders.map(({ id, mimeType, isFolder }) => ({ id, mimeType, isFolder })), [
-    { id: 'private-folder', mimeType: 'application/vnd.google-apps.folder', isFolder: true },
-    { id: 'public-folder', mimeType: 'application/vnd.google-apps.folder', isFolder: true },
-  ]);
+  assert.deepEqual(authorizedFolders, [], 'saving folder settings must not open Google Picker');
   assert.equal(state.get('private-folder').inheritedPermissionsDisabled, true);
   assert.equal(state.get('public-folder').inheritedPermissionsDisabled, false);
   assert.equal(calls.filter((call) => call.options.method === 'PATCH').length, 2);
   await syncFolderSharingAccess(index, { sharing: { excludedFolderIds: [] } }, { driveFetch: request, authorizeFolder: async () => true });
   assert.equal(state.get('private-folder').inheritedPermissionsDisabled, false);
+});
+
+test('folder settings save never opens Picker when folder metadata is forbidden', async () => {
+  let pickerCalls = 0;
+  const request = async () => { const error = new Error('Access denied'); error.status = 403; throw error; };
+  const { syncFolderSharingAccess } = await import('../js/drive-sharing.js');
+  await assert.rejects(syncFolderSharingAccess({ rootFolderId: 'root', folders: [
+    { id: 'root', parentId: null, name: 'Root' },
+    { id: 'private-folder', parentId: 'root', name: 'Private' },
+  ] }, { sharing: { excludedFolderIds: ['private-folder'] } }, {
+    driveFetch: request,
+    authorizeFolder: async () => { pickerCalls += 1; return true; },
+  }));
+  assert.equal(pickerCalls, 0);
 });
 
 test('closeRootFolderAccess revokes only the matching direct Google Drive permission', async () => {
@@ -451,52 +462,34 @@ test('closeRootFolderAccess refuses to remove inherited permission', async () =>
   assert.equal(calls.length, 2);
 });
 
-test('authorizes a folder in Picker and retries metadata after an initial 403', async () => {
+test('does not open Picker when folder metadata is forbidden during settings save', async () => {
   const calls = [];
-  const state = { id: 'folder-403', mimeType: 'application/vnd.google-apps.folder', inheritedPermissionsDisabled: false, capabilities: { canDisableInheritedPermissions: true, canEnableInheritedPermissions: true } };
-  let pickerAuthorized = false;
   const request = async (path, options = {}) => {
     calls.push({ path, options });
-    if (!options.method && !pickerAuthorized) {
-      const error = new Error('No access before Picker authorization');
-      error.status = 403;
-      throw error;
-    }
-    if (options.method === 'PATCH') {
-      const patch = JSON.parse(options.body);
-      state.inheritedPermissionsDisabled = patch.inheritedPermissionsDisabled;
-      return { id: state.id, ...patch };
-    }
-    return state;
+    const error = new Error('No access'); error.status = 403; error.stage = 'folder-sharing-metadata'; throw error;
   };
   const { syncFolderSharingAccess } = await import('../js/drive-sharing.js');
-  const pickerCalls = [];
-  const authorizeFolder = async (folder) => {
-    if (pickerAuthorized) return true;
-    pickerCalls.push(folder);
-    pickerAuthorized = true;
-    return true;
-  };
-  await syncFolderSharingAccess({ rootFolderId: 'root', folders: [
+  let pickerCalls = 0;
+  await assert.rejects(syncFolderSharingAccess({ rootFolderId: 'root', folders: [
     { id: 'root', parentId: null, name: 'Root' },
-    { id: state.id, parentId: 'root', name: 'Private' },
-  ] }, { sharing: { excludedFolderIds: [state.id] } }, { driveFetch: request, authorizeFolder });
-  assert.equal(pickerCalls.length, 1);
-  assert.equal(calls.filter((call) => !call.options.method).length, 2);
-  assert.equal(state.inheritedPermissionsDisabled, true);
-  assert.equal(calls.at(-1).options.method, 'PATCH');
+    { id: 'folder-403', parentId: 'root', name: 'Private' },
+  ] }, { sharing: { excludedFolderIds: ['folder-403'] } }, {
+    driveFetch: request,
+    authorizeFolder: async () => { pickerCalls += 1; return true; },
+  }), /folder-sharing-metadata.*HTTP 403/);
+  assert.equal(pickerCalls, 0);
+  assert.equal(calls.length, 1);
 });
 
 
-test('preserves Google API diagnostics when folder metadata is still denied after Picker authorization', async () => {
+test('preserves Google API diagnostics without retrying metadata or opening Picker', async () => {
   let calls = 0;
   let pickerCalls = 0;
-  const forgotten = [];
   const request = async () => {
     calls += 1;
-    const error = new Error(calls === 1 ? 'Forbidden' : 'No access after Picker');
+    const error = new Error('Forbidden');
     error.status = 403;
-    error.stage = calls === 1 ? 'folder-sharing-metadata' : 'folder-sharing-metadata-after-picker';
+    error.stage = 'folder-sharing-metadata';
     error.reason = 'insufficientFilePermissions';
     error.apiMessage = 'The user does not have sufficient permissions for this file.';
     throw error;
@@ -509,23 +502,21 @@ test('preserves Google API diagnostics when folder metadata is still denied afte
     ] }, { sharing: { excludedFolderIds: ['private-folder'] } }, {
       driveFetch: request,
       authorizeFolder: async () => { pickerCalls += 1; return true; },
-      forgetFolderAuthorization: (id) => forgotten.push(id),
     }),
     (error) => {
-      assert.match(error.message, /folder-sharing-metadata-after-picker/);
+      assert.match(error.message, /folder-sharing-metadata/);
       assert.match(error.message, /HTTP 403/);
       assert.match(error.message, /insufficientFilePermissions/);
       assert.match(error.message, /The user does not have sufficient permissions/);
       return true;
     },
   );
-  assert.equal(calls, 2);
-  assert.equal(pickerCalls, 1);
-  assert.deepEqual(forgotten, ['private-folder', 'private-folder']);
+  assert.equal(calls, 1);
+  assert.equal(pickerCalls, 0);
 });
 
 
-test('invalidates Picker authorization when the folder update itself is rejected with 403', async () => {
+test('does not invalidate Picker state or open Picker when a folder update is rejected with 403', async () => {
   const forgotten = [];
   const calls = [];
   const request = async (path, options = {}) => {
@@ -549,7 +540,7 @@ test('invalidates Picker authorization when the folder update itself is rejected
     authorizeFolder: async () => true,
     forgetFolderAuthorization: (id) => forgotten.push(id),
   }), /folder-sharing-update.*appNotAuthorizedToFile|appNotAuthorizedToFile.*folder-sharing-update/);
-  assert.deepEqual(forgotten, ['folder-patch-403']);
+  assert.deepEqual(forgotten, []);
   assert.equal(calls.at(-1).options.method, 'PATCH');
 });
 
