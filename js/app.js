@@ -15,9 +15,9 @@ import {
   canResumeBuildingIndex, prepareBuildingIndex, updateBuildProgress, validateCompletedIndex,
 } from './index-build.js';
 import { prepareIndexingRun, createRetryEligibilityCheck } from './indexing-run.js';
-import * as ui from './ui.js?v=20261109-drive-picker-auth-recovery';
+import * as ui from './ui.js?v=20261110-friends-module-singleton';
 import { errorDetails, recordIndexingError } from './indexing-errors.js';
-import { social, socialError } from './social-runtime.js?v=20261110-close-access-picker-retry';
+import { social, socialError } from './social-runtime.js?v=20261110-friends-module-singleton';
 import { getAccessToken } from './auth.js?v=20261109-oauth-picker-diagnostics';
 import { checkpointKey, loadCheckpoint, saveCheckpoint, deleteCheckpoint, commitCheckpoint } from './indexing-checkpoint.js';
 import { createLibraryTabs } from './library-tabs.js';
