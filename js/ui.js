@@ -14,7 +14,7 @@ import { createIndexingErrorsController } from './indexing-errors-ui.js';
 import { createUserSettingsController } from './user-settings-ui.js?v=20261108-folder-access-save-fix';
 import { mountFriends } from './friends-ui.js?v=20261108-registered-sharing-relationship';
 import { createNotificationsController } from './notifications-ui.js?v=20261108-reciprocal-share-only';
-import { social } from './social-runtime.js?v=20261109-drive-picker-auth-recovery';
+import { social } from './social-runtime.js?v=20261110-friends-module-singleton';
 import { getAccessToken } from './auth.js?v=20261109-oauth-picker-diagnostics';
 import { loadUserSettings, saveUserSettings } from './user-settings.js';
 
