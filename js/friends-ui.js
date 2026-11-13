@@ -63,6 +63,29 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
   const friendsAccessMessage = friendsSection.querySelector('.friends-access-message');
   const accessFlow = friendsSection.querySelector('.friends-access-flow');
   const closingAccess = new Set();
+  // The sharing dialog in Google Drive needs the participant's email right away;
+  // remember which flow already copied it so the button can confirm the copy.
+  const copiedEmails = new Set();
+  const copyEmailToClipboard = async (email) => {
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(email);
+        return true;
+      }
+    } catch { /* fall through to the legacy copy path */ }
+    try {
+      const area = document.createElement('textarea');
+      area.value = email;
+      area.setAttribute('readonly', '');
+      area.style.position = 'fixed';
+      area.style.opacity = '0';
+      document.body.append(area);
+      area.select();
+      const copied = document.execCommand('copy');
+      area.remove();
+      return copied;
+    } catch { return false; }
+  };
   // Guided manual sharing: Drive rejects programmatic permission changes on a
   // folder with books the app did not create, so the owner completes sharing in
   // Google Drive's own dialog. The app opens the folder, explains the step and
@@ -77,7 +100,7 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
     if (accessFlowFocusHandler) { window.removeEventListener('focus', accessFlowFocusHandler); accessFlowFocusHandler = null; }
     accessFlow.hidden = true;
     accessFlow.replaceChildren();
-    if (accessFlowEmail) { closingAccess.delete(accessFlowEmail); accessFlowEmail = ''; }
+    if (accessFlowEmail) { closingAccess.delete(accessFlowEmail); copiedEmails.delete(accessFlowEmail); accessFlowEmail = ''; }
   };
   const setAccessFlowStatus = (value) => {
     const status = accessFlow.querySelector('.friends-access-flow-status');
@@ -198,6 +221,7 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
   let statusRefreshRevision = 0;
   let invitationStatuses = {};
   let invitationStatusesLoaded = false;
+  let invitationStatusesFailed = false;
   let invitationQuota = null;
   let quotaMetadataRetryUsed = false;
   // Keep a just-sent invitation visible while Firestore's live query catches up.
@@ -351,6 +375,7 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
   async function refreshInvitationStatuses(extraEmails = []) {
     if (typeof social.getInvitationStatuses !== 'function') return;
     const revision = ++statusRefreshRevision;
+    invitationStatusesFailed = false;
     try {
       // Check every address currently shown in the local/Drive invitation ledger.
       // The server also returns quota metadata for non-empty lists, and must resolve
@@ -405,6 +430,11 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
           setTimeout(() => {
             if (!closed && !invitationQuota) void refreshInvitationStatuses();
           }, 1200);
+        } else {
+          // The authoritative admin check is unreachable. Friend emails fall
+          // back to local admin signals instead of staying hidden forever.
+          invitationStatusesFailed = true;
+          render();
         }
       }
     }
@@ -470,7 +500,11 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
       const isAdmin = friend.isAdmin === true || friend.uid === 'aA89pCYsKNbWWePmAveUVrG34F82' || knownAdminUids.includes(friend.uid);
       // Never expose a possible administrator's email while the authoritative admin list is still loading.
       if (isAdmin) { const detail = document.createElement('small'); detail.textContent = 'Администратор'; openButton.append(detail); }
-      else if (invitationQuota && friend.email) { const detail = document.createElement('small'); detail.textContent = friend.email; openButton.append(detail); }
+      // Friend emails are shown once the authoritative admin check settles:
+      // while it loads they stay hidden (a possible admin's email must not
+      // flash), and an unreachable check falls back to local admin signals
+      // instead of hiding every email forever.
+      else if ((invitationStatusesLoaded || invitationStatusesFailed) && friend.email) { const detail = document.createElement('small'); detail.textContent = friend.email; openButton.append(detail); }
       openButton.disabled = !friend.inbound || String(friend.uid).startsWith('email:');
       openButton.title = openButton.disabled ? 'Эта библиотека не открыта вам в Google Drive' : 'Открыть библиотеку друга';
       openButton.addEventListener('click', () => { if (!openButton.disabled) openLibrary(friend.uid); });
@@ -490,9 +524,14 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
       actionButton.type = 'button';
       actionButton.className = 'settings-save-button';
       const isSharingWithFriend = friend.outbound === true;
-      actionButton.textContent = isSharingWithFriend ? 'ЗАКРЫТЬ ДОСТУП' : 'ПОДЕЛИТЬСЯ';
       const friendEmail = String(friend.email || '').trim().toLowerCase();
-      actionButton.disabled = !friendEmail || closingAccess.has(friendEmail);
+      const flowActive = closingAccess.has(friendEmail);
+      // While a sharing flow runs, the button confirms the clipboard copy the
+      // click performed; it returns to its action label once re-enabled.
+      actionButton.textContent = flowActive && copiedEmails.has(friendEmail)
+        ? 'ЕМЕЙЛ СКОПИРОВАН'
+        : isSharingWithFriend ? 'ЗАКРЫТЬ ДОСТУП' : 'ПОДЕЛИТЬСЯ';
+      actionButton.disabled = !friendEmail || flowActive;
       actionButton.title = !friendEmail
         ? 'У друга не указан email'
         : isSharingWithFriend
@@ -509,6 +548,14 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
           const url = social.getOwnFolderUrl();
           if (url) window.open(url, '_blank', 'noopener');
         }
+        // The Drive sharing dialog needs the participant's email immediately;
+        // copy it for pasting and reflect the copy on the button while it runs.
+        void copyEmailToClipboard(email).then((copied) => {
+          if (copied && closingAccess.has(email)) {
+            copiedEmails.add(email);
+            render();
+          }
+        });
         void startAccessFlow(email, isSharingWithFriend ? 'close' : 'grant');
       });
       actionCell.append(actionButton);
