@@ -1,6 +1,5 @@
 import { SHARED_CATALOG_FILE_NAME, FOLDER_MIME_TYPE } from './config.js';
-import { driveFetch, downloadDriveJsonFile, findDriveCatalogFile, getFolderMetadata } from './drive.js?v=20261110-child-auth-recovery';
-import { ensureDriveFolderAuthorized, forgetDriveItemAuthorization } from './google-picker.js?v=20261109-picker-exact-folder';
+import { driveFetch, downloadDriveJsonFile, findDriveCatalogFile } from './drive.js?v=20261110-child-auth-recovery';
 
 const normalizeEmail = (value) => typeof value === 'string' ? value.trim().toLowerCase() : '';
 const isEmailPrefixName = (name, email) => {
@@ -22,44 +21,6 @@ async function listPages(path, params, request = driveFetch) {
   return results;
 }
 
-// Bounded, read-only diagnostics used only after Drive rejects a permission deletion.
-// Inspect the root's parent and at most ten immediate children to avoid a costly tree walk.
-async function diagnoseChildAuthorization(rootMetadata, rootFolderId, request = driveFetch) {
-  const details = [];
-  const parentId = rootMetadata?.parents?.[0];
-  if (parentId) {
-    try {
-      const params = new URLSearchParams({ fields: 'id,name,isAppAuthorized,capabilities(canShare)', supportsAllDrives: 'true' });
-      const parent = await request(`/files/${encodeURIComponent(parentId)}?${params}`, { readJson: true, diagnostics: { stage: 'sharing-parent-diagnostic', folderId: parentId } });
-      details.push(`родитель: isAppAuthorized=${typeof parent.isAppAuthorized === 'boolean' ? parent.isAppAuthorized : 'не определено'}, canShare=${typeof parent.capabilities?.canShare === 'boolean' ? parent.capabilities.canShare : 'не определено'}`);
-    } catch (error) {
-      details.push(`родитель: метаданные недоступны${error?.status ? ` (HTTP ${error.status})` : ''}`);
-    }
-  } else {
-    details.push('родитель: ID не указан в метаданных корневой папки');
-  }
-
-  try {
-    const params = new URLSearchParams({
-      q: `'${escapeDriveQuery(String(rootFolderId))}' in parents and trashed = false`,
-      fields: 'files(id,name,mimeType,isAppAuthorized,capabilities(canShare)),nextPageToken',
-      pageSize: '10',
-      supportsAllDrives: 'true',
-      includeItemsFromAllDrives: 'true',
-    });
-    const page = await request(`/files?${params}`, { readJson: true, diagnostics: { stage: 'sharing-children-diagnostic', folderId: rootFolderId } });
-    const children = page.files || [];
-    const unauthorized = children.filter((item) => item.isAppAuthorized === false);
-    const unknown = children.filter((item) => typeof item.isAppAuthorized !== 'boolean');
-    details.push(`непосредственные элементы (выборка до 10): проверено ${children.length}, isAppAuthorized=false: ${unauthorized.length}, статус не определён: ${unknown.length}`);
-    if (unauthorized.length) details.push(`элементы без авторизации приложения: ${unauthorized.slice(0, 5).map((item) => String(item.name || item.mimeType || 'без имени').slice(0, 80)).join(', ')}`);
-    if (page.nextPageToken) details.push('есть дополнительные элементы; проверена только первая страница');
-  } catch (error) {
-    details.push(`не удалось проверить непосредственные элементы${error?.status ? ` (HTTP ${error.status})` : ''}`);
-  }
-  return details.join('; ');
-}
-
 async function getRootFolder(rootFolderId, request = driveFetch) {
   if (!rootFolderId) return null;
   const params = new URLSearchParams({
@@ -67,20 +28,6 @@ async function getRootFolder(rootFolderId, request = driveFetch) {
     supportsAllDrives: 'true',
   });
   return request(`/files/${encodeURIComponent(rootFolderId)}?${params}`, { readJson: true });
-}
-
-async function getRootCatalog(rootFolderId, request = driveFetch) {
-  if (!rootFolderId) return null;
-  const params = new URLSearchParams({
-    q: `'${escapeDriveQuery(rootFolderId)}' in parents and name = '${escapeDriveQuery(SHARED_CATALOG_FILE_NAME)}' and trashed = false`,
-    fields: 'files(id,name,mimeType)',
-    pageSize: '10',
-    spaces: 'drive',
-    supportsAllDrives: 'true',
-    includeItemsFromAllDrives: 'true',
-  });
-  const result = await request(`/files?${params}`, { readJson: true });
-  return (result.files || []).find((file) => file.mimeType === 'application/json') || null;
 }
 
 async function listSharedCatalogFiles(request = driveFetch) {
@@ -176,134 +123,26 @@ export async function syncFolderSharingAccess(index, settings, api = {}) {
   return changed;
 }
 
-// Grant access to the owner's selected root folder before sending an invitation.
-// Existing permissions are preserved; retry only once after explicit Picker authorization.
-export async function grantRootFolderAccess(rootFolderId, email, api = {}) {
-  const request = api.driveFetch || driveFetch;
-  const authorizeFolder = api.authorizeFolder || ensureDriveFolderAuthorized;
-  const forgetFolderAuthorization = api.forgetFolderAuthorization || forgetDriveItemAuthorization;
-  const address = normalizeEmail(email);
-  if (!rootFolderId) throw new Error('Сначала выберите корневую папку своей библиотеки.');
-  if (!address) throw new Error('Укажите корректный email участника.');
-
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    try {
-      const existing = (await listPermissions(rootFolderId, request)).find((permission) =>
-        !permission.deleted && permission.type === 'user' && normalizeEmail(permission.emailAddress) === address);
-      if (existing) {
-        if (existing.role === 'owner') {
-          return { permissionId: existing.id || '', created: false, email: address };
-        }
-        if (existing.role !== 'reader') {
-          const inherited = (existing.permissionDetails || []).some((detail) => detail.inherited === true);
-          if (inherited) {
-            throw new Error(`Для ${address} унаследованы права редактирования Google Drive. Измените доступ на родительской папке на чтение и повторите приглашение.`);
-          }
-          const params = new URLSearchParams({ supportsAllDrives: 'true', sendNotificationEmail: 'false' });
-          const updated = await request(`/files/${encodeURIComponent(rootFolderId)}/permissions/${encodeURIComponent(existing.id)}?${params}`, {
-            method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ role: 'reader' }), readJson: true,
-            diagnostics: { stage: 'sharing-permissions-update' },
-          });
-          if (updated?.role && updated.role !== 'reader') {
-            throw new Error(`Не удалось ограничить доступ ${address} только чтением.`);
-          }
-        }
-        return { permissionId: existing.id || '', created: false, email: address };
-      }
-
-      const params = new URLSearchParams({ supportsAllDrives: 'true', sendNotificationEmail: 'false' });
-      const created = await request(`/files/${encodeURIComponent(rootFolderId)}/permissions?${params}`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type: 'user', role: 'reader', emailAddress: address }), readJson: true,
-        diagnostics: { stage: 'sharing-permissions-create' },
-      });
-      if (!created?.id) throw new Error('Google Drive не подтвердил выдачу доступа к корневой папке.');
-      return { permissionId: created.id, created: true, email: address };
-    } catch (error) {
-      const canRetryAuthorization = attempt === 0 && error?.status === 403
-        && ['appNotAuthorizedToChild', 'appNotAuthorizedToFile'].includes(error?.reason);
-      if (!canRetryAuthorization) throw error;
-      forgetFolderAuthorization(rootFolderId);
-      await authorizeFolder({ id: rootFolderId, name: 'корневая папка библиотеки', mimeType: FOLDER_MIME_TYPE, isFolder: true });
-    }
-  }
-  throw new Error('Не удалось подтвердить доступ к корневой папке Google Drive.');
-}
-
-export async function revokeRootFolderAccess(rootFolderId, permission) {
-  if (!rootFolderId || !permission?.created || !permission.permissionId) return;
-  const params = new URLSearchParams({ supportsAllDrives: 'true' });
-  await driveFetch(`/files/${encodeURIComponent(rootFolderId)}/permissions/${encodeURIComponent(permission.permissionId)}?${params}`, {
-    method: 'DELETE', diagnostics: { stage: 'sharing-permissions-delete' },
-  });
-}
-
-// Revoke only a direct permission on the selected root folder. Closing access must
-// never open Google Picker: report authorization failures without prompting or retrying.
-export async function closeRootFolderAccess(rootFolderId, email, api = {}) {
+// Drive rejects programmatic permission changes (POST/PATCH/DELETE) on a folder
+// that contains files the app did not create: every operation cascades to child
+// items and fails with 403 appNotAuthorizedToChild under per-file authorization.
+// Sharing is therefore completed by the owner in Google Drive's own dialog; the
+// app only reads the permission list and verifies the resulting access.
+export async function getRootFolderAccessState(rootFolderId, email, api = {}) {
   const request = api.driveFetch || driveFetch;
   const address = normalizeEmail(email);
   if (!rootFolderId) throw new Error('Не удалось определить корневую папку библиотеки. Обновите библиотеку и повторите попытку.');
-  if (!address) throw new Error('У этого друга не указан email, поэтому закрыть доступ автоматически нельзя.');
-
-  let folderMetadata = null;
-  let metadataDiagnostic = '';
-  try {
-    const readMetadata = api.getFolderMetadata || ((id) => getFolderMetadata(id, {
-      request,
-      diagnostics: { stage: 'sharing-folder-diagnostic', folderId: id },
-    }));
-    try {
-      folderMetadata = await readMetadata(rootFolderId);
-      metadataDiagnostic = `isAppAuthorized=${typeof folderMetadata?.isAppAuthorized === 'boolean' ? folderMetadata.isAppAuthorized : 'не предоставлено'}, canShare=${typeof folderMetadata?.capabilities?.canShare === 'boolean' ? folderMetadata.capabilities.canShare : 'не предоставлено'}`;
-    } catch (metadataError) {
-      metadataDiagnostic = `чтение диагностических полей не удалось${metadataError?.status ? ` (HTTP ${metadataError.status})` : ''}`;
-    }
-
-    let failedOperationStage = 'permissions-list';
-    try {
-      const permissions = await listPermissions(rootFolderId, request);
-        const matching = permissions.filter((permission) => !permission.deleted
-          && permission.type === 'user' && normalizeEmail(permission.emailAddress) === address
-          && permission.role !== 'owner');
-        if (!matching.length) return { revoked: false, email: address, alreadyAbsent: true };
-
-        const inherited = matching.find((permission) =>
-          (permission.permissionDetails || []).some((detail) => detail.inherited === true));
-        if (inherited) {
-          throw new Error('Google Drive сообщает, что доступ этого участника наследуется от родительской папки. Закройте доступ на том уровне, где он был выдан.');
-        }
-
-        for (const permission of matching) {
-          if (!permission.id) throw new Error('Google Drive не предоставил идентификатор разрешения; доступ не подтверждён как закрытый.');
-          failedOperationStage = 'permissions-delete';
-          const params = new URLSearchParams({ supportsAllDrives: 'true' });
-          const path = '/files/' + encodeURIComponent(rootFolderId) + '/permissions/' + encodeURIComponent(permission.id) + '?' + params;
-          await request(path, { method: 'DELETE', diagnostics: { stage: 'sharing-permissions-delete' } });
-        }
-        return { revoked: true, email: address, diagnostics: { isAppAuthorized: folderMetadata?.isAppAuthorized, canShare: folderMetadata?.capabilities?.canShare } };
-    } catch (error) {
-      if (error?.status === 403 && ['appNotAuthorizedToChild', 'appNotAuthorizedToFile'].includes(error?.reason)) {
-        error.sharingOperationStage = failedOperationStage;
-      }
-      throw error;
-    }
-  } catch (error) {
-    const diagnosticSuffix = metadataDiagnostic ? ` Диагностика корневой папки: ${metadataDiagnostic}.` : '';
-    if (error?.status === 403 && ['appNotAuthorizedToChild', 'appNotAuthorizedToFile'].includes(error?.reason)) {
-      const childDiagnostic = await diagnoseChildAuthorization(folderMetadata, rootFolderId, request);
-      const extendedDiagnostic = `${diagnosticSuffix} Диагностика родителя и дочерних элементов: ${childDiagnostic}.`;
-      const operation = error?.sharingOperationStage || 'операция разрешений';
-      const reason = error?.reason ? ` Причина Google: ${error.reason}.` : '';
-      const explanation = `Google Drive отказал на этапе «${operation}» при текущей авторизации приложения. Это не подтверждает закрытие доступа. Проверьте права владельца; окно выбора папки не открывалось.`;
-      throw new Error(explanation + reason + extendedDiagnostic);
-    }
-    if (error?.status === 403) {
-      throw new Error('Google Drive отказал в закрытии доступа. Проверьте права на папку и разрешения, выданные на родительском уровне.' + diagnosticSuffix);
-    }
-    throw error;
-  }
+  if (!address) throw new Error('У этого друга не указан email, поэтому доступ проверить нельзя.');
+  const permissions = await listPermissions(rootFolderId, request);
+  const matching = permissions.filter((permission) => !permission.deleted
+    && permission.type === 'user' && normalizeEmail(permission.emailAddress) === address);
+  const owner = matching.find((permission) => permission.role === 'owner');
+  const reader = matching.find((permission) => permission.role === 'reader');
+  const role = owner ? 'owner' : reader ? 'reader'
+    : matching.length ? String(matching[0].role || '') : '';
+  const inherited = matching.some((permission) =>
+    (permission.permissionDetails || []).some((detail) => detail.inherited === true));
+  return { granted: Boolean(owner || reader || matching.length), role, inherited, email: address };
 }
 
 export async function discoverDriveFriends(user, configuredRootFolderId = '', api = {}, knownFriends = []) {

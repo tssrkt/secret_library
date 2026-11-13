@@ -123,93 +123,58 @@ test('finds a friend library by known email without requiring reciprocal sharing
   assert.match(result.errors.join(' '), /метаданные корневой папки root-olya недоступны/);
 });
 
-test('invitation grants root-folder reader permission to the invited Google account', async () => {
+test('getRootFolderAccessState verifies reader access read-only without mutating permissions', async () => {
   const calls = [];
   const request = async (path, options = {}) => {
     calls.push({ path, options });
-    if (path.includes('/permissions?') && options.method === 'POST') {
-      const body = JSON.parse(options.body);
-      assert.deepEqual(body, { type: 'user', role: 'reader', emailAddress: 'friend@example.com' });
-      assert.equal(new URL(path, 'https://drive.googleapis.com').searchParams.get('sendNotificationEmail'), 'false');
-      return { id: 'permission-created' };
-    }
-    if (path.includes('/permissions?fields=nextPageToken%2Cpermissions%28id%2Ctype%2CemailAddress%2CdisplayName%2Crole%2Cdeleted%2CpermissionDetails%28inherited%2Crole%2CpermissionType%29%29')) return { permissions: [] };
+    if (path.includes('/permissions?')) return { permissions: [
+      { id: 'owner-permission', type: 'user', emailAddress: 'Owner@Example.com', role: 'owner' },
+      { id: 'friend-permission', type: 'user', emailAddress: 'friend@example.com', role: 'reader', permissionDetails: [{ inherited: false, role: 'reader', permissionType: 'user' }] },
+    ] };
     throw new Error(`Unexpected Drive request: ${path}`);
   };
-  const { grantRootFolderAccess } = await import('../js/drive-sharing.js');
-  const result = await grantRootFolderAccess('my-root', ' Friend@Example.com ', { driveFetch: request });
-  assert.deepEqual(result, { permissionId: 'permission-created', created: true, email: 'friend@example.com' });
-  assert.equal(calls.length, 2);
-  assert.equal(calls[1].options.method, 'POST');
+  const { getRootFolderAccessState } = await import('../js/drive-sharing.js');
+  const result = await getRootFolderAccessState('my-root', ' Friend@Example.com ', { driveFetch: request });
+  assert.deepEqual(result, { granted: true, role: 'reader', inherited: false, email: 'friend@example.com' });
+  assert.equal(calls.length, 1, 'verification is a single read-only permissions list');
+  assert.ok(!calls[0].options.method, 'no permission mutations are ever attempted');
 });
 
-test('invitation reauthorizes the exact root folder once after appNotAuthorizedToChild', async () => {
-  let permissionListCalls = 0;
-  let authorizationCalls = 0;
-  let forgotten = 0;
-  const request = async (path, options = {}) => {
-    if (path.includes('/permissions?') && options.method === 'POST') return { id: 'permission-created-after-picker' };
-    if (path.includes('/permissions?fields=nextPageToken%2Cpermissions%28id%2Ctype%2CemailAddress%2CdisplayName%2Crole%2Cdeleted%2CpermissionDetails%28inherited%2Crole%2CpermissionType%29%29')) {
-      permissionListCalls += 1;
-      if (permissionListCalls === 1) {
-        const error = new Error('appNotAuthorizedToChild');
-        error.status = 403;
-        error.reason = 'appNotAuthorizedToChild';
-        throw error;
-      }
-      return { permissions: [] };
-    }
-    throw new Error(`Unexpected Drive request: ${path}`);
-  };
-  const { grantRootFolderAccess } = await import('../js/drive-sharing.js');
-  const result = await grantRootFolderAccess('my-root', 'friend@example.com', {
-    driveFetch: request,
-    authorizeFolder: async (folder) => {
-      authorizationCalls += 1;
-      assert.deepEqual(folder, { id: 'my-root', name: 'корневая папка библиотеки', mimeType: 'application/vnd.google-apps.folder', isFolder: true });
-      return true;
-    },
-    forgetFolderAuthorization: (id) => { assert.equal(id, 'my-root'); forgotten += 1; },
-  });
-  assert.deepEqual(result, { permissionId: 'permission-created-after-picker', created: true, email: 'friend@example.com' });
-  assert.equal(permissionListCalls, 2);
-  assert.equal(authorizationCalls, 1);
-  assert.equal(forgotten, 1);
+test('getRootFolderAccessState reports absent access', async () => {
+  const request = async () => ({ permissions: [{ type: 'user', emailAddress: 'other@example.com', role: 'reader' }] });
+  const { getRootFolderAccessState } = await import('../js/drive-sharing.js');
+  const result = await getRootFolderAccessState('my-root', 'friend@example.com', { driveFetch: request });
+  assert.deepEqual(result, { granted: false, role: '', inherited: false, email: 'friend@example.com' });
 });
 
-test('invitation does not create a duplicate Drive permission when access already exists', async () => {
-  let created = false;
-  const request = async (path, options = {}) => {
-    if (options.method === 'POST') { created = true; throw new Error('Should not create a duplicate permission'); }
-    return { permissions: [{ id: 'existing-permission', type: 'user', emailAddress: 'friend@example.com', role: 'reader' }] };
-  };
-  const { grantRootFolderAccess } = await import('../js/drive-sharing.js');
-  const result = await grantRootFolderAccess('my-root', 'friend@example.com', { driveFetch: request });
-  assert.deepEqual(result, { permissionId: 'existing-permission', created: false, email: 'friend@example.com' });
-  assert.equal(created, false);
+test('getRootFolderAccessState reports a stronger role honestly instead of hiding it', async () => {
+  const request = async () => ({ permissions: [{ type: 'user', emailAddress: 'friend@example.com', role: 'writer', permissionDetails: [{ inherited: false }] }] });
+  const { getRootFolderAccessState } = await import('../js/drive-sharing.js');
+  const result = await getRootFolderAccessState('my-root', 'friend@example.com', { driveFetch: request });
+  assert.deepEqual(result, { granted: true, role: 'writer', inherited: false, email: 'friend@example.com' });
 });
 
-test('invitation downgrades an existing direct editor permission to reader', async () => {
-  const calls = [];
-  const request = async (path, options = {}) => {
-    calls.push({ path, options });
-    if (options.method === 'PATCH') {
-      assert.deepEqual(JSON.parse(options.body), { role: 'reader' });
-      return { id: 'existing-permission', role: 'reader' };
-    }
-    return { permissions: [{ id: 'existing-permission', type: 'user', emailAddress: 'friend@example.com', role: 'writer', permissionDetails: [{ inherited: false, role: 'writer', permissionType: 'user' }] }] };
-  };
-  const { grantRootFolderAccess } = await import('../js/drive-sharing.js');
-  const result = await grantRootFolderAccess('my-root', 'friend@example.com', { driveFetch: request });
-  assert.deepEqual(result, { permissionId: 'existing-permission', created: false, email: 'friend@example.com' });
-  assert.equal(calls.length, 2);
-  assert.equal(calls[1].options.method, 'PATCH');
+test('getRootFolderAccessState flags inherited permissions and ignores deleted ones', async () => {
+  const request = async () => ({ permissions: [
+    { type: 'user', emailAddress: 'friend@example.com', role: 'reader', deleted: true },
+    { type: 'user', emailAddress: 'friend@example.com', role: 'reader', permissionDetails: [{ inherited: true, role: 'reader', permissionType: 'user' }] },
+  ] });
+  const { getRootFolderAccessState } = await import('../js/drive-sharing.js');
+  const result = await getRootFolderAccessState('my-root', 'friend@example.com', { driveFetch: request });
+  assert.deepEqual(result, { granted: true, role: 'reader', inherited: true, email: 'friend@example.com' });
 });
 
-test('inherited editor permissions are not silently accepted as read-only', async () => {
-  const request = async () => ({ permissions: [{ id: 'inherited-permission', type: 'user', emailAddress: 'friend@example.com', role: 'writer', permissionDetails: [{ inherited: true, role: 'writer', permissionType: 'user' }] }] });
-  const { grantRootFolderAccess } = await import('../js/drive-sharing.js');
-  await assert.rejects(() => grantRootFolderAccess('my-root', 'friend@example.com', { driveFetch: request }), /унаследованы права редактирования/);
+test('getRootFolderAccessState treats an owner permission as full access', async () => {
+  const request = async () => ({ permissions: [{ type: 'user', emailAddress: 'friend@example.com', role: 'owner' }] });
+  const { getRootFolderAccessState } = await import('../js/drive-sharing.js');
+  const result = await getRootFolderAccessState('my-root', 'friend@example.com', { driveFetch: request });
+  assert.deepEqual(result, { granted: true, role: 'owner', inherited: false, email: 'friend@example.com' });
+});
+
+test('getRootFolderAccessState rejects an unknown root or participant email', async () => {
+  const { getRootFolderAccessState } = await import('../js/drive-sharing.js');
+  await assert.rejects(getRootFolderAccessState('', 'friend@example.com', { driveFetch: async () => ({ permissions: [] }) }), /корневую папку/);
+  await assert.rejects(getRootFolderAccessState('my-root', '  ', { driveFetch: async () => ({ permissions: [] }) }), /email/);
 });
 
 test('matches a published catalog to the known friend email when Drive omits root owner details', async () => {
@@ -324,206 +289,6 @@ test('folder settings save never opens Picker when folder metadata is forbidden'
   assert.equal(pickerCalls, 0);
 });
 
-test('closeRootFolderAccess revokes only the matching direct Google Drive permission', async () => {
-  const calls = [];
-  const request = async (path, options = {}) => {
-    calls.push({ path, options });
-    if (path.includes('/permissions?')) return { permissions: [
-      { id: 'friend-permission', type: 'user', emailAddress: 'friend@example.com', role: 'reader', permissionDetails: [{ inherited: false }] },
-      { id: 'other-permission', type: 'user', emailAddress: 'other@example.com', role: 'reader', permissionDetails: [{ inherited: false }] },
-    ] };
-    return {};
-  };
-  const { closeRootFolderAccess } = await import('../js/drive-sharing.js');
-  const result = await closeRootFolderAccess('root-id', 'Friend@Example.com', { driveFetch: request });
-  assert.equal(result.revoked, true);
-  assert.equal(calls.length, 3);
-  assert.match(calls[2].path, /permissions\/friend-permission/);
-  assert.equal(calls[2].options.method, 'DELETE');
-});
-
-test('closeRootFolderAccess reports root authorization diagnostics without changing behavior', async () => {
-  for (const metadata of [
-    { isAppAuthorized: true, capabilities: { canShare: true } },
-    { isAppAuthorized: false, capabilities: { canShare: false } },
-    {},
-  ]) {
-    const calls = [];
-    const request = async (path, options = {}) => {
-      calls.push({ path, options });
-      if (path.includes('/permissions?')) return { permissions: [{ id: 'friend-permission', type: 'user', emailAddress: 'friend@example.com', role: 'reader', permissionDetails: [{ inherited: false }] }] };
-      return {};
-    };
-    const { closeRootFolderAccess } = await import('../js/drive-sharing.js');
-    const result = await closeRootFolderAccess('root-id', 'friend@example.com', {
-      driveFetch: request,
-      getFolderMetadata: async () => metadata,
-    });
-    assert.equal(result.revoked, true);
-    assert.deepEqual(result.diagnostics, {
-      isAppAuthorized: metadata.isAppAuthorized,
-      canShare: metadata.capabilities?.canShare,
-    });
-    assert.equal(calls.filter(({ options }) => options.method === 'DELETE').length, 1);
-    assert.equal(calls.some(({ options }) => options.method === 'PATCH' || options.method === 'POST'), false);
-  }
-});
-
-test('closeRootFolderAccess reports permissions-list 403 without opening Picker', async () => {
-  const calls = [];
-  let pickerCalls = 0;
-  const request = async (path, options = {}) => {
-    calls.push({ path, options });
-    const error = new Error('Access denied'); error.status = 403; throw error;
-  };
-  const { closeRootFolderAccess } = await import('../js/drive-sharing.js');
-  await assert.rejects(closeRootFolderAccess('root-id', 'friend@example.com', {
-    driveFetch: request,
-    authorizeFolder: async () => { pickerCalls++; },
-  }), /Google Drive отказал в закрытии доступа/);
-  assert.equal(calls.length, 2);
-  assert.equal(pickerCalls, 0);
-});
-
-test('closeRootFolderAccess reports permission-delete 403 without retrying or opening Picker', async () => {
-  const calls = [];
-  let pickerCalls = 0;
-  const request = async (path, options = {}) => {
-    calls.push({ path, options });
-    if (path.includes('/permissions?')) return { permissions: [{ id: 'friend-permission', type: 'user', emailAddress: 'friend@example.com', role: 'reader', permissionDetails: [{ inherited: false }] }] };
-    const error = new Error('Access denied'); error.status = 403; throw error;
-  };
-  const { closeRootFolderAccess } = await import('../js/drive-sharing.js');
-  await assert.rejects(closeRootFolderAccess('root-id', 'friend@example.com', {
-    driveFetch: request,
-    authorizeFolder: async () => { pickerCalls++; },
-  }), /Google Drive отказал в закрытии доступа/);
-  assert.equal(calls.filter(({ options }) => options.method === 'DELETE').length, 1);
-  assert.equal(pickerCalls, 0);
-});
-test('closeRootFolderAccess does not open Picker after a permissions-list authorization error', async () => {
-  let listCalls = 0;
-  let pickerCalls = 0;
-  let forgotten = 0;
-  const deleted = [];
-  const request = async (path, options = {}) => {
-    if (path.includes('/permissions?')) {
-      listCalls += 1;
-      if (listCalls === 1) {
-        const error = new Error('appNotAuthorizedToChild');
-        error.status = 403;
-        error.reason = 'appNotAuthorizedToChild';
-        throw error;
-      }
-      return { permissions: [
-        { id: 'friend-permission', type: 'user', emailAddress: 'friend@example.com', role: 'reader', permissionDetails: [{ inherited: false }] },
-        { id: 'other-permission', type: 'user', emailAddress: 'other@example.com', role: 'reader', permissionDetails: [{ inherited: false }] },
-      ] };
-    }
-    if (options.method === 'DELETE') { deleted.push(path); return {}; }
-    return {};
-  };
-  const { closeRootFolderAccess } = await import('../js/drive-sharing.js');
-  await assert.rejects(closeRootFolderAccess('root-id', 'friend@example.com', {
-    driveFetch: request,
-    authorizeFolder: async () => { pickerCalls += 1; return true; },
-    forgetFolderAuthorization: (id) => { assert.equal(id, 'root-id'); forgotten += 1; },
-  }), /permissions-list.*appNotAuthorizedToChild|appNotAuthorizedToChild.*permissions-list/);
-  assert.equal(listCalls, 1);
-  assert.equal(pickerCalls, 0);
-  assert.equal(forgotten, 0);
-  assert.equal(deleted.length, 0);
-});
-
-test('closeRootFolderAccess never opens Picker when deletion reports appNotAuthorizedToFile', async () => {
-  let listCalls = 0;
-  let deleteCalls = 0;
-  let pickerCalls = 0;
-  const request = async (path, options = {}) => {
-    if (path.includes('/permissions?')) {
-      listCalls += 1;
-      return { permissions: [
-        { id: 'friend-permission', type: 'user', emailAddress: 'friend@example.com', role: 'reader', permissionDetails: [{ inherited: false }] },
-        { id: 'other-permission', type: 'user', emailAddress: 'other@example.com', role: 'reader', permissionDetails: [{ inherited: false }] },
-      ] };
-    }
-    if (options.method === 'DELETE') {
-      deleteCalls += 1;
-      if (deleteCalls === 1) {
-        const error = new Error('appNotAuthorizedToFile');
-        error.status = 403;
-        error.reason = 'appNotAuthorizedToFile';
-        throw error;
-      }
-      return {};
-    }
-    return {};
-  };
-  const { closeRootFolderAccess } = await import('../js/drive-sharing.js');
-  await assert.rejects(closeRootFolderAccess('root-id', 'friend@example.com', {
-    driveFetch: request,
-    authorizeFolder: async () => { pickerCalls += 1; return true; },
-    forgetFolderAuthorization: () => {},
-  }), /permissions-delete.*appNotAuthorizedToFile|appNotAuthorizedToFile.*permissions-delete/);
-  assert.equal(listCalls, 1);
-  assert.equal(deleteCalls, 1);
-  assert.equal(pickerCalls, 0);
-});
-
-test('closeRootFolderAccess reports authorization failure without opening Picker', async () => {
-  let listCalls = 0;
-  let pickerCalls = 0;
-  const request = async (path) => {
-    if (path.includes('/permissions?')) {
-      listCalls += 1;
-      const error = new Error('appNotAuthorizedToChild');
-      error.status = 403;
-      error.reason = 'appNotAuthorizedToChild';
-      throw error;
-    }
-    return {};
-  };
-  const { closeRootFolderAccess } = await import('../js/drive-sharing.js');
-  await assert.rejects(closeRootFolderAccess('root-id', 'friend@example.com', {
-    driveFetch: request,
-    authorizeFolder: async () => { pickerCalls += 1; return true; },
-    forgetFolderAuthorization: () => {},
-  }), /отказал на этапе «permissions-list».*окно выбора папки не открывалось/);
-  assert.equal(listCalls, 1);
-  assert.equal(pickerCalls, 0);
-});
-
-test('closeRootFolderAccess does not open Picker or report success after authorization failure', async () => {
-  let pickerCalls = 0;
-  const request = async (path) => {
-    if (path.includes('/permissions?')) {
-      const error = new Error('appNotAuthorizedToChild');
-      error.status = 403;
-      error.reason = 'appNotAuthorizedToChild';
-      throw error;
-    }
-    return {};
-  };
-  const { closeRootFolderAccess } = await import('../js/drive-sharing.js');
-  await assert.rejects(closeRootFolderAccess('root-id', 'friend@example.com', {
-    driveFetch: request,
-    authorizeFolder: async () => { pickerCalls += 1; throw new Error('Picker should not open'); },
-    forgetFolderAuthorization: () => {},
-  }), /permissions-list.*appNotAuthorizedToChild|appNotAuthorizedToChild.*permissions-list/);
-  assert.equal(pickerCalls, 0);
-});
-
-test('closeRootFolderAccess refuses to remove inherited permission', async () => {
-  const calls = [];
-  const request = async (path, options = {}) => {
-    calls.push({ path, options });
-    return { permissions: [{ id: 'inherited-permission', type: 'user', emailAddress: 'friend@example.com', role: 'reader', permissionDetails: [{ inherited: true }] }] };
-  };
-  const { closeRootFolderAccess } = await import('../js/drive-sharing.js');
-  await assert.rejects(closeRootFolderAccess('root-id', 'friend@example.com', { driveFetch: request }), /наследуется/);
-  assert.equal(calls.length, 2);
-});
-
 test('does not open Picker when folder metadata is forbidden during settings save', async () => {
   const calls = [];
   const request = async (path, options = {}) => {
@@ -604,46 +369,4 @@ test('does not invalidate Picker state or open Picker when a folder update is re
   }), /folder-sharing-update.*appNotAuthorizedToFile|appNotAuthorizedToFile.*folder-sharing-update/);
   assert.deepEqual(forgotten, []);
   assert.equal(calls.at(-1).options.method, 'PATCH');
-});
-
-test('diagnoses parent and at most ten immediate children after appNotAuthorizedToChild without retrying', async () => {
-  const calls = [];
-  const request = async (path, options = {}) => {
-    calls.push({ path, options });
-    const url = new URL(path, 'https://drive.googleapis.com');
-    if (url.pathname === '/files/root-id/permissions') {
-      return { permissions: [{ id: 'friend-permission', type: 'user', emailAddress: 'friend@example.com', role: 'reader', permissionDetails: [{ inherited: false }] }] };
-    }
-    if (options.method === 'DELETE') {
-      const error = new Error('appNotAuthorizedToChild');
-      error.status = 403;
-      error.reason = 'appNotAuthorizedToChild';
-      throw error;
-    }
-    if (url.pathname === '/files/parent-id') return { id: 'parent-id', isAppAuthorized: true, capabilities: { canShare: true } };
-    if (url.pathname === '/files') {
-      assert.equal(url.searchParams.get('pageSize'), '10');
-      assert.match(url.searchParams.get('q'), /root-id.*in parents/);
-      return { files: [
-        { id: 'child-a', name: 'Книга A', isAppAuthorized: false },
-        { id: 'child-b', name: 'Книга B', isAppAuthorized: true },
-      ], nextPageToken: 'more' };
-    }
-    throw new Error(`Unexpected Drive request: ${path}`);
-  };
-  const { closeRootFolderAccess } = await import('../js/drive-sharing.js');
-  await assert.rejects(closeRootFolderAccess('root-id', 'friend@example.com', {
-    driveFetch: request,
-    authorizeFolder: async () => true,
-    forgetFolderAuthorization: () => {},
-    getFolderMetadata: async () => ({ id: 'root-id', parents: ['parent-id'], isAppAuthorized: true, capabilities: { canShare: true } }),
-  }), (error) => {
-    assert.match(error.message, /родитель: isAppAuthorized=true, canShare=true/);
-    assert.match(error.message, /проверено 2, isAppAuthorized=false: 1/);
-    assert.match(error.message, /Книга A/);
-    assert.match(error.message, /проверена только первая страница/);
-    return true;
-  });
-  assert.equal(calls.filter(({ options }) => options.method === 'DELETE').length, 1);
-  assert.equal(calls.some(({ options }) => options.method === 'PATCH' || options.method === 'POST'), false);
 });

@@ -10,7 +10,10 @@ export async function runSocialUiTests(test, assert, equal) {
     const listeners = new Set(); const calls = [];
     return { calls, subscribe(fn) { listeners.add(fn); fn(state); return () => listeners.delete(fn); },
       update(change) { state = { ...state, ...change }; listeners.forEach((fn) => fn(state)); },
-      async syncKnownContacts() { calls.push('syncKnownContacts'); }, async shareWithEmail(email) { calls.push(['shareWithEmail', email]); return 'Доступ предоставлен.'; }, async shareBackWithEmail(email, uid) { calls.push(['shareBackWithEmail', email, uid]); return 'Доступ предоставлен.'; },
+      async syncKnownContacts() { calls.push('syncKnownContacts'); }, async shareWithEmail(email) { calls.push(['shareWithEmail', email]); return 'Доступ предоставлен.'; },
+      getOwnFolderUrl() { return ''; },
+      async openFriendAccessGuide(email) { calls.push(['openFriendAccessGuide', email]); return { email, rootFolderId: 'root', folderUrl: 'https://drive.google.com/drive/folders/root' }; },
+      async checkFriendAccess(email) { calls.push(['checkFriendAccess', email]); return { granted: true, role: 'reader', inherited: false, wasOutbound: false, rootFolderId: 'root' }; },
       async resendInvitation(email) { calls.push(['resendInvitation', email]); return 'Приглашение отправлено.'; },
       async getInvitationStatuses(emails) { return Object.fromEntries([['__quota', { isAdmin: false, limit: 20, adminUids: [] }], ...emails.map((email) => [email, { lastSentAt: 0, cooldownUntil: 0 }])]); },
       async setSharing(uid, active) { calls.push([uid, active]); },
@@ -221,8 +224,9 @@ export async function runSocialUiTests(test, assert, equal) {
       equal([...rows[0].children].slice(1).map((cell, i) => i < 2 ? cell.querySelector('.friend-status-mark')?.getAttribute('aria-label') : cell.textContent), ['Да', 'Нет', 'ПОДЕЛИТЬСЯ'], 'inbound only');
       equal([...rows[1].children].slice(1).map((cell, i) => i < 2 ? cell.querySelector('.friend-status-mark')?.getAttribute('aria-label') : cell.textContent), ['Нет', 'Да', 'ЗАКРЫТЬ ДОСТУП'], 'outbound only');
       equal([...rows[2].children].slice(1).map((cell, i) => i < 2 ? cell.querySelector('.friend-status-mark')?.getAttribute('aria-label') : cell.textContent), ['Да', 'Да', 'ЗАКРЫТЬ ДОСТУП'], 'mutual');
-      rows[0].querySelector('.settings-save-button').click(); await tick();
-      assert(social.calls.some((call) => Array.isArray(call) && call[0] === 'shareBackWithEmail' && call[1] === 'reader@gmail.com' && call[2] === '0'), 'share action grants Drive access to an existing friend without sending an invitation');
+      rows[0].querySelector('.settings-save-button').click(); await tick(); await tick();
+      assert(social.calls.some((call) => Array.isArray(call) && call[0] === 'openFriendAccessGuide' && call[1] === 'reader@gmail.com'), 'share action opens the guided Drive flow for an existing friend');
+      assert(social.calls.some((call) => Array.isArray(call) && call[0] === 'checkFriendAccess' && call[1] === 'reader@gmail.com'), 'share action verifies the manual Drive permission read-only');
       page.querySelector('[aria-label="Страница 2"]').click(); equal(page.querySelectorAll('.friends-table tbody tr').length, 1, 'second page is a slice');
       social.update({ friends: friends.slice(0, 50) });
       assert(!page.querySelector('.book-pagination') && page.querySelectorAll('.friends-table tbody tr').length === 50, '50 friends no paginator, page clamps');
@@ -284,7 +288,8 @@ export async function runSocialUiTests(test, assert, equal) {
       equal(button.querySelector('span').textContent, '1', 'remaining unloaded event stays unread');
       equal(panel.querySelectorAll('li').length, 50, 'dropdown limited to 50');
       const action = panel.querySelector('li button'); equal(action.textContent, 'ПОДЕЛИТЬСЯ В ОТВЕТ', 'exact reciprocal text');
-      action.click(); await tick(); equal(social.calls[1], ['shareBackWithEmail', 'user0@gmail.com', '0'], 'reciprocal sharing uses a dedicated Drive-only action, not invitation sending');
+      action.click(); await tick(); await tick(); equal(social.calls[1], ['openFriendAccessGuide', 'user0@gmail.com'], 'reciprocal sharing opens the guided Drive flow, not invitation sending');
+      assert(social.calls.some((call) => Array.isArray(call) && call[0] === 'checkFriendAccess' && call[1] === 'user0@gmail.com'), 'reciprocal sharing verifies the manual Drive permission read-only');
       assert(panel.querySelectorAll('li')[1].textContent.includes('Вы уже делитесь') && !panel.querySelectorAll('li')[1].querySelector('button'), 'mutual state is text');
       document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
       assert(panel.hidden && document.activeElement === button, 'Escape closes and restores button focus');
