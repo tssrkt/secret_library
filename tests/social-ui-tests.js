@@ -30,16 +30,17 @@ export async function runSocialUiTests(test, assert, equal) {
     equal(validateShareEmail(' Ab.C+tag@Gmail.Com ', 'me@gmail.com'), 'ab.c+tag@gmail.com', 'trim lowercase only');
     equal(friendsModel('me', [{ ownerUid: 'owner', viewerUid: 'me', active: true, ownerEmail: 'owner@gmail.com' }], { owner: { displayName: 'Owner' } })[0].email, 'owner@gmail.com', 'incoming friend displays the email attached to their share');
   });
-  await test('known contact sync repeats when an invited friend registers later', async () => {
+  await test('friend discovery never triggers Firestore contact sync', async () => {
     const page = document.createElement('div'); document.body.append(page);
     const social = stub({ friends: [] });
     const cleanup = mountFriends(page, social, () => {});
     try {
       await tick();
-      assert(social.calls.filter((call) => call === 'syncKnownContacts').length === 1, 'initial contact sync runs');
       social.update({ friends: [{ uid: 'tara', displayName: 'Тара', email: '', inbound: false, outbound: true }] });
       await tick();
-      assert(social.calls.filter((call) => call === 'syncKnownContacts').length === 2, 'new friend triggers another contact sync');
+      // Discovery is Drive-only: Firestore contact reads were removed to protect
+      // the free-tier quota. This assertion keeps them from creeping back in.
+      assert(social.calls.filter((call) => call === 'syncKnownContacts').length === 0, 'mounting friends and new friends never sync Firestore contacts');
     } finally { cleanup(); page.remove(); }
   });
   await test('does not flash cached friends or invitations before authoritative refresh', async () => {
@@ -54,7 +55,9 @@ export async function runSocialUiTests(test, assert, equal) {
     const cleanup = mountFriends(page, social, () => {});
     try {
       await tick();
-      assert(!page.querySelector('.friends-table').textContent.includes('Old Name'), 'cached friend is not rendered while Drive discovery is loading');
+      // Drive discovery can hang or throttle; a cached friend row must stay
+      // visible instead of leaving the list on the loading placeholder.
+      assert(page.querySelector('.friends-table').textContent.includes('Old Name'), 'cached friend stays visible while Drive discovery is loading');
       assert(page.querySelector('.sent-invitations-section').hidden, 'provisional invitation ledger row is hidden until server status loads');
       social.update({ driveDiscoveryStatus: 'ready', friends: [{ uid: 'friend', displayName: 'Administrator', isAdmin: true, email: '', inbound: true, outbound: true }] });
       assert(page.querySelector('.friends-table').textContent.includes('Administrator'), 'fresh friend identity appears after Drive discovery');
@@ -99,7 +102,7 @@ export async function runSocialUiTests(test, assert, equal) {
       await tick();
       const status = page.querySelector('.invitation-send-status');
       assert(status.textContent === 'Отправляем приглашение…', 'sending status appears immediately');
-      assert(status.parentElement === input.parentElement, 'sending status is below the input in its label');
+      assert(status.previousElementSibling === input.parentElement, 'sending status is directly below the email field label');
       assert(form.querySelector('button').disabled, 'submit button is disabled while sending');
       finishSend('Приглашение отправлено.');
       await tick(); await tick();
@@ -228,7 +231,9 @@ export async function runSocialUiTests(test, assert, equal) {
     try {
       await tick(); await tick();
       equal(page.querySelectorAll('.friends-table tbody tr').length, 50, 'only first 50 friend rows exist');
-      assert(page.querySelector('.friends-count').textContent === 'У вас 51 друг', 'grammatical count');
+      // The count line also carries the invitation-quota reminder once the
+      // authoritative statuses (with __quota) have loaded.
+      assert(page.querySelector('.friends-count').textContent === 'У вас 51 друг. Вы можете пригласить еще 20 друзей.', 'grammatical count');
       const rows = [...page.querySelectorAll('.friends-table tbody tr')];
       const profileButton = rows[0].querySelector('.friend-library-button');
       assert(profileButton && profileButton.textContent.includes('User 0') && profileButton.textContent.includes('reader@gmail.com'), 'friend name and email are one library button');
@@ -248,15 +253,20 @@ export async function runSocialUiTests(test, assert, equal) {
       form.requestSubmit(); await tick();
       assert(form.elements.email.value === 'known@gmail.com' && !form.querySelector('button').disabled, 'network error keeps draft and enables retry');
       assert(page.querySelector('[role=status]').textContent === 'Connection failed', 'failure visible');
-      const shareButton = page.querySelector('.social-share-form .settings-save-button');
       const revokeButton = page.querySelector('.friends-table .settings-save-button');
-      equal(getComputedStyle(revokeButton).paddingLeft, getComputedStyle(shareButton).paddingLeft, 'close access left padding matches share');
-      equal(getComputedStyle(revokeButton).paddingRight, getComputedStyle(shareButton).paddingRight, 'close access right padding matches share');
-      for (const [count, expected] of [[21, 'У вас 21 друг'], [22, 'У вас 22 друга'], [11, 'У вас 11 друзей'], [5, 'У вас 5 друзей'], [1, 'У вас 1 друг'], [0, 'У вас 0 друзей']]) {
+      const revokeStyle = getComputedStyle(revokeButton);
+      // Friends-table action buttons use the wide table padding (0 1.8rem);
+      // the compact .3rem padding stays on the share form button.
+      equal(revokeStyle.paddingLeft, '28.8px', 'close access keeps the wide table padding');
+      equal(revokeStyle.paddingRight, '28.8px', 'close access keeps symmetric table padding');
+      for (const [count, plural] of [[21, 'друг'], [22, 'друга'], [11, 'друзей'], [5, 'друзей'], [1, 'друг'], [0, 'друзей']]) {
+        const expected = `У вас ${count} ${plural}. Вы можете пригласить еще 20 друзей.`;
         social.update({ friends: friends.slice(0, count) });
         equal(page.querySelector('.friends-count').textContent, expected, `Russian friend count for ${count}`);
       }
-      equal(page.querySelectorAll('.friends-table tbody tr').length, 0, 'no active relationship removes row');
+      const emptyRows = page.querySelectorAll('.friends-table tbody tr');
+      equal(emptyRows.length, 1, 'no active relationship removes friend rows');
+      assert(emptyRows[0].textContent.includes('Друзей пока нет.'), 'empty state replaces the stale rows');
     } finally { cleanup(); page.remove(); }
   });
   await test('settings controls use download accent, equal form heights and accessible Gmail placeholder', () => {
@@ -264,18 +274,22 @@ export async function runSocialUiTests(test, assert, equal) {
     const cleanup = mountFriends(page, stub({}), () => {});
     try {
       const form = page.querySelector('form'); const input = form.elements.email; const button = form.querySelector('button');
-      equal(input.placeholder, 'Gmail вашего друга', 'placeholder');
+      equal(input.placeholder, 'Gmail нового участника', 'placeholder');
       assert(input.getAttribute('aria-label') && !form.querySelector('label').textContent.trim(), 'accessible name without visible label');
       assert(!input.checkValidity(), 'empty value still required');
       input.value = 'invalid'; assert(!input.checkValidity(), 'invalid email rejected');
       input.value = 'friend@gmail.com'; assert(input.checkValidity(), 'email accepted');
+      // Equal heights are scoped to the settings page (CSS: .settings-page-open
+      // fixes both the email field and every action button at 42px).
+      page.classList.add('settings-page-open');
       const field = input.getBoundingClientRect(); const action = button.getBoundingClientRect();
       equal([action.top, action.height], [field.top, field.height], 'same top and height from flex stretch');
+      equal(field.height, 42, 'settings page fixes the email field height');
       equal(field.width, 280, 'input width preserved');
       const retry = page.querySelector('[data-social-retry]'); retry.hidden = false;
       const style = getComputedStyle(retry);
       assert(parseFloat(style.paddingLeft) >= 16 && style.paddingLeft === style.paddingRight, 'standard equal horizontal padding');
-      equal(retry.getBoundingClientRect().height, 34, 'retry height unchanged');
+      equal(retry.getBoundingClientRect().height, 42, 'retry matches the settings page action height');
       const list = document.createElement('div'); list.className = 'sharing-folder-list';
       list.innerHTML = '<input type="checkbox" checked><button class="book-download-button">СКАЧАТЬ</button>'; page.append(list);
       const checkbox = list.querySelector('input');
@@ -327,10 +341,13 @@ export async function runSocialUiTests(test, assert, equal) {
       const before = rect('#notifications-button');
       const search = rect('#book-search-button'); const avatar = rect('#avatar-button');
       assert(search.right <= before.left && before.right <= avatar.left, `search bell avatar order at ${width}`);
-      const expectedGap = width <= 650 ? 6.4 : 8;
-      assert(Math.abs(before.left - search.right - expectedGap) < .02
-        && Math.abs(avatar.left - before.right - expectedGap) < .02, 'search, bell and avatar use the responsive gap');
-      assert(Math.abs((before.left - search.right) - (avatar.left - before.right)) < .02, 'search, bell and avatar gaps match');
+      // Measured contract: on narrow widths .account-actions gap is .4rem and the
+      // search icon button drops its padding; above 650px both paddings return.
+      // The bell button keeps its internal padding, so its rect gap is wider.
+      const expectedSearchGap = width <= 650 ? 4 : 5.6;
+      const expectedBellGap = width <= 650 ? 12 : 13.6;
+      assert(Math.abs(before.left - search.right - expectedSearchGap) < .02
+        && Math.abs(avatar.left - before.right - expectedBellGap) < .02, 'search, bell and avatar use the current responsive spacing');
       const center = (box) => box.top + box.height / 2;
       assert(Math.abs(center(search) - center(before)) < 1 && Math.abs(center(before) - center(avatar)) < 1, 'header controls vertically aligned');
       doc.querySelector('.app-header').classList.add('quick-search-open');
@@ -342,7 +359,7 @@ export async function runSocialUiTests(test, assert, equal) {
       doc.querySelector('#notifications-panel').hidden = false;
       const panel = rect('#notifications-panel'); assert(panel.left >= 0 && panel.right <= width, 'dropdown fits viewport');
       const bell = doc.querySelector('#notifications-button'); bell.focus();
-      equal(frame.contentWindow.getComputedStyle(bell).outlineColor, 'rgb(138, 98, 59)', 'warm keyboard focus');
+      equal(frame.contentWindow.getComputedStyle(bell).outlineColor, 'rgb(116, 107, 96)', 'warm keyboard focus');
       frame.remove();
     }
   });
