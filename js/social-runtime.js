@@ -1,7 +1,7 @@
 import { startFirebaseSession, endFirebaseSession } from './firebase-session.js';
 import { createSocialStore } from './social-store.js?v=20261108-registered-sharing-relationship';
 import { createSharedLibraryStore } from './shared-library.js?v=20261109-drive-picker-auth-recovery';
-import { discoverDriveFriends, grantRootFolderAccess, closeRootFolderAccess } from './drive-sharing.js?v=20261110-no-picker-close-access';
+import { discoverDriveFriends, getRootFolderAccessState } from './drive-sharing.js?v=20261112-guided-manual-sharing';
 import { findDriveCatalogFile, downloadDriveJsonFile, getCurrentDriveUser } from './drive.js';
 import { sendInvitationEmail, getInvitationStatuses as fetchInvitationStatuses, cancelInvitation as cancelInvitationToken } from './invitation-mailer.js?v=20261108-email-registry-auth';
 import { createInvitationLedger, acceptedInvitationFriends, invitationLedgerRows, mergeInvitationRows } from './invitation-ledger.js?v=20261107-ledger-server-discovery';
@@ -91,6 +91,21 @@ function readFriendCache(uid) {
       && typeof friend.displayName === 'string'
       && friend.inbound === true && typeof friend.outbound === 'boolean');
   } catch { return null; }
+}
+const DRIVE_FOLDER_URL_PREFIX = 'https://drive.google.com/drive/folders/';
+async function resolveOwnRootFolderId() {
+  let rootFolderId = configuredRootFolderId || state.ownRootFolderId || '';
+  if (!rootFolderId && invitationUser?.uid) {
+    const catalogFile = await findDriveCatalogFile(invitationUser.uid);
+    if (catalogFile) {
+      const catalog = await downloadDriveJsonFile(catalogFile.id);
+      if (catalog?.ownerUid === invitationUser.uid && typeof catalog.rootFolderId === 'string') {
+        rootFolderId = catalog.rootFolderId;
+        configuredRootFolderId = rootFolderId;
+      }
+    }
+  }
+  return rootFolderId;
 }
 function combineFriendRows() {
   const friends = [...driveFriends];
@@ -432,7 +447,14 @@ export const social = {
     }
     if (!rootFolderId) throw new Error('Не удалось определить корневую папку из опубликованного каталога Google Drive. Обновите библиотеку и повторите попытку.');
     if (registeredStatus?.registered === true && registeredStatus.registeredUid) {
-      await grantRootFolderAccess(rootFolderId, normalizedEmail);
+      // Programmatic Drive grants are impossible for a folder with books the app
+      // did not create (403 appNotAuthorizedToChild). Verify the owner's manual
+      // sharing first; otherwise direct them to the guided «ПОДЕЛИТЬСЯ» flow.
+      const access = await getRootFolderAccessState(rootFolderId, normalizedEmail).catch(() => null);
+      const readableAccess = access?.granted === true && (access.role === 'reader' || access.role === 'owner');
+      if (!readableAccess) {
+        return 'Этот участник уже зарегистрирован. Откройте ему доступ кнопкой «ПОДЕЛИТЬСЯ» в списке друзей ниже.';
+      }
       // Drive permission alone does not create the app's library relationship.
       // Persist the active owner -> viewer relationship before reporting success.
       if (!store) throw new Error('Library relationship unavailable. Please try again.');
@@ -456,19 +478,14 @@ export const social = {
         notifications: buildDriveNotifications(driveFriends), ownRootFolderId: rootFolderId });
       watchCatalogs(driveFriends);
       void refreshDriveFriends(invitationUser, generation, driveFriends);
-      return `Доступ к библиотеке предоставлен.`;
+      return `Доступ к библиотеке уже открыт.`;
     }
 
-    // Validate and send through the server-owned registry before granting Drive access.
-    // This prevents rejected/over-limit invitations from receiving the root folder.
+    // Validate and send through the server-owned registry. Drive access is no
+    // longer granted here: a folder with books the app did not create rejects
+    // programmatic permission changes (403 appNotAuthorizedToChild), so the
+    // owner opens access via the guided «ПОДЕЛИТЬСЯ» flow after registration.
     const result = await sendInvitationEmail({ email: normalizedEmail, idToken });
-    try {
-      await grantRootFolderAccess(rootFolderId, normalizedEmail);
-      closedAccessEmails.delete(normalizedEmail);
-    } catch (error) {
-      const detail = String(error?.message || error || '').trim();
-      throw new Error('Invitation email was sent, but Google Drive folder access could not be granted. Do not resend the invitation; check the folder permissions. ' + detail);
-    }
     try {
       const savedLedger = await invitationLedger.upsert(invitationUser.uid, {
         inviteeEmail: normalizedEmail,
@@ -491,70 +508,69 @@ export const social = {
     void refreshDriveFriends(invitationUser, generation, driveFriends);
     return result;
   },
-  // Reciprocal sharing is for an existing participant who has already shared
-  // their library with us. Grant Drive access only: never send or record an invite.
-  async shareBackWithEmail(email, ownerUid = '') {
-    if (!invitationUser) throw new Error('Сначала войдите через Google, чтобы открыть доступ к библиотеке.');
-    const normalizedEmail = String(email || '').trim().toLowerCase();
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) throw new Error('Не удалось определить email владельца библиотеки.');
-    if (normalizedEmail === String(invitationUser.email || '').trim().toLowerCase()) throw new Error('Нельзя открыть доступ самому себе.');
-    let rootFolderId = configuredRootFolderId || state.ownRootFolderId || '';
-    if (!rootFolderId) {
-      const catalogFile = await findDriveCatalogFile(invitationUser.uid);
-      if (catalogFile) {
-        const catalog = await downloadDriveJsonFile(catalogFile.id);
-        if (catalog?.ownerUid === invitationUser.uid && typeof catalog.rootFolderId === 'string') {
-          rootFolderId = catalog.rootFolderId;
-          configuredRootFolderId = rootFolderId;
-        }
-      }
-    }
-    if (!rootFolderId) throw new Error('Не удалось определить корневую папку вашей библиотеки. Обновите библиотеку и повторите попытку.');
-    await grantRootFolderAccess(rootFolderId, normalizedEmail);
-    closedAccessEmails.delete(normalizedEmail);
-    for (const friend of driveFriends) {
-      if ((ownerUid && String(friend.uid) === String(ownerUid))
-          || String(friend.email || '').trim().toLowerCase() === normalizedEmail) {
-        friend.outbound = true;
-      }
-    }
-    emit({ friends: combineFriendRows(), notifications: buildDriveNotifications(driveFriends), ownRootFolderId: rootFolderId });
-    watchCatalogs(driveFriends);
-    void refreshDriveFriends(invitationUser, generation, driveFriends);
-    return 'Доступ к вашей библиотеке предоставлен.';
+  // Guided manual sharing: Drive forbids programmatic permission changes on a
+  // folder containing files the app did not create (403 appNotAuthorizedToChild
+  // on every permissions POST/DELETE). The owner completes sharing in Google
+  // Drive's own dialog; the app opens the folder and verifies the result.
+  getOwnFolderUrl() {
+    const id = configuredRootFolderId || state.ownRootFolderId || '';
+    return id ? DRIVE_FOLDER_URL_PREFIX + encodeURIComponent(id) : '';
   },
-  async closeFriendAccess(email) {
-    let rootFolderId = configuredRootFolderId || state.ownRootFolderId || '';
-    if (!rootFolderId && invitationUser?.uid) {
-      const catalogFile = await findDriveCatalogFile(invitationUser.uid);
-      if (catalogFile) {
-        const catalog = await downloadDriveJsonFile(catalogFile.id);
-        if (catalog?.ownerUid === invitationUser.uid && typeof catalog.rootFolderId === 'string') {
-          rootFolderId = catalog.rootFolderId;
-          configuredRootFolderId = rootFolderId;
-        }
-      }
-    }
+  async openFriendAccessGuide(email) {
+    if (!invitationUser) throw new Error('Сначала войдите через Google, чтобы открывать доступ к библиотеке.');
     const normalizedEmail = String(email || '').trim().toLowerCase();
-    // Revoke the actual Drive permission first, then close the matching registered
-    // owner -> viewer relationship so the person disappears from Friends unless
-    // they still share their library with us.
-    const result = await closeRootFolderAccess(rootFolderId, normalizedEmail);
-    closedAccessEmails.add(normalizedEmail);
-    for (const friend of driveFriends) {
-      if (String(friend.email || '').trim().toLowerCase() === normalizedEmail) friend.outbound = false;
+    if (!normalizedEmail) throw new Error('Не удалось определить email участника.');
+    const rootFolderId = await resolveOwnRootFolderId();
+    if (!rootFolderId) throw new Error('Не удалось определить корневую папку вашей библиотеки. Обновите библиотеку и повторите попытку.');
+    return { email: normalizedEmail, rootFolderId, folderUrl: DRIVE_FOLDER_URL_PREFIX + encodeURIComponent(rootFolderId) };
+  },
+  // Read-only verification of the owner's manual sharing change. Applies the same
+  // bookkeeping the old grant/revoke path performed, so friend rows and the
+  // registered relationships stay consistent with the real Drive permissions.
+  async checkFriendAccess(email) {
+    if (!invitationUser) throw new Error('Сначала войдите через Google, чтобы проверять доступ к библиотеке.');
+    const normalizedEmail = String(email || '').trim().toLowerCase();
+    if (!normalizedEmail) throw new Error('Не удалось определить email участника.');
+    const rootFolderId = await resolveOwnRootFolderId();
+    if (!rootFolderId) throw new Error('Не удалось определить корневую папку вашей библиотеки. Обновите библиотеку и повторите попытку.');
+    const access = await getRootFolderAccessState(rootFolderId, normalizedEmail);
+    const matchesEmail = (friend) => String(friend?.email || '').trim().toLowerCase() === normalizedEmail;
+    const wasOutbound = driveFriends.some((friend) => matchesEmail(friend) && friend.outbound === true)
+      || registeredShareFriends.some((friend) => matchesEmail(friend) && friend.outbound === true)
+      || acceptedInviteFriends.some((friend) => matchesEmail(friend) && friend.outbound === true);
+    const readableAccess = access.granted === true && (access.role === 'reader' || access.role === 'owner');
+    if (readableAccess && !wasOutbound) {
+      closedAccessEmails.delete(normalizedEmail);
+      const partnerUid = registeredShareFriends.find((friend) => matchesEmail(friend) && friend.uid)?.uid
+        || acceptedInviteFriends.find((friend) => matchesEmail(friend) && friend.uid && !String(friend.uid).startsWith('email:'))?.uid
+        || driveFriends.find((friend) => matchesEmail(friend) && friend.uid && !String(friend.uid).startsWith('email:'))?.uid
+        || '';
+      if (partnerUid && store) {
+        await store.setSharing(String(partnerUid), true, normalizedEmail);
+        registeredShareFriends = await store.loadFriends();
+      }
+      for (const friend of driveFriends) {
+        if (matchesEmail(friend)) friend.outbound = true;
+      }
+      emit({ friends: combineFriendRows(), notifications: buildDriveNotifications(driveFriends), ownRootFolderId: rootFolderId });
+      watchCatalogs(driveFriends);
+      void refreshDriveFriends(invitationUser, generation, driveFriends);
+    } else if (!access.granted && wasOutbound) {
+      closedAccessEmails.add(normalizedEmail);
+      const registeredFriend = registeredShareFriends.find((friend) => matchesEmail(friend) && friend.outbound === true);
+      const otherUid = registeredFriend?.uid
+        || driveFriends.find((friend) => matchesEmail(friend) && friend.uid && !String(friend.uid).startsWith('email:'))?.uid
+        || '';
+      if (otherUid && store && registeredShareFriends.some((friend) => String(friend.uid) === String(otherUid) && friend.outbound === true)) {
+        await store.setSharing(String(otherUid), false, normalizedEmail);
+        registeredShareFriends = await store.loadFriends();
+      }
+      for (const friend of driveFriends) {
+        if (matchesEmail(friend)) friend.outbound = false;
+      }
+      emit({ friends: combineFriendRows() });
     }
-    const registeredFriend = registeredShareFriends.find((friend) =>
-      String(friend.email || '').trim().toLowerCase() === normalizedEmail && friend.outbound === true);
-    const driveFriend = driveFriends.find((friend) =>
-      String(friend.email || '').trim().toLowerCase() === normalizedEmail && friend.uid && !String(friend.uid).startsWith('email:'));
-    const otherUid = registeredFriend?.uid || driveFriend?.uid;
-    if (otherUid && store && registeredShareFriends.some((friend) => String(friend.uid) === String(otherUid) && friend.outbound === true)) {
-      await store.setSharing(String(otherUid), false, normalizedEmail);
-      registeredShareFriends = await store.loadFriends();
-    }
-    emit({ friends: combineFriendRows() });
-    return result;
+    return { ...access, wasOutbound, rootFolderId };
   },
   async resendInvitation(email) {
     if (!invitationUser) throw new Error('Сначала войдите через Google, чтобы отправлять приглашения.');
@@ -574,27 +590,12 @@ export const social = {
     if (!invitationUser) throw new Error('Сначала войдите через Google, чтобы отменять приглашения.');
     const normalizedEmail = String(email || '').trim().toLowerCase();
     if (!normalizedEmail) throw new Error('Не указан адрес приглашённого участника.');
-    let rootFolderId = configuredRootFolderId || state.ownRootFolderId || '';
-    if (!rootFolderId) {
-      const catalogFile = await findDriveCatalogFile(invitationUser.uid);
-      if (catalogFile) {
-        const catalog = await downloadDriveJsonFile(catalogFile.id);
-        if (catalog?.ownerUid === invitationUser.uid && typeof catalog.rootFolderId === 'string') {
-          rootFolderId = catalog.rootFolderId;
-          configuredRootFolderId = rootFolderId;
-        }
-      }
-    }
-    if (!rootFolderId) throw new Error('Не удалось определить корневую папку. Приглашение не отменено; обновите библиотеку и повторите попытку.');
     const idToken = await invitationUser.getIdToken();
-    // Server-side revocation comes first: even if Drive permission cleanup fails,
-    // the invitation token is already unusable and cannot register the recipient.
+    // Server-side revocation comes first: the invitation token becomes unusable
+    // and cannot register the recipient. Residual Drive access, if any, cannot
+    // be revoked programmatically (403 appNotAuthorizedToChild); the owner
+    // closes it via the guided «ЗАКРЫТЬ ДОСТУП» flow in the friends list.
     const result = await cancelInvitationToken({ email: normalizedEmail, idToken });
-    try {
-      await closeRootFolderAccess(rootFolderId, normalizedEmail);
-    } catch (error) {
-      throw new Error('Приглашение отменено, ссылка регистрации недействительна, письмо отправлено, но Google Drive не подтвердил закрытие доступа к папке. Повторите закрытие доступа из списка друзей или проверьте права папки. ' + (error?.message || error));
-    }
     closedAccessEmails.add(normalizedEmail);
     for (const friend of driveFriends) {
       if (String(friend.email || '').trim().toLowerCase() === normalizedEmail) friend.outbound = false;

@@ -1,5 +1,5 @@
 import { createPaginator, paginateItems } from './pagination.js';
-import { socialError } from './social-runtime.js?v=20261110-friends-module-singleton';
+import { socialError } from './social-runtime.js?v=20261112-guided-manual-sharing';
 
 const HOUR_MS = 60 * 60 * 1000;
 
@@ -32,7 +32,7 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
   shareSection.innerHTML = '<h3>Пригласить участника</h3><form class="social-share-form"><label><input type="email" name="email" autocomplete="off" required aria-label="Gmail" placeholder="Gmail нового участника"></label><p class="invitation-send-status" role="status" aria-live="polite"></p><button class="settings-save-button" type="submit">ПОДЕЛИТЬСЯ</button></form><button class="settings-save-button" type="button" data-social-retry hidden>ПОВТОРИТЬ ПОДКЛЮЧЕНИЕ</button>';
   const friendsSection = document.createElement('section');
   friendsSection.className = 'social-section friends-section';
-  friendsSection.innerHTML = '<h3>Друзья</h3><p class="friends-count" role="status"></p><p class="friends-access-message" role="status"></p><div class="friends-table-container"></div>';
+  friendsSection.innerHTML = '<h3>Друзья</h3><p class="friends-count" role="status"></p><p class="friends-access-message" role="status"></p><div class="friends-access-flow" hidden></div><div class="friends-table-container"></div>';
   const invitationsSection = document.createElement('section');
   invitationsSection.className = 'social-section sent-invitations-section';
   invitationsSection.hidden = true;
@@ -61,7 +61,129 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
   const retryButton = shareSection.querySelector('[data-social-retry]');
   const invitationsMessage = invitationsSection.querySelector('.sent-invitations-message');
   const friendsAccessMessage = friendsSection.querySelector('.friends-access-message');
+  const accessFlow = friendsSection.querySelector('.friends-access-flow');
   const closingAccess = new Set();
+  // Guided manual sharing: Drive rejects programmatic permission changes on a
+  // folder with books the app did not create, so the owner completes sharing in
+  // Google Drive's own dialog. The app opens the folder, explains the step and
+  // verifies the result automatically when the owner returns to this tab.
+  let accessFlowToken = 0;
+  let accessFlowEmail = '';
+  let accessFlowTimer = null;
+  let accessFlowFocusHandler = null;
+  const stopAccessFlow = () => {
+    accessFlowToken += 1;
+    if (accessFlowTimer) { clearInterval(accessFlowTimer); accessFlowTimer = null; }
+    if (accessFlowFocusHandler) { window.removeEventListener('focus', accessFlowFocusHandler); accessFlowFocusHandler = null; }
+    accessFlow.hidden = true;
+    accessFlow.replaceChildren();
+    if (accessFlowEmail) { closingAccess.delete(accessFlowEmail); accessFlowEmail = ''; }
+  };
+  const setAccessFlowStatus = (value) => {
+    const status = accessFlow.querySelector('.friends-access-flow-status');
+    if (status) status.textContent = value || '';
+  };
+  const accessConfirmed = (mode, result) => mode === 'grant'
+    ? result.granted === true && (result.role === 'reader' || result.role === 'owner')
+    : result.granted !== true;
+  const runAccessCheck = async (email, mode, token) => {
+    if (typeof social.checkFriendAccess !== 'function') {
+      friendsAccessMessage.textContent = 'Проверка доступа пока недоступна. Обновите страницу и попробуйте снова.';
+      return;
+    }
+    try {
+      const result = await social.checkFriendAccess(email);
+      if (token !== accessFlowToken) return;
+      if (accessConfirmed(mode, result)) {
+        const message = mode === 'grant'
+          ? `Доступ к библиотеке открыт для ${email}.`
+          : `Доступ к библиотеке закрыт для ${email}.`;
+        stopAccessFlow();
+        friendsAccessMessage.textContent = message;
+        render();
+        return;
+      }
+      if (mode === 'grant' && result.granted) {
+        setAccessFlowStatus(`Доступ для ${email} выдан с ролью «${result.role}». Установите роль «Читатель» в настройках доступа Google Drive и проверьте снова.`);
+        return;
+      }
+      setAccessFlowStatus('Изменение доступа пока не обнаружено. Завершите действия в Google Drive и вернитесь — мы проверим снова.');
+    } catch (error) {
+      if (token === accessFlowToken) setAccessFlowStatus(socialError(error));
+    }
+  };
+  const startAccessFlow = async (email, mode) => {
+    stopAccessFlow();
+    friendsAccessMessage.textContent = '';
+    const token = accessFlowToken;
+    accessFlowEmail = email;
+    closingAccess.add(email);
+    let guide;
+    try { guide = await social.openFriendAccessGuide(email); }
+    catch (error) {
+      stopAccessFlow();
+      friendsAccessMessage.textContent = socialError(error);
+      return;
+    }
+    if (token !== accessFlowToken) return;
+    // Access may already be in the desired state; verify before instructing.
+    try {
+      const current = await social.checkFriendAccess(email);
+      if (token !== accessFlowToken) return;
+      if (accessConfirmed(mode, current)) {
+        const message = mode === 'grant'
+          ? `Доступ к библиотеке уже открыт для ${email}.`
+          : `У ${email} уже нет доступа к вашей библиотеке.`;
+        stopAccessFlow();
+        friendsAccessMessage.textContent = message;
+        render();
+        return;
+      }
+    } catch { /* keep the guide visible even if the pre-check fails */ }
+
+    const text = document.createElement('p');
+    text.textContent = mode === 'grant'
+      ? `Откройте настройки доступа к папке в Google Drive и добавьте ${email} с ролью «Читатель». Вернитесь на эту вкладку — доступ проверится автоматически.`
+      : `Откройте настройки доступа к папке в Google Drive и удалите ${email} из списка участников. Вернитесь на эту вкладку — доступ проверится автоматически.`;
+    const openButton = document.createElement('button');
+    openButton.type = 'button';
+    openButton.className = 'settings-save-button';
+    openButton.textContent = 'ОТКРЫТЬ ПАПКУ В GOOGLE DRIVE';
+    const tryOpenFolder = () => {
+      const url = (typeof social.getOwnFolderUrl === 'function' && social.getOwnFolderUrl()) || guide.folderUrl;
+      const opened = window.open(url, '_blank', 'noopener');
+      if (!opened) setAccessFlowStatus('Браузер заблокировал открытие вкладки. Разрешите всплывающие окна для этого сайта и нажмите кнопку ещё раз.');
+    };
+    openButton.addEventListener('click', tryOpenFolder);
+    const checkButton = document.createElement('button');
+    checkButton.type = 'button';
+    checkButton.className = 'settings-save-button';
+    checkButton.textContent = 'ПРОВЕРИТЬ ДОСТУП';
+    checkButton.addEventListener('click', () => { void runAccessCheck(email, mode, token); });
+    const cancelButton = document.createElement('button');
+    cancelButton.type = 'button';
+    cancelButton.className = 'settings-save-button';
+    cancelButton.textContent = 'ОТМЕНА';
+    cancelButton.addEventListener('click', () => {
+      stopAccessFlow();
+      friendsAccessMessage.textContent = '';
+    });
+    const status = document.createElement('p');
+    status.className = 'friends-access-flow-status';
+    status.setAttribute('role', 'status');
+    accessFlow.replaceChildren(text, openButton, checkButton, cancelButton, status);
+    accessFlow.hidden = false;
+    // Bounded automatic verification: on return focus and a light 20-second
+    // interval capped at five minutes; every check is a single read request.
+    accessFlowFocusHandler = () => { void runAccessCheck(email, mode, token); };
+    window.addEventListener('focus', accessFlowFocusHandler);
+    let ticks = 0;
+    accessFlowTimer = setInterval(() => {
+      ticks += 1;
+      if (ticks > 15 || token !== accessFlowToken) { stopAccessFlow(); return; }
+      void runAccessCheck(email, mode, token);
+    }, 20000);
+  };
   retryButton.addEventListener('click', retry);
   let snapshot = { friends: [], invitations: [], status: 'idle' };
   let pageNumber = 1;
@@ -191,7 +313,7 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
           setInvitationMessage('Отмена приглашения пока недоступна. Обновите страницу и попробуйте снова.');
           return;
         }
-        if (!window.confirm(`Отменить приглашение для ${email}? Ссылка регистрации перестанет работать, а доступ к вашей корневой папке будет закрыт.`)) return;
+        if (!window.confirm(`Отменить приглашение для ${email}? Ссылка регистрации перестанет работать.`)) return;
         busy.add(email);
         cancelButton.disabled = true;
         button.disabled = true;
@@ -376,28 +498,18 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
         : isSharingWithFriend
           ? 'Отозвать доступ к корневой папке в Google Drive'
           : 'Открыть другу доступ к корневой папке вашей библиотеки';
-      actionButton.addEventListener('click', async () => {
+      actionButton.addEventListener('click', () => {
         const email = String(friend.email || '').trim().toLowerCase();
         if (!email || closingAccess.has(email)) return;
-        closingAccess.add(email);
-        friendsAccessMessage.textContent = '';
+        if (isSharingWithFriend && !window.confirm(`Закрыть для ${email} доступ к корневой папке вашей библиотеки в Google Drive?`)) return;
         actionButton.disabled = true;
-        actionButton.textContent = isSharingWithFriend ? 'ЗАКРЫВАЕМ…' : 'ОТКРЫВАЕМ ДОСТУП…';
-        try {
-          if (isSharingWithFriend) {
-            if (!window.confirm(`Закрыть для ${email} доступ к корневой папке вашей библиотеки в Google Drive?`)) return;
-            const result = await social.closeFriendAccess(email);
-            friendsAccessMessage.textContent = '';
-          } else {
-            const result = await social.shareBackWithEmail(email, friend.uid);
-            friendsAccessMessage.textContent = typeof result === 'string' ? result : `Доступ к библиотеке предоставлен для ${email}.`;
-          }
-        } catch (error) {
-          friendsAccessMessage.textContent = socialError(error);
-        } finally {
-          closingAccess.delete(email);
-          render();
+        // Open the Drive folder synchronously within the user's click so popup
+        // blockers allow it; the guide panel below keeps a fallback button.
+        if (typeof social.getOwnFolderUrl === 'function') {
+          const url = social.getOwnFolderUrl();
+          if (url) window.open(url, '_blank', 'noopener');
         }
+        void startAccessFlow(email, isSharingWithFriend ? 'close' : 'grant');
       });
       actionCell.append(actionButton);
       row.append(actionCell);
@@ -479,5 +591,5 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
     finally { sending = false; submit.textContent = 'ПОДЕЛИТЬСЯ'; if (!closed) updateShareButton(); }
   });
   const timer = setInterval(updateCooldowns, 1000);
-  return () => { closed = true; clearInterval(timer); unsubscribe(); };
+  return () => { closed = true; clearInterval(timer); stopAccessFlow(); unsubscribe(); };
 }

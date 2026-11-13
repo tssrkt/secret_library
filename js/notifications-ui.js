@@ -8,6 +8,24 @@ export function createNotificationsController({ button, panel, avatarButton, clo
   let reading = false;
   const close = (restore = false) => { panel.hidden = true; button.setAttribute('aria-expanded', 'false'); if (restore) button.focus(); };
   const message = document.createElement('p'); message.setAttribute('role', 'status');
+  // Read-only verification of the manual reciprocal share: Drive rejects
+  // programmatic permission changes on folders with books the app did not
+  // create, so the owner completes sharing in Google Drive's own dialog.
+  const verifyReciprocalAccess = (email) => {
+    if (typeof social.checkFriendAccess !== 'function') return;
+    const verify = async () => {
+      try {
+        const result = await social.checkFriendAccess(email);
+        if (result.granted && (result.role === 'reader' || result.role === 'owner')) {
+          message.textContent = `Доступ к библиотеке открыт для ${email}.`;
+          window.removeEventListener('focus', verify);
+        }
+      } catch { /* the instruction stays; the owner can retry from the friends list */ }
+    };
+    window.addEventListener('focus', verify, { signal: events.signal });
+    setTimeout(() => window.removeEventListener('focus', verify), 5 * 60 * 1000);
+    void verify();
+  };
   const render = () => {
     const count = snapshot.notifications.filter((item) => item.unread).length;
     badge.hidden = count === 0; badge.textContent = count > 99 ? '99+' : String(count);
@@ -25,9 +43,15 @@ export function createNotificationsController({ button, panel, avatarButton, clo
         action.addEventListener('click', async () => {
           if (busy.has(item.ownerUid) || !item.email) return;
           busy.add(item.ownerUid); action.disabled = true; message.textContent = '';
-          try { await social.shareBackWithEmail(item.email, item.ownerUid); }
-          catch (error) { message.textContent = error?.message || 'Не удалось предоставить доступ к библиотеке.'; }
-          finally { busy.delete(item.ownerUid); render(); }
+          try {
+            const url = (typeof social.getOwnFolderUrl === 'function' && social.getOwnFolderUrl()) || '';
+            if (url) window.open(url, '_blank', 'noopener');
+            if (typeof social.openFriendAccessGuide === 'function') await social.openFriendAccessGuide(item.email);
+            message.textContent = `Добавьте ${item.email} с ролью «Читатель» в настройках доступа Google Drive. Вернитесь сюда — мы проверим.`;
+            verifyReciprocalAccess(item.email);
+          } catch (error) {
+            message.textContent = error?.message || 'Не удалось открыть доступ к библиотеке.';
+          } finally { busy.delete(item.ownerUid); render(); }
         }); row.append(action);
       }
       list.append(row);

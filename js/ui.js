@@ -7,14 +7,14 @@ import { loadCover as loadOwnCover } from './cover-cache.js';
 import { loadGenreDictionary } from './genre-labels.js';
 import { createPaginator, paginateItems } from './pagination.js';
 import { metadataActionLabels } from './indexing-state.js';
-import { syncFolderSharingAccess } from './drive-sharing.js?v=20261110-settings-save-no-picker';
+import { syncFolderSharingAccess } from './drive-sharing.js?v=20261112-guided-manual-sharing';
 import { filterBooksByDirectValue, russianBookCount } from './direct-filter.js';
 import { createSearchController } from './search-ui.js';
 import { createIndexingErrorsController } from './indexing-errors-ui.js';
 import { createUserSettingsController } from './user-settings-ui.js?v=20261108-folder-access-save-fix';
-import { mountFriends } from './friends-ui.js?v=20261108-registered-sharing-relationship';
-import { createNotificationsController } from './notifications-ui.js?v=20261108-reciprocal-share-only';
-import { social } from './social-runtime.js?v=20261110-friends-module-singleton';
+import { mountFriends } from './friends-ui.js?v=20261112-guided-manual-sharing';
+import { createNotificationsController } from './notifications-ui.js?v=20261112-guided-manual-sharing';
+import { social } from './social-runtime.js?v=20261112-guided-manual-sharing';
 import { getAccessToken } from './auth.js?v=20261109-oauth-picker-diagnostics';
 import { loadUserSettings, saveUserSettings } from './user-settings.js';
 
