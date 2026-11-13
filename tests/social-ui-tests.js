@@ -207,6 +207,18 @@ export async function runSocialUiTests(test, assert, equal) {
       assert(!page.querySelector('.friends-table').textContent.includes('private-admin@gmail.com'), 'administrator email never appears, even after the refresh');
     } finally { cleanup(); page.remove(); }
   });
+  await test('friend emails appear after the admin check fails, but not while it loads', async () => {
+    const page = document.createElement('div'); document.body.append(page);
+    const social = stub({ friends: [{ uid: 'plain-uid', displayName: 'Plain Friend', email: 'plain@gmail.com', inbound: true, outbound: false }] });
+    social.getInvitationStatuses = () => Promise.reject(new Error('offline'));
+    const cleanup = mountFriends(page, social, () => {});
+    try {
+      await tick();
+      assert(!page.querySelector('.friends-table').textContent.includes('plain@gmail.com'), 'email hidden while the admin check is loading');
+      await new Promise((resolve) => setTimeout(resolve, 1500)); // first refresh plus the single 1.2 s retry
+      assert(page.querySelector('.friends-table').textContent.includes('plain@gmail.com'), 'email shown after the authoritative check failed');
+    } finally { cleanup(); page.remove(); }
+  });
   await test('friends table slices before rendering and switches action based on direction', async () => {
     const page = document.createElement('div'); document.body.append(page);
     const friends = Array.from({ length: 51 }, (_, i) => ({ uid: String(i), displayName: `User ${i}`, email: i === 0 ? 'reader@gmail.com' : '', inbound: i !== 1, outbound: i !== 0 }));
