@@ -1,7 +1,7 @@
 import {
-  clearAccessToken, clearPersistedAuth, createAuthAttemptGuard,
-  initializeAuth, persistAuthSession, recoverAuthSession, requestAccessToken,
-} from './auth.js?v=20261109-oauth-picker-diagnostics';
+  clearAccessToken, clearPersistedAuth, consumeRedirectTokenResponse, createAuthAttemptGuard,
+  initializeAuth, persistAuthSession, recoverAuthSession, requestAccessToken, settleRedirectResponse,
+} from './auth.js?v=20261114-brave-redirect-signin';
 import { downloadDriveFile, getCurrentDriveUser, getFolder, listFolderChildren } from './drive.js';
 import { removeCovers, removeOrphanCovers, storeCover } from './cover-cache.js';
 import {
@@ -18,7 +18,7 @@ import { prepareIndexingRun, createRetryEligibilityCheck } from './indexing-run.
 import * as ui from './ui.js?v=20261114-clipboard-copy-first';
 import { errorDetails, recordIndexingError } from './indexing-errors.js';
 import { social, socialError } from './social-runtime.js?v=20261112-guided-manual-sharing';
-import { getAccessToken } from './auth.js?v=20261109-oauth-picker-diagnostics';
+import { getAccessToken } from './auth.js?v=20261114-brave-redirect-signin';
 import { checkpointKey, loadCheckpoint, saveCheckpoint, deleteCheckpoint, commitCheckpoint } from './indexing-checkpoint.js';
 import { createLibraryTabs } from './library-tabs.js';
 import { createLibrarySelection } from './library-selection.js?v=20261107-stable-friend-loading';
@@ -639,6 +639,9 @@ async function restoreAuthorization() {
   }
 }
 
+// Consume a Brave redirect sign-in response before anything else: the URL
+// fragment must be stripped before Google Identity Services can see it.
+const redirectSignInResponse = consumeRedirectTokenResponse();
 // A previous page token must never authorize this page automatically.
 clearPersistedAuth();
 ui.setBusy(true);
@@ -647,10 +650,17 @@ try {
   // Otherwise an early first click can race initializeAuth() and fail before
   // the OAuth token client exists, forcing the user to click a second time.
   await initializeAuth();
-  // Never restore an authenticated session during page startup.
-  ui.setBusy(false);
-  ui.setAuthorized(false);
-  ui.setStatus('Для доступа к библиотеке войдите через Google.');
+  if (redirectSignInResponse) {
+    // The user explicitly completed sign-in before the redirect; finishing it
+    // here is the continuation of that consent, not an automatic restore.
+    await settleRedirectResponse();
+    await afterAuthorization();
+  } else {
+    // Never restore an authenticated session during page startup.
+    ui.setBusy(false);
+    ui.setAuthorized(false);
+    ui.setStatus('Для доступа к библиотеке войдите через Google.');
+  }
 } catch (error) {
   ui.showError(readableError(error));
   ui.setBusy(false);
