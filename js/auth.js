@@ -184,6 +184,8 @@ export async function initializeAuth() {
     callback: () => {},
     error_callback: () => {},
   });
+  // Decided once during initialization so requestAccessToken stays synchronous.
+  redirectSignInEnabled = (await detectBraveBrowser()) && !popupOverrideRequested();
 }
 
 async function revokeOAuthToken(accessToken, timeoutMs = 5000) {
@@ -216,6 +218,80 @@ async function revokeOAuthToken(accessToken, timeoutMs = 5000) {
   });
 }
 
+// Shared acceptance path for popup callbacks and redirect returns: validates
+// the granted scopes, activates the session and schedules the renewal.
+async function acceptTokenResponse(response) {
+  if (response.error || !response.access_token) {
+    throw new AuthError('Google authorization did not finish. Please try again.', response.error || 'no_token');
+  }
+  if (typeof response.scope === 'string') {
+    const grantedScopes = new Set(response.scope.split(/\s+/));
+    if (grantedScopes.has('https://www.googleapis.com/auth/drive')) {
+      try {
+        await revokeOAuthToken(response.access_token);
+      } catch (error) {
+        try { storageOrNull('localStorage')?.removeItem(AUTH_SCOPE_VERSION_KEY); } catch { /* consent is still required on the next attempt */ }
+        throw new AuthError('Google вернул старое широкое разрешение, но его отзыв не подтверждён. ' + error.message, error.code || 'revoke_failed');
+      }
+      try { storageOrNull('localStorage')?.removeItem(AUTH_SCOPE_VERSION_KEY); } catch { /* consent is still required on the next attempt */ }
+      throw new AuthError('Старое широкое разрешение Google отозвано. Повторите вход, чтобы выдать только необходимые разрешения.', 'broad_scope_revoked');
+    }
+    const missingScopes = DRIVE_SCOPES.split(/\s+/).filter((scope) => !grantedScopes.has(scope));
+    if (missingScopes.length) {
+      try { await revokeOAuthToken(response.access_token); }
+      catch (error) {
+        throw new AuthError('Выданы не все необходимые разрешения Google Drive, а отзыв частичного разрешения не подтверждён. ' + error.message, error.code || 'revoke_failed');
+      }
+      throw new AuthError('Не все необходимые разрешения Google Drive были предоставлены. Повторите вход и разрешите чтение библиотеки, appData и доступ к выбранным через Picker объектам.', 'missing_scopes');
+    }
+  }
+  accessToken = response.access_token;
+  tokenExpiresAt = Date.now() + Math.max(0, Number(response.expires_in) || 3600) * 1000;
+  interactionRequired = false;
+  try { storageOrNull('localStorage')?.setItem(AUTH_SCOPE_VERSION_KEY, CURRENT_AUTH_SCOPE_VERSION); } catch { /* session still works without persistent storage */ }
+  persistAuthSession(sessionUser);
+  scheduleRenewal();
+  return accessToken;
+}
+
+function requestAccessTokenViaRedirect(effectivePrompt, options) {
+  if (!tokenClient) return Promise.reject(new AuthError('Google OAuth is not initialized.'));
+  const promise = new Promise((resolve, reject) => {
+    let settled = false;
+    const startedAt = Date.now();
+    const fail = (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      reject(error);
+    };
+    const timer = setTimeout(() => fail(new AuthError(
+      'Google не завершил вход через перенаправление за 60 секунд (auth_timeout). Проверьте, не осталось ли окно входа открытым, затем повторите попытку.',
+      'auth_timeout', { prompt: effectivePrompt, elapsedMs: Date.now() - startedAt, phase: 'redirect' },
+    )), 60000);
+    // The redirect client is temporary: silent renewals must keep using the
+    // popup client, so the module-level tokenClient is never replaced here.
+    const redirectClient = google.accounts.oauth2.initTokenClient({
+      client_id: GOOGLE_CLIENT_ID,
+      scope: firebaseConfigured() ? `${DRIVE_SCOPES} openid email profile` : DRIVE_SCOPES,
+      callback: () => {},
+      error_callback: () => {},
+      ux_mode: 'redirect',
+      redirect_uri: oauthRedirectUri(),
+    });
+    redirectClient.callback = async (response) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      try { resolve(await acceptTokenResponse(response)); }
+      catch (error) { reject(error); }
+    };
+    try { redirectClient.requestAccessToken(options); }
+    catch (error) { fail(error); }
+  });
+  return promise;
+}
+
 export function requestAccessToken({ prompt = 'consent' } = {}) {
   if (!tokenClient) return Promise.reject(new AuthError('Google OAuth is not initialized.'));
   let scopeVersionCurrent = false;
@@ -237,6 +313,11 @@ export function requestAccessToken({ prompt = 'consent' } = {}) {
       pendingTokenPrompt = null;
       cancelPendingToken = null;
     } else return pendingToken;
+  }
+  const options = { prompt: effectivePrompt };
+  if (!effectivePrompt.split(/\s+/).includes('select_account') && sessionUser.emailAddress) options.login_hint = sessionUser.emailAddress;
+  if (redirectSignInEnabled && isExplicitPrompt(effectivePrompt)) {
+    return requestAccessTokenViaRedirect(effectivePrompt, options);
   }
   const generation = tokenGeneration;
   let promise;
@@ -262,42 +343,8 @@ export function requestAccessToken({ prompt = 'consent' } = {}) {
       clearTimeout(timer);
       clearTimeout(popupErrorTimer);
       if (generation !== tokenGeneration) { reject(new AuthError('Sign-in cancelled.', 'cancelled')); return; }
-      if (response.error || !response.access_token) {
-        reject(new AuthError('Google authorization did not finish. Please try again.', response.error));
-        return;
-      }
-      if (typeof response.scope === 'string') {
-        const grantedScopes = new Set(response.scope.split(/\s+/));
-        if (grantedScopes.has('https://www.googleapis.com/auth/drive')) {
-          try {
-            await revokeOAuthToken(response.access_token);
-          } catch (error) {
-            try { storageOrNull('localStorage')?.removeItem(AUTH_SCOPE_VERSION_KEY); } catch { /* consent is still required on the next attempt */ }
-            reject(new AuthError('Google вернул старое широкое разрешение, но его отзыв не подтверждён. ' + error.message, error.code || 'revoke_failed'));
-            return;
-          }
-          try { storageOrNull('localStorage')?.removeItem(AUTH_SCOPE_VERSION_KEY); } catch { /* consent is still required on the next attempt */ }
-          reject(new AuthError('Старое широкое разрешение Google отозвано. Повторите вход, чтобы выдать только необходимые разрешения.'));
-          return;
-        }
-        const missingScopes = DRIVE_SCOPES.split(/\s+/).filter((scope) => !grantedScopes.has(scope));
-        if (missingScopes.length) {
-          try { await revokeOAuthToken(response.access_token); }
-          catch (error) {
-            reject(new AuthError('Выданы не все необходимые разрешения Google Drive, а отзыв частичного разрешения не подтверждён. ' + error.message, error.code || 'revoke_failed'));
-            return;
-          }
-          reject(new AuthError('Не все необходимые разрешения Google Drive были предоставлены. Повторите вход и разрешите чтение библиотеки, appData и доступ к выбранным через Picker объектам.'));
-          return;
-        }
-      }
-      accessToken = response.access_token;
-      tokenExpiresAt = Date.now() + Math.max(0, Number(response.expires_in) || 3600) * 1000;
-      interactionRequired = false;
-      try { storageOrNull('localStorage')?.setItem(AUTH_SCOPE_VERSION_KEY, CURRENT_AUTH_SCOPE_VERSION); } catch { /* session still works without persistent storage */ }
-      persistAuthSession(sessionUser);
-      scheduleRenewal();
-      resolve(accessToken);
+      try { resolve(await acceptTokenResponse(response)); }
+      catch (error) { reject(error); }
     };
     tokenClient.error_callback = (error) => {
       // GIS may report a popup/COOP error just before delivering the token response.
@@ -313,8 +360,6 @@ export function requestAccessToken({ prompt = 'consent' } = {}) {
     };
     try {
       // login_hint can bypass account selection even with select_account.
-      const options = { prompt: effectivePrompt };
-      if (!effectivePrompt.split(/\s+/).includes('select_account') && sessionUser.emailAddress) options.login_hint = sessionUser.emailAddress;
       tokenClient.requestAccessToken(options);
     } catch (error) { fail(error); }
   });
@@ -332,6 +377,86 @@ export function requestAccessToken({ prompt = 'consent' } = {}) {
 
 export function getAccessToken() {
   return accessToken;
+}
+
+// Brave blocks third-party cookies and isolates the Google sign-in popup in
+// ephemeral storage, so the GIS popup cannot see the Google session and the
+// sign-in stalls ("You must sign in to access this content"). A top-level
+// redirect to Google is first-party navigation and is not isolated.
+let redirectSignInEnabled = false;
+
+async function detectBraveBrowser() {
+  try {
+    const brave = globalThis.navigator?.brave;
+    if (!brave || typeof brave.isBrave !== 'function') return false;
+    return Boolean(await brave.isBrave());
+  } catch { return false; }
+}
+
+// Escape hatch: if Google rejects the redirect configuration, a page URL with
+// ?oauth_popup=1 forces the legacy popup flow instead of the redirect.
+function popupOverrideRequested(search = globalThis.location?.search) {
+  try { return new URLSearchParams(search).get('oauth_popup') === '1'; } catch { return false; }
+}
+
+export function oauthRedirectUri(href = globalThis.location?.href) {
+  if (!href) return '';
+  try { return new URL('.', href).href; } catch { return ''; }
+}
+
+function isExplicitPrompt(effectivePrompt) {
+  const parts = String(effectivePrompt || '').split(/\s+/);
+  return parts.includes('consent') || parts.includes('select_account');
+}
+
+// Google returns the redirect token response in the URL fragment. Parsing must
+// happen before Google Identity Services loads, so Google cannot consume the
+// response a second time.
+export function parseRedirectTokenResponse(hash) {
+  if (typeof hash !== 'string' || !hash) return null;
+  const params = new URLSearchParams(hash.startsWith('#') ? hash.slice(1) : hash);
+  const accessToken = params.get('access_token');
+  const error = params.get('error');
+  if (!accessToken && !error) return null;
+  return {
+    accessToken,
+    expiresIn: Math.max(0, Number(params.get('expires_in')) || 3600),
+    scope: params.get('scope') || '',
+    error: error || '',
+  };
+}
+
+let pendingRedirectResponse = null;
+
+export function consumeRedirectTokenResponse({
+  hash = globalThis.location?.hash,
+  pathname = globalThis.location?.pathname,
+  search = globalThis.location?.search,
+  historyObj = globalThis.history,
+} = {}) {
+  pendingRedirectResponse = null;
+  const parsed = parseRedirectTokenResponse(hash);
+  if (!parsed) return null;
+  // Strip the OAuth response from the URL immediately; refresh tokens in the
+  // address bar must not linger or survive a share/copy.
+  try { historyObj?.replaceState(historyObj.state, '', pathname + search); } catch { /* keep the fragment; the app still works */ }
+  pendingRedirectResponse = parsed;
+  return parsed;
+}
+
+export async function settleRedirectResponse() {
+  const parsed = pendingRedirectResponse;
+  pendingRedirectResponse = null;
+  if (!parsed) return null;
+  if (parsed.error || !parsed.accessToken) {
+    throw new AuthError(
+      'Google не завершил вход после перенаправления. Повторите попытку входа.',
+      parsed.error ? 'redirect_denied' : 'redirect_no_token',
+      { code: parsed.error ? parsed.error.slice(0, 80) : 'missing_token' },
+    );
+  }
+  await acceptTokenResponse({ access_token: parsed.accessToken, expires_in: parsed.expiresIn, scope: parsed.scope });
+  return getAccessToken();
 }
 
 export function getSessionUserEmail() {
