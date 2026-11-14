@@ -15,7 +15,6 @@ import { extractZipFb2, findEocd, parseCentralDirectory, ZipError } from '../js/
 import { setupDropdown } from '../js/dropdown.js';
 import { accountIdentity, applyDriveAvatar, createAvatarController } from '../js/avatar.js';
 import { downloadDriveFile, getCurrentDriveUser } from '../js/drive.js';
-import { chooseRootFolder } from '../js/root-folder-picker.js';
 import { bookCardView, createBookCard, hasPreviousVersionMetadataFailure } from '../js/book-card.js';
 import { createAnnotationModalController, formatModalAuthors, modalCoverWidth } from '../js/annotation-modal.js';
 import { genreLabels, loadGenreDictionary } from '../js/genre-labels.js';
@@ -1533,35 +1532,6 @@ await test('direct result navigation uses all folders, current-page DOM, home an
 
 await (await import('./library-refresh-tests.js')).runLibraryRefreshTests(test, assert, equal, makeZip);
 await runSearchTests(test, assert, equal);
-await test('root folder picker lists only My Drive root folders and returns the selected root', async () => {
-  const calls = [];
-  let folderAppeared = false;
-  const selected = chooseRootFolder({
-    listChildren: async (folderId, options) => {
-      calls.push(['list', folderId, options.resourceKey || '']);
-      if (folderId !== 'root') throw new Error('Picker must never navigate into nested folders');
-      return folderAppeared ? [{ id: 'folder-a', name: 'Книги', mimeType: 'application/vnd.google-apps.folder', resourceKey: 'folder-key' }] : [];
-    },
-    getFolder: async (folderId, options) => {
-      calls.push(['get', folderId, options.resourceKey || '']);
-      return { id: folderId, name: 'Книги', resourceKey: 'folder-key' };
-    },
-  });
-  await Promise.resolve(); await Promise.resolve();
-  assert(document.querySelector('.root-folder-dialog [data-refresh]'), 'folder picker exposes refresh button');
-  assert(!document.querySelector('.root-folder-entry'), 'initially empty folder listing is shown');
-  folderAppeared = true;
-  document.querySelector('.root-folder-dialog [data-refresh]').click();
-  await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
-  assert(document.querySelector('.root-folder-entry'), 'refresh reloads newly added folders');
-  assert(document.querySelector('.root-folder-status').textContent.includes('только папки непосредственно в корне'), 'picker explains that only root folders are listed');
-  document.querySelector('.root-folder-entry').click();
-  await Promise.resolve(); await Promise.resolve();
-  document.querySelector('.root-folder-dialog [data-select]').click();
-  equal(await selected, { id: 'folder-a', name: 'Книги', resourceKey: 'folder-key' }, 'selected folder metadata returned');
-  equal(calls, [['list', 'root', ''], ['list', 'root', ''], ['get', 'folder-a', 'folder-key']], 'picker queries only the Drive root and preserves selected folder resource key');
-  assert(document.querySelector('.root-folder-backdrop') === null, 'picker closes after selection');
-});
 await runUserSettingsTests(test, assert, equal);
 await runFolderTreeTests(test, assert, equal);
 await runPublicDocumentsTests(test, assert, equal);

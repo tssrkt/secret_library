@@ -247,10 +247,36 @@ test('a failed Drive API operation can invalidate the remembered Picker selectio
 test('Picker failure messages carry the Brave storage guidance for Brave users', async () => {
   const { readFile } = await import('node:fs/promises');
   const pickerSource = await readFile(new URL('../js/google-picker.js', import.meta.url), 'utf8');
-  const dialogSource = await readFile(new URL('../js/root-folder-picker.js', import.meta.url), 'utf8');
   assert.match(pickerSource, /isBraveBrowserSync\(\) \? ` \$\{BRAVE_PICKER_HINT\}` : ''/, 'both picker error paths must append the hint');
   assert.match(pickerSource, /Google Sign-In/, 'the hint must name the Brave shields permission');
   const hintLine = pickerSource.split('\n').find((l) => l.includes('BRAVE_PICKER_HINT = ')) || '';
   assert.doesNotMatch(hintLine, /sessionStorage|localStorage|firestore|appData|drive.file/i, 'the hint must not leak infrastructure names');
-  assert.match(dialogSource, /isBraveBrowserSync\(\) \? ` \$\{BRAVE_PICKER_HINT\}` : ''/, 'the folder dialog must warn before the picker opens');
+});
+
+test('The root-folder Picker starts at My Drive with hidden navigation and returns the picked folder', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const pickerSource = await readFile(new URL('../js/google-picker.js', import.meta.url), 'utf8');
+  assert.match(pickerSource, /export async function pickDriveFolder/, 'the free folder Picker must be exported');
+  assert.match(pickerSource, /ViewId\.FOLDERS/, 'the free Picker must list folders');
+  assert.match(pickerSource, /setParent\('root'\)/, 'the free Picker must start inside My Drive');
+  assert.match(pickerSource, /NAV_HIDDEN/, 'the free Picker must hide the navigation pane');
+  assert.match(pickerSource, /setSelectFolderEnabled/, 'the free Picker must allow selecting a folder');
+  const freeBlock = pickerSource.slice(pickerSource.indexOf('export async function pickDriveFolder'));
+  assert.doesNotMatch(freeBlock, /setFileIds/, 'the free Picker must not be locked to a preselected item');
+});
+
+test('Every root-folder choice validates the Drive root and minimum books before switching in-page', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const appSource = await readFile(new URL('../js/app.js', import.meta.url), 'utf8');
+  assert.match(appSource, /Корневой папкой библиотеки может быть только папка непосредственно в корне Google Диска\. Выберите другую/,
+    'the nested-folder rejection must use the approved wording');
+  assert.match(appSource, /pickRootFolderWithChecks/, 'all root choices must share the checked Picker flow');
+  assert.match(appSource, /countIndexableBooks/, 'the minimum-books check must count indexable formats');
+  assert.match(appSource, /switchToRootFolder/, 'the root switch must happen in-page');
+  const switchBlock = appSource.slice(appSource.indexOf('async function switchToRootFolder'),
+    appSource.indexOf('async function ensureMinimumBookAccess'));
+  assert.doesNotMatch(switchBlock, /window\.location\.reload/, 'switching the root must not reload the page');
+  assert.doesNotMatch(appSource.slice(appSource.indexOf('async function changeRootFolder')), /window\.confirm/,
+    'changing the root must not ask a legacy confirm dialog');
+  assert.doesNotMatch(appSource, /root-folder-picker\.js/, 'the legacy folder dialog module must stay removed');
 });

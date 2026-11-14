@@ -18,6 +18,31 @@ export function classifyLibraryItem(file) {
   return 'other';
 }
 
+// Cheap eligibility check for a candidate library root: count books the site
+// can index (BOOK_SOURCE_TYPES, ZIP archives included) with an early exit as
+// soon as the minimum is reached instead of scanning the whole tree.
+export async function countIndexableBooks(rootFolderId, {
+  minimum = 10, resourceKey = '', signal, listChildren = listFolderChildren,
+} = {}) {
+  const seenFolders = new Set([rootFolderId]);
+  const queue = [{ id: rootFolderId, resourceKey }];
+  let count = 0;
+  while (queue.length && count < minimum) {
+    const folder = queue.shift();
+    const children = await listChildren(folder.id, { signal, resourceKey: folder.resourceKey });
+    for (const item of children) {
+      const itemType = classifyLibraryItem(item);
+      if (itemType === 'folder') {
+        if (!seenFolders.has(item.id)) { seenFolders.add(item.id); queue.push({ id: item.id, resourceKey: item.resourceKey || '' }); }
+      } else if (BOOK_SOURCE_TYPES.includes(itemType)) {
+        count += 1;
+        if (count >= minimum) return count;
+      }
+    }
+  }
+  return count;
+}
+
 export async function scanLibrary(rootFolderId, onProgress = () => {}, {
   signal, rootResourceKey = '', getRoot = getFolder, listChildren = listFolderChildren, heartbeatMs = 1000, now = Date.now,
 } = {}) {
