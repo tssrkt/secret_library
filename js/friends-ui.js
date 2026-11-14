@@ -26,7 +26,10 @@ function invitationWasSent(result) {
   return typeof result === 'string' && result.startsWith('Приглашение отправлено');
 }
 
-export function mountFriends(page, social, retry, openLibrary = (uid) => { window.location.href = `?library=${encodeURIComponent(uid)}`; }) {
+// openLibrary must switch libraries in-page. The former default navigated to
+// ?library=..., but a full page load never restores the session by design, so
+// the user was signed out instead of seeing the friend's library.
+export function mountFriends(page, social, retry, openLibrary = () => {}) {
   const shareSection = document.createElement('section');
   shareSection.className = 'social-section';
   shareSection.innerHTML = '<h3>Пригласить участника</h3><form class="social-share-form"><label><input type="email" name="email" autocomplete="off" required aria-label="Gmail" placeholder="Gmail нового участника"></label><p class="invitation-send-status" role="status" aria-live="polite"></p><button class="settings-save-button" type="submit">ПОДЕЛИТЬСЯ</button></form><button class="settings-save-button" type="button" data-social-retry hidden>ПОВТОРИТЬ ПОДКЛЮЧЕНИЕ</button>';
