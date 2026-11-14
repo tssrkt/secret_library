@@ -283,6 +283,8 @@ test('Every root-folder choice validates the Drive root and minimum books before
     appSource.indexOf('async function switchToRootFolder'));
   assert.doesNotMatch(checksBlock, /ui\.showError/, 'rejections must not use the error line hidden behind the Picker');
   assert.match(appSource, /function showRootFolderPopup/, 'rejections must use the popup modal');
-  assert.match(appSource, /ВЫБРАТЬ КОРНЕВУЮ ПАПКУ/, 'the popup button must use the approved label');
+  assert.match(appSource, /ВЫБРАТЬ КОРНЕВУЮ ПАПКУ/, 'the nested-folder popup button must use the approved label');
+  assert.match(appSource, /ВЫБРАТЬ ДРУГУЮ ПАПКУ/, 'the minimum-books popup button must use the approved label');
+  assert.match(appSource, /индексируемых книг, а нужно не менее \$\{MINIMUM_LIBRARY_BOOKS\}\./, 'the minimum-books popup must state the real count and minimum');
   assert.match(appSource, /button\.className = 'settings-save-button'/, 'the popup button must reuse the settings-page button style');
 });

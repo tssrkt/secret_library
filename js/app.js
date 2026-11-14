@@ -163,7 +163,7 @@ const ROOT_FOLDER_RESTRICTION_MESSAGE = 'Корневой папкой библ�
 // A rejection inside the Picker flow must be visible on its own: an inline
 // error line would stay hidden behind the reopened Picker window. The popup
 // resolves on close; the settings-styled button reopens the Picker.
-function showRootFolderPopup(message) {
+function showRootFolderPopup(message, buttonLabel = 'ВЫБРАТЬ КОРНЕВУЮ ПАПКУ') {
   return new Promise((resolve) => {
     const backdrop = document.createElement('div');
     backdrop.className = 'modal-backdrop root-folder-backdrop';
@@ -180,7 +180,7 @@ function showRootFolderPopup(message) {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'settings-save-button';
-    button.textContent = 'ВЫБРАТЬ КОРНЕВУЮ ПАПКУ';
+    button.textContent = buttonLabel;
     footer.append(button);
     dialog.append(title, text, footer);
     backdrop.append(dialog);
@@ -221,7 +221,7 @@ async function pickRootFolderWithChecks() {
       minimum: MINIMUM_LIBRARY_BOOKS, resourceKey: folder.resourceKey || '',
     });
     if (count < MINIMUM_LIBRARY_BOOKS) {
-      await showRootFolderPopup(`В папке «${folder.name}» всего ${count} индексируемых книг, а нужно не менее ${MINIMUM_LIBRARY_BOOKS}.`);
+      await showRootFolderPopup(`В папке «${folder.name}» всего ${count} индексируемых книг, а нужно не менее ${MINIMUM_LIBRARY_BOOKS}.`, 'ВЫБРАТЬ ДРУГУЮ ПАПКУ');
       continue;
     }
     ui.clearError();
