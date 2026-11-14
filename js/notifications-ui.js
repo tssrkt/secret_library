@@ -1,3 +1,5 @@
+import { copyTextToClipboard } from './clipboard.js';
+
 export function createNotificationsController({ button, panel, avatarButton, closeAvatar, social }) {
   if (!button || !panel) return { close() {}, destroy() {} };
   const events = new AbortController();
@@ -44,10 +46,17 @@ export function createNotificationsController({ button, panel, avatarButton, clo
           if (busy.has(item.ownerUid) || !item.email) return;
           busy.add(item.ownerUid); action.disabled = true; message.textContent = '';
           try {
+            // Copy the email first, while this document still has focus: the
+            // Drive tab opened right after steals focus, and once it does,
+            // every clipboard write fails with "Document is not focused".
+            const copyPromise = copyTextToClipboard(String(item.email).trim());
             const url = (typeof social.getOwnFolderUrl === 'function' && social.getOwnFolderUrl()) || '';
             if (url) window.open(url, '_blank', 'noopener');
             if (typeof social.openFriendAccessGuide === 'function') await social.openFriendAccessGuide(item.email);
-            message.textContent = `Добавьте ${item.email} с ролью «Читатель» в настройках доступа Google Drive. Вернитесь сюда — мы проверим.`;
+            const copied = await copyPromise;
+            message.textContent = copied
+              ? `Email ${item.email} скопирован. Добавьте его с ролью «Читатель» в настройках доступа Google Drive. Вернитесь сюда — мы проверим.`
+              : `Скопировать email не удалось. Добавьте ${item.email} с ролью «Читатель» в настройках доступа Google Drive вручную. Вернитесь сюда — мы проверим.`;
             verifyReciprocalAccess(item.email);
           } catch (error) {
             message.textContent = error?.message || 'Не удалось открыть доступ к библиотеке.';

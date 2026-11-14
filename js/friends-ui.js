@@ -1,3 +1,4 @@
+import { copyTextToClipboard } from './clipboard.js';
 import { createPaginator, paginateItems } from './pagination.js';
 import { socialError } from './social-runtime.js?v=20261112-guided-manual-sharing';
 
@@ -69,30 +70,6 @@ export function mountFriends(page, social, retry, openLibrary = () => {}) {
   // The sharing dialog in Google Drive needs the participant's email right away;
   // remember which flow already copied it so the button can confirm the copy.
   const copiedEmails = new Set();
-  const copyEmailToClipboard = async (email) => {
-    // The synchronous legacy path runs first: it completes inside the click
-    // gesture while the document still has focus, before the Drive tab that
-    // this same click opens can take focus and fail every clipboard write.
-    try {
-      const area = document.createElement('textarea');
-      area.value = email;
-      area.setAttribute('readonly', '');
-      area.style.position = 'fixed';
-      area.style.opacity = '0';
-      document.body.append(area);
-      area.select();
-      const copied = document.execCommand('copy');
-      area.remove();
-      if (copied) return true;
-    } catch { /* fall through to the async clipboard API */ }
-    try {
-      if (navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(email);
-        return true;
-      }
-    } catch { return false; }
-    return false;
-  };
   // Guided manual sharing: Drive rejects programmatic permission changes on a
   // folder with books the app did not create, so the owner completes sharing in
   // Google Drive's own dialog. The app opens the folder, explains the step and
@@ -555,7 +532,7 @@ export function mountFriends(page, social, retry, openLibrary = () => {}) {
         // below adds the email to closingAccess synchronously, so by the time
         // the copy settles the flow is either active (the button then confirms
         // the copy) or has already failed and cleaned up.
-        void copyEmailToClipboard(email).then((copied) => {
+        void copyTextToClipboard(email).then((copied) => {
           if (copied && closingAccess.has(email)) {
             copiedEmails.add(email);
             render();
