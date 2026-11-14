@@ -15,7 +15,7 @@ import {
   canResumeBuildingIndex, prepareBuildingIndex, updateBuildProgress, validateCompletedIndex,
 } from './index-build.js';
 import { prepareIndexingRun, createRetryEligibilityCheck } from './indexing-run.js';
-import * as ui from './ui.js?v=20261113-share-email-copy';
+import * as ui from './ui.js?v=20261114-clipboard-copy-first';
 import { errorDetails, recordIndexingError } from './indexing-errors.js';
 import { social, socialError } from './social-runtime.js?v=20261112-guided-manual-sharing';
 import { getAccessToken } from './auth.js?v=20261109-oauth-picker-diagnostics';

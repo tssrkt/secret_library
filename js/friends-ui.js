@@ -67,12 +67,9 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
   // remember which flow already copied it so the button can confirm the copy.
   const copiedEmails = new Set();
   const copyEmailToClipboard = async (email) => {
-    try {
-      if (navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(email);
-        return true;
-      }
-    } catch { /* fall through to the legacy copy path */ }
+    // The synchronous legacy path runs first: it completes inside the click
+    // gesture while the document still has focus, before the Drive tab that
+    // this same click opens can take focus and fail every clipboard write.
     try {
       const area = document.createElement('textarea');
       area.value = email;
@@ -83,8 +80,15 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
       area.select();
       const copied = document.execCommand('copy');
       area.remove();
-      return copied;
+      if (copied) return true;
+    } catch { /* fall through to the async clipboard API */ }
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(email);
+        return true;
+      }
     } catch { return false; }
+    return false;
   };
   // Guided manual sharing: Drive rejects programmatic permission changes on a
   // folder with books the app did not create, so the owner completes sharing in
@@ -542,20 +546,24 @@ export function mountFriends(page, social, retry, openLibrary = (uid) => { windo
         if (!email || closingAccess.has(email)) return;
         if (isSharingWithFriend && !window.confirm(`Закрыть для ${email} доступ к корневой папке вашей библиотеки в Google Drive?`)) return;
         actionButton.disabled = true;
-        // Open the Drive folder synchronously within the user's click so popup
-        // blockers allow it; the guide panel below keeps a fallback button.
-        if (typeof social.getOwnFolderUrl === 'function') {
-          const url = social.getOwnFolderUrl();
-          if (url) window.open(url, '_blank', 'noopener');
-        }
-        // The Drive sharing dialog needs the participant's email immediately;
-        // copy it for pasting and reflect the copy on the button while it runs.
+        // Copy the email first, while this document still has focus: the Drive
+        // tab opened right after steals focus, and once it does, every
+        // clipboard write fails with "Document is not focused". The flow start
+        // below adds the email to closingAccess synchronously, so by the time
+        // the copy settles the flow is either active (the button then confirms
+        // the copy) or has already failed and cleaned up.
         void copyEmailToClipboard(email).then((copied) => {
           if (copied && closingAccess.has(email)) {
             copiedEmails.add(email);
             render();
           }
         });
+        // Open the Drive folder synchronously within the user's click so popup
+        // blockers allow it; the guide panel below keeps a fallback button.
+        if (typeof social.getOwnFolderUrl === 'function') {
+          const url = social.getOwnFolderUrl();
+          if (url) window.open(url, '_blank', 'noopener');
+        }
         void startAccessFlow(email, isSharingWithFriend ? 'close' : 'grant');
       });
       actionCell.append(actionButton);
