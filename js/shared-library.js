@@ -53,6 +53,26 @@ export function createSharedLibraryStore({ user, authorizeItem = ensureDriveItem
     catalogIds.set(owner, file.id);
     return { ...file, cached: false };
   }
+  // The catalog file is created by this app, so under drive.file a direct update
+  // normally succeeds without a Picker confirmation — the lookup above has already
+  // downloaded the file. Ask through the Picker only after Drive rejects the write,
+  // and treat the localStorage marker as a pure optimization.
+  async function updateCatalogAuthorized(fileId, jsonText) {
+    try {
+      const result = await updateDriveJsonFile(fileId, jsonText);
+      rememberAuthorization(fileId);
+      return result;
+    } catch (error) {
+      if (error?.status !== 403 && error?.status !== 404) throw error;
+      forgetAuthorization(fileId);
+      await authorizeItem({ id: fileId, name: SHARED_CATALOG_FILE_NAME, mimeType: 'application/json' });
+      try { return await updateDriveJsonFile(fileId, jsonText); }
+      catch (retryError) {
+        if (retryError?.status === 403) forgetAuthorization(fileId);
+        throw retryError;
+      }
+    }
+  }
   return {
     dispose() { disposed = true; catalogIds.clear(); },
     publish(index, settings) {
@@ -64,7 +84,6 @@ export function createSharedLibraryStore({ user, authorizeItem = ensureDriveItem
         const catalog = JSON.stringify({ ...projection, ownerUid: user.uid, ownerDisplayName, signature, published: true });
         let existing = await findDriveCatalogFile(user.uid);
         if (existing && !existing.parents?.includes(index.rootFolderId)) {
-          await authorizeItem({ id: existing.id, name: SHARED_CATALOG_FILE_NAME, mimeType: 'application/json' });
           const current = await downloadDriveJsonFile(existing.id);
           const tombstone = {
             version: current?.version || 1,
@@ -75,11 +94,7 @@ export function createSharedLibraryStore({ user, authorizeItem = ensureDriveItem
             signature: current?.signature || await signatureOf({ ownerUid: user.uid, published: false }),
             published: false,
           };
-          try { await updateDriveJsonFile(existing.id, JSON.stringify(tombstone)); }
-          catch (error) {
-            if (error?.status === 403) forgetAuthorization(existing.id);
-            throw error;
-          }
+          await updateCatalogAuthorized(existing.id, JSON.stringify(tombstone));
           // Do not move the old file: that would preserve direct Drive permissions
           // from the old root. Leave an unpublished tombstone and create a fresh
           // catalog in the newly selected root, inheriting only its permissions.
@@ -94,12 +109,7 @@ export function createSharedLibraryStore({ user, authorizeItem = ensureDriveItem
         }
         ensureCurrent();
         if (existing) {
-          await authorizeItem({ id: existing.id, name: SHARED_CATALOG_FILE_NAME, mimeType: 'application/json' });
-          try { await updateDriveJsonFile(existing.id, catalog); }
-          catch (error) {
-            if (error?.status === 403) forgetAuthorization(existing.id);
-            throw error;
-          }
+          await updateCatalogAuthorized(existing.id, catalog);
         } else {
           existing = await createDriveJsonFile(SHARED_CATALOG_FILE_NAME, index.rootFolderId, catalog, user.uid);
           rememberAuthorization(existing.id);
@@ -115,7 +125,6 @@ export function createSharedLibraryStore({ user, authorizeItem = ensureDriveItem
         ensureCurrent();
         const existing = await findDriveCatalogFile(user.uid);
         if (existing) {
-          await authorizeItem({ id: existing.id, name: SHARED_CATALOG_FILE_NAME, mimeType: 'application/json' });
           const current = await downloadDriveJsonFile(existing.id);
           const tombstone = {
             version: current?.version || 1,
@@ -127,11 +136,7 @@ export function createSharedLibraryStore({ user, authorizeItem = ensureDriveItem
             signature: current?.signature || await signatureOf({ ownerUid: user.uid, published: false }),
             published: false,
           };
-          try { await updateDriveJsonFile(existing.id, JSON.stringify(tombstone)); }
-          catch (error) {
-            if (error?.status === 403) forgetAuthorization(existing.id);
-            throw error;
-          }
+          await updateCatalogAuthorized(existing.id, JSON.stringify(tombstone));
         }
         catalogIds.delete(user.uid);
       };

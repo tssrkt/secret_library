@@ -2,7 +2,7 @@ import { beforeEach, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { webcrypto } from 'node:crypto';
 import { createSharedLibraryStore, sharedLibraryIndex } from '../js/shared-library.js';
-import { AUTH_SESSION_KEY, restoreAuthSession } from '../js/auth.js?v=20261108-drive-file-picker-folder-fix';
+import { AUTH_SESSION_KEY, restoreAuthSession } from '../js/auth.js?v=20261114-brave-oauth2-redirect';
 
 if (!globalThis.crypto) globalThis.crypto = webcrypto;
 
