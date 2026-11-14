@@ -269,7 +269,7 @@ test('The root-folder Picker starts at My Drive with hidden navigation and retur
 test('Every root-folder choice validates the Drive root and minimum books before switching in-page', async () => {
   const { readFile } = await import('node:fs/promises');
   const appSource = await readFile(new URL('../js/app.js', import.meta.url), 'utf8');
-  assert.match(appSource, /Корневой папкой библиотеки может быть только папка непосредственно в корне Google Диска\. Выберите другую/,
+  assert.match(appSource, /Корневой папкой библиотеки может быть только папка непосредственно в корне Google Диска\. Выберите другую\./,
     'the nested-folder rejection must use the approved wording');
   assert.match(appSource, /pickRootFolderWithChecks/, 'all root choices must share the checked Picker flow');
   assert.match(appSource, /countIndexableBooks/, 'the minimum-books check must count indexable formats');
