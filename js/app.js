@@ -160,11 +160,50 @@ function renderLibrary(index) {
 
 const ROOT_FOLDER_RESTRICTION_MESSAGE = 'Корневой папкой библиотеки может быть только папка непосредственно в корне Google Диска. Выберите другую';
 
+// A rejection inside the Picker flow must be visible on its own: an inline
+// error line would stay hidden behind the reopened Picker window. The popup
+// resolves on close; the settings-styled button reopens the Picker.
+function showRootFolderPopup(message) {
+  return new Promise((resolve) => {
+    const backdrop = document.createElement('div');
+    backdrop.className = 'modal-backdrop root-folder-backdrop';
+    const dialog = document.createElement('section');
+    dialog.className = 'root-folder-dialog';
+    dialog.setAttribute('role', 'dialog');
+    dialog.setAttribute('aria-modal', 'true');
+    const title = document.createElement('h2');
+    title.textContent = 'Корневая папка библиотеки';
+    const text = document.createElement('p');
+    text.className = 'root-folder-description';
+    text.textContent = message;
+    const footer = document.createElement('footer');
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'settings-save-button';
+    button.textContent = 'ВЫБРАТЬ КОРНЕВУЮ ПАПКУ';
+    footer.append(button);
+    dialog.append(title, text, footer);
+    backdrop.append(dialog);
+    document.body.append(backdrop);
+    const close = () => {
+      if (!backdrop.isConnected) return;
+      document.removeEventListener('keydown', onKey);
+      backdrop.remove();
+      resolve();
+    };
+    const onKey = (event) => { if (event.key === 'Escape') close(); };
+    button.addEventListener('click', close);
+    backdrop.addEventListener('click', (event) => { if (event.target === backdrop) close(); });
+    document.addEventListener('keydown', onKey);
+    button.focus();
+  });
+}
+
 // One Google Picker window for every root-folder choice. The Picker itself
 // cannot be locked to My Drive root level, so the pick is validated here:
-// a nested folder is rejected with the restriction message, and the folder
+// a nested folder is rejected with the restriction popup, and the folder
 // must hold at least the minimum number of indexable books. On a rejected
-// pick the Picker reopens so the user can choose again without leaving the flow.
+// pick the popup explains why and its button reopens the Picker.
 async function pickRootFolderWithChecks() {
   while (true) {
     const picked = await pickDriveFolder();
@@ -174,7 +213,7 @@ async function pickRootFolderWithChecks() {
       getFolder('root'),
     ]);
     if (!Array.isArray(folder.parents) || !folder.parents.includes(driveRoot.id)) {
-      ui.showError(ROOT_FOLDER_RESTRICTION_MESSAGE);
+      await showRootFolderPopup(ROOT_FOLDER_RESTRICTION_MESSAGE);
       continue;
     }
     ui.setStatus(`Проверяем папку «${folder.name}»…`);
@@ -182,7 +221,7 @@ async function pickRootFolderWithChecks() {
       minimum: MINIMUM_LIBRARY_BOOKS, resourceKey: folder.resourceKey || '',
     });
     if (count < MINIMUM_LIBRARY_BOOKS) {
-      ui.showError(`В папке «${folder.name}» всего ${count} индексируемых книг, а нужно не менее ${MINIMUM_LIBRARY_BOOKS}.`);
+      await showRootFolderPopup(`В папке «${folder.name}» всего ${count} индексируемых книг, а нужно не менее ${MINIMUM_LIBRARY_BOOKS}.`);
       continue;
     }
     ui.clearError();
