@@ -1,4 +1,4 @@
-import { buildLibraryLookups } from '../js/library-view-model.js';
+import { buildLibraryLookups, folderHasAnyBooks } from '../js/library-view-model.js';
 import { normalizeUserSettings, saveUserSettings } from '../js/user-settings.js';
 
 export async function runFolderTreeTests(test, assert, equal) {
@@ -22,6 +22,15 @@ export async function runFolderTreeTests(test, assert, equal) {
       { folderCount: 1, bookCount: 0 }, { folderCount: 1, bookCount: 1 },
     ], 'empty, books-only, folders-only/mixed and nested books are distinct');
     equal(count('root'), { folderCount: 4, bookCount: 0 }, 'nested contents do not leak into parent');
+  });
+  await test('folders without books in their whole subtree are reported empty', () => {
+    const lookups = buildLibraryLookups(index);
+    assert(!folderHasAnyBooks(lookups, 'empty'), 'truly empty folder has no books');
+    assert(folderHasAnyBooks(lookups, 'books'), 'folder with direct books');
+    assert(!folderHasAnyBooks(lookups, 'folders'), 'branch of empty subfolders has no books');
+    assert(folderHasAnyBooks(lookups, 'mixed'), 'folder with a nested book-bearing subfolder');
+    assert(folderHasAnyBooks(lookups, 'root'), 'the root holds books through its children');
+    assert(folderHasAnyBooks(lookups, 'missing-id'), 'unknown ids answer false without throwing');
   });
   await test('folder notes survive index rebuild and are saved by stable folder ID', async () => {
     const settings = normalizeUserSettings({ version: 1, rootFolderId: 'root', sharing: { excludedFolderIds: [] },
