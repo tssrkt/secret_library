@@ -1,5 +1,5 @@
 import { setupDropdown } from './dropdown.js';
-import { buildLibraryLookups, folderHasLibraryChildren } from './library-view-model.js';
+import { buildLibraryLookups, folderHasAnyBooks, folderHasLibraryChildren } from './library-view-model.js';
 import { accountIdentity, createAvatarController } from './avatar.js';
 import { createBookCard, hasPreviousVersionMetadataFailure } from './book-card.js';
 import { createAnnotationModalController } from './annotation-modal.js';
@@ -484,6 +484,8 @@ export function renderLibrary(index, onDownload = async () => {}, { ownerIndex =
     const list = document.createElement('ul');
     list.className = 'tree-list';
     for (const folder of lookups.foldersByParent.get(parentId) || []) {
+      // Folders without any indexable books anywhere inside are not part of the library.
+      if (!folderHasAnyBooks(lookups, folder.id)) continue;
       const item = document.createElement('li');
       const row = document.createElement('div');
       row.className = 'tree-row';
@@ -497,7 +499,10 @@ export function renderLibrary(index, onDownload = async () => {}, { ownerIndex =
       const count = lookups.contentCounts.get(folder.id) || { folderCount: 0, bookCount: 0 };
       const counter = document.createElement('span');
       counter.className = 'folder-content-count';
-      counter.textContent = `${count.folderCount} / ${count.bookCount}`;
+      // Hidden empty subfolders must not inflate the visible folder count.
+      const visibleFolderCount = (lookups.foldersByParent.get(folder.id) || [])
+        .filter((child) => folderHasAnyBooks(lookups, child.id)).length;
+      counter.textContent = `${visibleFolderCount} / ${count.bookCount}`;
       row.append(button, counter);
       if (!readOnly) {
         const edit = document.createElement('button');

@@ -34,3 +34,19 @@ export function buildLibraryLookups(index) {
 export function folderHasLibraryChildren(lookups, folderId) {
   return lookups.foldersByParent.has(folderId) || lookups.booksByParent.has(folderId);
 }
+
+const visibilityMemos = new WeakMap();
+
+// A folder belongs to the library only when it holds indexable books, directly
+// or anywhere in its nested subfolders; empty branches stay out of the tree.
+export function folderHasAnyBooks(lookups, folderId) {
+  let memo = visibilityMemos.get(lookups);
+  if (!memo) { memo = new Map(); visibilityMemos.set(lookups, memo); }
+  const cached = memo.get(folderId);
+  if (cached !== undefined) return cached;
+  memo.set(folderId, false); // cycle guard for malformed indexes
+  const result = lookups.booksByParent.has(folderId)
+    || (lookups.foldersByParent.get(folderId) || []).some((child) => folderHasAnyBooks(lookups, child.id));
+  memo.set(folderId, result);
+  return result;
+}

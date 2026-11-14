@@ -1294,6 +1294,48 @@ await test('root and expanded folders paginate only direct books with independen
   fixture.remove();
 });
 
+await test('folders without any books inside stay out of the library tree', async () => {
+  const fixture = document.createElement('div');
+  fixture.innerHTML = `
+    <h1><a id="library-home-link" href="./">Тайная Библиотека</a></h1>
+    <button id="sign-in-button"></button><button id="refresh-button"></button><button id="metadata-button"></button>
+    <button id="retry-metadata-button"></button><button id="stop-button"></button>
+    <div id="user-controls"><button id="avatar-button"><span id="avatar-placeholder"></span><img id="avatar-image"></button><div id="avatar-menu"><div class="account-identity"><strong id="account-display-name"></strong><span id="account-email"></span></div><button id="sign-out-button"></button></div></div>
+    <p id="status-text"></p><dl id="stats"><div><dd id="folder-count"></dd></div><div><dd id="book-count"></dd></div></dl>
+    <div id="error-panel"><p id="error-text"></p></div><button id="retry-button"></button>
+    <section id="library-panel"><div id="library-tree"></div></section>
+    <div id="annotation-modal" hidden><section><div><div id="annotation-modal-cover-placeholder"></div><img id="annotation-modal-cover-image"></div><div><button id="annotation-modal-close"></button><h2 id="annotation-modal-title"></h2><p id="annotation-modal-genres"></p><p id="annotation-modal-text"></p></div></section></div>`;
+  document.body.append(fixture);
+  const uiModule = await import(`../js/ui.js?empty-folder-test=${Date.now()}`);
+  uiModule.renderLibrary({
+    rootFolderId: 'root',
+    folders: [
+      { id: 'root', parentId: null, name: 'Root' },
+      { id: 'fantasy', parentId: 'root', name: 'Fantasy' },
+      { id: 'books', parentId: 'root', name: 'Books' },
+      { id: 'branch', parentId: 'root', name: 'Empty branch' },
+      { id: 'deep', parentId: 'branch', name: 'Deep empty' },
+      { id: 'mixed', parentId: 'root', name: 'Mixed' },
+      { id: 'has-books', parentId: 'mixed', name: 'Has books' },
+      { id: 'no-books', parentId: 'mixed', name: 'No books' },
+    ],
+    books: [
+      { id: 'b1', parentId: 'books', fileName: 'book.fb2', sourceType: 'fb2', metadataStatus: 'pending' },
+      { id: 'b2', parentId: 'has-books', fileName: 'book.fb2', sourceType: 'fb2', metadataStatus: 'pending' },
+    ],
+  });
+  const names = [...fixture.querySelectorAll('.folder-toggle')].map((button) => button.textContent);
+  assert(!names.includes('Fantasy') && !names.includes('Empty branch'), 'empty leaves and empty branches are hidden');
+  const mixedRow = [...fixture.querySelectorAll('.folder-toggle')].find((button) => button.textContent === 'Mixed');
+  assert(mixedRow, 'a folder with nested book-bearing subfolders stays visible');
+  assert(mixedRow.closest('.tree-row').querySelector('.folder-content-count').textContent === '1 / 0',
+    'the counter shows only visible subfolders');
+  mixedRow.click();
+  const expandedNames = [...fixture.querySelectorAll('.folder-toggle')].map((button) => button.textContent);
+  assert(expandedNames.includes('Has books') && !expandedNames.includes('No books'), 'expansion reveals only book-bearing subfolders');
+  fixture.remove();
+});
+
 await test('production controls keep stop in status panel and menu actions out of header flow', async () => {
   const html = await (await fetch('../index.html')).text();
   const page = new DOMParser().parseFromString(html, 'text/html');
