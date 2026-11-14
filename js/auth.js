@@ -256,40 +256,35 @@ async function acceptTokenResponse(response) {
 
 function requestAccessTokenViaRedirect(effectivePrompt, options) {
   if (!tokenClient) return Promise.reject(new AuthError('Google OAuth is not initialized.'));
-  const promise = new Promise((resolve, reject) => {
-    let settled = false;
+  // GIS token model (initTokenClient) cannot do a redirect UX: ux_mode and
+  // redirect_uri are code-model-only, so the implicit authorization URL is
+  // built directly and navigated top-level. A top-level Google page is
+  // first-party in Brave and is not isolated in ephemeral storage, unlike the
+  // GIS popup.
+  const state = randomOAuthState();
+  try { storageOrNull('sessionStorage')?.setItem(OAUTH_STATE_KEY, state); } catch { /* the state check degrades gracefully without storage */ }
+  const params = new URLSearchParams({
+    client_id: GOOGLE_CLIENT_ID,
+    response_type: 'token',
+    scope: firebaseConfigured() ? `${DRIVE_SCOPES} openid email profile` : DRIVE_SCOPES,
+    redirect_uri: oauthRedirectUri(),
+    prompt: effectivePrompt,
+    include_granted_scopes: 'true',
+    state,
+  });
+  if (options.login_hint) params.set('login_hint', options.login_hint);
+  try { globalThis.location.assign('https://accounts.google.com/o/oauth2/v2/auth?' + params.toString()); }
+  catch (error) { return Promise.reject(error); }
+  // The navigation unloads this page, so the promise normally never settles.
+  // The timeout only matters when the navigation itself fails to start.
+  return new Promise((_resolve, reject) => {
     const startedAt = Date.now();
-    const fail = (error) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      reject(error);
-    };
-    const timer = setTimeout(() => fail(new AuthError(
+    const timer = setTimeout(() => reject(new AuthError(
       'Google не завершил вход через перенаправление за 60 секунд (auth_timeout). Проверьте, не осталось ли окно входа открытым, затем повторите попытку.',
       'auth_timeout', { prompt: effectivePrompt, elapsedMs: Date.now() - startedAt, phase: 'redirect' },
     )), 60000);
-    // The redirect client is temporary: silent renewals must keep using the
-    // popup client, so the module-level tokenClient is never replaced here.
-    const redirectClient = google.accounts.oauth2.initTokenClient({
-      client_id: GOOGLE_CLIENT_ID,
-      scope: firebaseConfigured() ? `${DRIVE_SCOPES} openid email profile` : DRIVE_SCOPES,
-      callback: () => {},
-      error_callback: () => {},
-      ux_mode: 'redirect',
-      redirect_uri: oauthRedirectUri(),
-    });
-    redirectClient.callback = async (response) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      try { resolve(await acceptTokenResponse(response)); }
-      catch (error) { reject(error); }
-    };
-    try { redirectClient.requestAccessToken(options); }
-    catch (error) { fail(error); }
+    timer.unref?.();
   });
-  return promise;
 }
 
 export function requestAccessToken({ prompt = 'consent' } = {}) {
@@ -409,6 +404,15 @@ function isExplicitPrompt(effectivePrompt) {
   return parts.includes('consent') || parts.includes('select_account');
 }
 
+const OAUTH_STATE_KEY = 'secret-library-oauth-state';
+
+function randomOAuthState() {
+  const bytes = new Uint8Array(16);
+  if (globalThis.crypto?.getRandomValues) globalThis.crypto.getRandomValues(bytes);
+  else for (let i = 0; i < bytes.length; i++) bytes[i] = Math.floor(Math.random() * 256);
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+}
+
 // Google returns the redirect token response in the URL fragment. Parsing must
 // happen before Google Identity Services loads, so Google cannot consume the
 // response a second time.
@@ -422,6 +426,7 @@ export function parseRedirectTokenResponse(hash) {
     accessToken,
     expiresIn: Math.max(0, Number(params.get('expires_in')) || 3600),
     scope: params.get('scope') || '',
+    state: params.get('state') || '',
     error: error || '',
   };
 }
@@ -433,13 +438,19 @@ export function consumeRedirectTokenResponse({
   pathname = globalThis.location?.pathname,
   search = globalThis.location?.search,
   historyObj = globalThis.history,
+  session = storageOrNull('sessionStorage'),
 } = {}) {
   pendingRedirectResponse = null;
   const parsed = parseRedirectTokenResponse(hash);
   if (!parsed) return null;
-  // Strip the OAuth response from the URL immediately; refresh tokens in the
+  // Strip the OAuth response from the URL immediately; tokens in the
   // address bar must not linger or survive a share/copy.
   try { historyObj?.replaceState(historyObj.state, '', pathname + search); } catch { /* keep the fragment; the app still works */ }
+  let storedState = null;
+  try { storedState = session?.getItem(OAUTH_STATE_KEY); session?.removeItem(OAUTH_STATE_KEY); } catch { /* state check degrades gracefully */ }
+  // A state set by this tab must come back unchanged; without a stored state
+  // (cleared storage) the response is still accepted to avoid a lockout.
+  parsed.stateValid = !storedState || !parsed.state || parsed.state === storedState;
   pendingRedirectResponse = parsed;
   return parsed;
 }
@@ -448,6 +459,12 @@ export async function settleRedirectResponse() {
   const parsed = pendingRedirectResponse;
   pendingRedirectResponse = null;
   if (!parsed) return null;
+  if (!parsed.stateValid) {
+    throw new AuthError(
+      'Google вернул вход с неверным идентификатором запроса. Повторите попытку входа.',
+      'redirect_state_mismatch',
+    );
+  }
   if (parsed.error || !parsed.accessToken) {
     throw new AuthError(
       'Google не завершил вход после перенаправления. Повторите попытку входа.',

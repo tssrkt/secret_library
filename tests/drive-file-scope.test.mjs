@@ -32,7 +32,7 @@ test('OAuth scopes keep broad read and appData but remove broad Drive mutation s
 });
 
 test('Drive 403 errors distinguish app authorization from account permissions without logging private data', async () => {
-  const auth = await import('../js/auth.js?v=20261114-brave-redirect-signin');
+  const auth = await import('../js/auth.js?v=20261114-brave-oauth2-redirect');
   const previousFetch = globalThis.fetch;
   const previousWarn = console.warn;
   const warnings = [];
@@ -165,7 +165,7 @@ test('folder authorization configures list mode and accepts the Picker selection
       Response: { ACTION: 'action', DOCUMENTS: 'docs' },
     },
   };
-  const auth = await import('../js/auth.js?v=20261114-brave-redirect-signin');
+  const auth = await import('../js/auth.js?v=20261114-brave-oauth2-redirect');
   auth.restoreAuthSession({ session: {
     getItem: () => JSON.stringify({ accessToken: 'test-token', expiresAt: Date.now() + 3600000, user: { emailAddress: 'picker-test@example.com' } }),
     removeItem: () => {},
@@ -226,7 +226,7 @@ test('a failed Drive API operation can invalidate the remembered Picker selectio
   };
   globalThis.localStorage = storage;
   globalThis.window = { sessionStorage: storage, localStorage: storage };
-  const auth = await import('../js/auth.js?v=20261114-brave-redirect-signin');
+  const auth = await import('../js/auth.js?v=20261114-brave-oauth2-redirect');
   auth.restoreAuthSession({ session: {
     getItem: () => JSON.stringify({ accessToken: 'test-token', expiresAt: Date.now() + 3600000, user: { emailAddress: 'user@example.com' } }),
     removeItem: () => {},
