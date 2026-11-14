@@ -12,7 +12,7 @@ import { filterBooksByDirectValue, russianBookCount } from './direct-filter.js';
 import { createSearchController } from './search-ui.js';
 import { createIndexingErrorsController } from './indexing-errors-ui.js';
 import { createUserSettingsController } from './user-settings-ui.js?v=20261108-folder-access-save-fix';
-import { mountFriends } from './friends-ui.js?v=20261114-clipboard-copy-first';
+import { mountFriends } from './friends-ui.js?v=20261114-friends-tab-navigation';
 import { createNotificationsController } from './notifications-ui.js?v=20261112-guided-manual-sharing';
 import { social } from './social-runtime.js?v=20261112-guided-manual-sharing';
 import { getAccessToken } from './auth.js?v=20261114-brave-oauth2-redirect';
@@ -44,6 +44,7 @@ let selectDirectFilter = () => {};
 let searchController = null;
 let settingsController = null;
 let openSettings = () => {};
+let openFriendLibrary = null;
 let reportSettingsError = (error) => showError(error.message);
 const onAuthorFilter = (value) => selectDirectFilter({ type: 'author', value: value.trim() });
 const onGenreFilter = (value) => selectDirectFilter({ type: 'genre', value });
@@ -73,6 +74,7 @@ const elements = {
   userControls: document.querySelector('#user-controls'),
   accountDisplayName: document.querySelector('#account-display-name'),
   accountEmail: document.querySelector('#account-email'),
+  accountIdentityLink: document.querySelector('.account-identity-link'),
   avatar: document.querySelector('#avatar-button'),
   avatarImage: document.querySelector('#avatar-image'),
   avatarPlaceholder: document.querySelector('#avatar-placeholder'),
@@ -140,6 +142,15 @@ export function resetUserAvatar() {
 
 export function bindActions(actions) {
   reportSettingsError = actions.settingsError || reportSettingsError;
+  openFriendLibrary = actions.openFriendLibrary || null;
+  // A full page load never restores the session by design, so the identity
+  // link must not navigate: it switches back to the own library in-page.
+  elements.accountIdentityLink?.addEventListener('click', (event) => {
+    if (!document.querySelector('#document-view')?.hidden) { actions.home?.(); return; }
+    event.preventDefault();
+    dropdown.close();
+    openFriendLibrary?.('');
+  });
   elements.settings?.addEventListener('click', () => openSettings());
   elements.home?.addEventListener('click', (event) => {
     // Reset library subviews (including settings) even when a public document is visible.
@@ -336,7 +347,7 @@ export function renderLibrary(index, onDownload = async () => {}, { ownerIndex =
       catch (error) { reportSettingsError(error); }
       return saved;
     },
-    mountSections: (page) => mountFriends(page, social, () => social.connect(getAccessToken())),
+    mountSections: (page) => mountFriends(page, social, () => social.connect(getAccessToken()), (uid) => openFriendLibrary?.(uid)),
     onError: (error) => reportSettingsError(error),
   });
 

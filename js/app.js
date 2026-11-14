@@ -15,7 +15,7 @@ import {
   canResumeBuildingIndex, prepareBuildingIndex, updateBuildProgress, validateCompletedIndex,
 } from './index-build.js';
 import { prepareIndexingRun, createRetryEligibilityCheck } from './indexing-run.js';
-import * as ui from './ui.js?v=20261114-clipboard-copy-first';
+import * as ui from './ui.js?v=20261114-friends-tab-navigation';
 import { errorDetails, recordIndexingError } from './indexing-errors.js';
 import { social, socialError } from './social-runtime.js?v=20261112-guided-manual-sharing';
 import { getAccessToken } from './auth.js?v=20261114-brave-oauth2-redirect';
@@ -588,8 +588,16 @@ const runOnOwnLibrary = (action) => async () => {
   await action();
 };
 
+// Switching libraries must stay in-page: a full page load never restores the
+// session by design, so URL navigation would look like a forced sign-out.
+const openLibraryTab = (uid) => {
+  if (!authorizedOwner || !libraryAccessGranted) return;
+  selection.select(uid);
+};
+
 ui.bindActions({
   settingsError: (error) => ui.showError(readableError(error)),
+  openFriendLibrary: (uid) => openLibraryTab(uid),
   home: () => ui.showLibraryHome(),
   signIn,
   refresh: runOnOwnLibrary(rebuildIndex),
