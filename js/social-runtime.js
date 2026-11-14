@@ -575,7 +575,7 @@ export const social = {
   async resendInvitation(email) {
     if (!invitationUser) throw new Error('Сначала войдите через Google, чтобы отправлять приглашения.');
     const normalizedEmail = String(email || '').trim().toLowerCase();
-    if (!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(normalizedEmail)) throw new Error('Укажите корректный адрес электронной почты.');
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) throw new Error('Укажите корректный адрес электронной почты.');
     const idToken = await invitationUser.getIdToken();
     const knownStatuses = await fetchInvitationStatuses({ emails: [normalizedEmail], idToken });
     const registeredStatus = knownStatuses && knownStatuses[normalizedEmail];
