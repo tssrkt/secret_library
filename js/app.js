@@ -158,7 +158,7 @@ function renderLibrary(index) {
   selection.setOwn(index);
 }
 
-const ROOT_FOLDER_RESTRICTION_MESSAGE = 'Корневой папкой библиотеки может быть только папка непосредственно в корне Google Диска. Выберите другую';
+const ROOT_FOLDER_RESTRICTION_MESSAGE = 'Корневой папкой библиотеки может быть только папка непосредственно в корне Google Диска. Выберите другую.';
 
 // A rejection inside the Picker flow must be visible on its own: an inline
 // error line would stay hidden behind the reopened Picker window. The popup
