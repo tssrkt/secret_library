@@ -277,22 +277,13 @@ export async function pickDriveFolder({ title = 'Выберите корневу
 
   return new Promise((resolve, reject) => {
     let settled = false;
-    let selectionTimer;
-    let callbackCount = 0;
-    let lastAction = 'none';
     const finish = (value, error) => {
       if (settled) return;
       settled = true;
-      clearTimeout(selectionTimer);
       if (error) reject(error); else resolve(value);
     };
-    selectionTimer = setTimeout(() => {
-      const callbackState = callbackCount ? lastAction : 'no_callback';
-      const hint = isBraveBrowserSync() ? ` ${BRAVE_PICKER_HINT}` : '';
-      finish(null, Object.assign(new Error(`Google Picker не завершил выбор за 45 секунд (code: picker_selection_timeout; callback: ${callbackState}). Закройте окно, проверьте доступ к Google Drive и попробуйте ещё раз.${hint}`), {
-        code: 'picker_selection_timeout', details: { timeoutMs: 45000, isFolder: true, callbackCount, lastAction },
-      }));
-    }, 45000);
+    // No selection timeout here: the user may browse Drive for as long as they
+    // need. Only terminal callback actions (PICKED/CANCEL/ERROR) end the wait.
     const builder = new picker.PickerBuilder()
       .setAppId(GOOGLE_CLOUD_PROJECT_NUMBER)
       .setDeveloperKey(GOOGLE_PICKER_API_KEY)
@@ -303,9 +294,7 @@ export async function pickDriveFolder({ title = 'Выберите корневу
     // Hiding the navigation pane keeps the Picker inside My Drive views.
     if (picker.Feature?.NAV_HIDDEN) builder.enableFeature(picker.Feature.NAV_HIDDEN);
     builder.setCallback((data) => {
-      callbackCount += 1;
       const response = readPickerResponse(data, picker);
-      lastAction = response.action || 'missing_action';
       if (!response.action) {
         finish(null, new Error('Google Picker вернул ответ без действия (code: picker_invalid_response). Повторите выбор папки.'));
         return;

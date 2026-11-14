@@ -263,6 +263,7 @@ test('The root-folder Picker starts at My Drive with hidden navigation and retur
   assert.match(pickerSource, /setSelectFolderEnabled/, 'the free Picker must allow selecting a folder');
   const freeBlock = pickerSource.slice(pickerSource.indexOf('export async function pickDriveFolder'));
   assert.doesNotMatch(freeBlock, /setFileIds/, 'the free Picker must not be locked to a preselected item');
+  assert.doesNotMatch(freeBlock, /picker_selection_timeout|setTimeout/, 'the free Picker must not time out while the user is browsing');
 });
 
 test('Every root-folder choice validates the Drive root and minimum books before switching in-page', async () => {
