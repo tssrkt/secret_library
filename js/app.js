@@ -23,7 +23,7 @@ import { checkpointKey, loadCheckpoint, saveCheckpoint, deleteCheckpoint, commit
 import { createLibraryTabs } from './library-tabs.js';
 import { createLibrarySelection } from './library-selection.js?v=20261107-stable-friend-loading';
 import { loadUserSettings, loadRootFolderPreference, loadRootFolderResourceKey, saveRootFolderPreference } from './user-settings.js';
-import { ensureDriveFolderAuthorized, pickDriveFolder } from './google-picker.js?v=20261114-picker-root-choice';
+import { ensureDriveFolderAuthorized, pickDriveFolder } from './google-picker.js?v=20261114-picker-no-timeout';
 import { firebaseConfigured } from './firebase-config.js';
 import { hasMinimumBooks, MINIMUM_LIBRARY_BOOKS } from './library-access.js';
 
