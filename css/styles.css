@@ -662,6 +662,7 @@ dd { margin: 0; color: #000; font-weight: 400; font-variant-numeric: tabular-num
 }
 
 .root-folder-dialog {
+  position: relative;
   display: flex;
   width: min(620px, 100%);
   max-height: min(720px, 90vh);
@@ -673,6 +674,8 @@ dd { margin: 0; color: #000; font-weight: 400; font-variant-numeric: tabular-num
   background: #fffdf9;
   box-shadow: 0 10px 32px rgb(45 32 20 / 20%);
 }
+.root-folder-close { position: absolute; top: .5rem; right: .5rem; }
+.root-folder-dialog h2, .root-folder-dialog .root-folder-description { text-align: center; }
 .root-folder-dialog header, .root-folder-dialog footer {
   display: flex;
   align-items: center;
@@ -687,7 +690,7 @@ dd { margin: 0; color: #000; font-weight: 400; font-variant-numeric: tabular-num
 .root-folder-list { min-height: 7rem; max-height: 48vh; overflow: auto; margin: 0; padding: .25rem; list-style: none; border: 1px solid #e5dbce; border-radius: .4rem; }
 .root-folder-entry { width: 100%; padding: .65rem .75rem; color: #342c24; background: transparent; text-align: left; font-weight: 500; overflow-wrap: anywhere; }
 .root-folder-entry:hover, .root-folder-entry:focus-visible { background: #f2eadf; }
-.root-folder-dialog footer { justify-content: center; flex-wrap: wrap; }
+.root-folder-dialog footer { justify-content: center; flex-wrap: wrap; margin-top: 7px; }
 /* The popup button is centered with 10px more horizontal padding than the settings-page buttons. */
 .root-folder-dialog footer .settings-save-button { padding-inline: calc(.3rem + 10px); }
 .root-folder-dialog button:focus-visible { outline: 2px solid #8a623b; outline-offset: 2px; }

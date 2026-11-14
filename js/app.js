@@ -162,7 +162,9 @@ const ROOT_FOLDER_RESTRICTION_MESSAGE = 'Корневой папкой библ�
 
 // A rejection inside the Picker flow must be visible on its own: an inline
 // error line would stay hidden behind the reopened Picker window. The popup
-// resolves on close; the settings-styled button reopens the Picker.
+// resolves 'reopen' when the action button is clicked, and 'close' when the
+// window is dismissed (× button, Escape, backdrop click): dismissing the popup
+// abandons the flow and must not reopen the Picker.
 function showRootFolderPopup(message, buttonLabel = 'ВЫБРАТЬ КОРНЕВУЮ ПАПКУ') {
   return new Promise((resolve) => {
     const backdrop = document.createElement('div');
@@ -171,6 +173,11 @@ function showRootFolderPopup(message, buttonLabel = 'ВЫБРАТЬ КОРНЕВ
     dialog.className = 'root-folder-dialog';
     dialog.setAttribute('role', 'dialog');
     dialog.setAttribute('aria-modal', 'true');
+    const close = document.createElement('button');
+    close.type = 'button';
+    close.className = 'secondary compact root-folder-close';
+    close.setAttribute('aria-label', 'Закрыть');
+    close.textContent = '×';
     const title = document.createElement('h2');
     title.textContent = 'Корневая папка библиотеки';
     const text = document.createElement('p');
@@ -182,18 +189,19 @@ function showRootFolderPopup(message, buttonLabel = 'ВЫБРАТЬ КОРНЕВ
     button.className = 'settings-save-button';
     button.textContent = buttonLabel;
     footer.append(button);
-    dialog.append(title, text, footer);
+    dialog.append(close, title, text, footer);
     backdrop.append(dialog);
     document.body.append(backdrop);
-    const close = () => {
+    const finish = (result) => {
       if (!backdrop.isConnected) return;
       document.removeEventListener('keydown', onKey);
       backdrop.remove();
-      resolve();
+      resolve(result);
     };
-    const onKey = (event) => { if (event.key === 'Escape') close(); };
-    button.addEventListener('click', close);
-    backdrop.addEventListener('click', (event) => { if (event.target === backdrop) close(); });
+    const onKey = (event) => { if (event.key === 'Escape') finish('close'); };
+    button.addEventListener('click', () => finish('reopen'));
+    close.addEventListener('click', () => finish('close'));
+    backdrop.addEventListener('click', (event) => { if (event.target === backdrop) finish('close'); });
     document.addEventListener('keydown', onKey);
     button.focus();
   });
@@ -203,7 +211,8 @@ function showRootFolderPopup(message, buttonLabel = 'ВЫБРАТЬ КОРНЕВ
 // cannot be locked to My Drive root level, so the pick is validated here:
 // a nested folder is rejected with the restriction popup, and the folder
 // must hold at least the minimum number of indexable books. On a rejected
-// pick the popup explains why and its button reopens the Picker.
+// pick the popup explains why and its button reopens the Picker; dismissing
+// the popup ends the choice without reopening the Picker.
 async function pickRootFolderWithChecks() {
   while (true) {
     const picked = await pickDriveFolder();
@@ -213,7 +222,7 @@ async function pickRootFolderWithChecks() {
       getFolder('root'),
     ]);
     if (!Array.isArray(folder.parents) || !folder.parents.includes(driveRoot.id)) {
-      await showRootFolderPopup(ROOT_FOLDER_RESTRICTION_MESSAGE);
+      if (await showRootFolderPopup(ROOT_FOLDER_RESTRICTION_MESSAGE) === 'close') return null;
       continue;
     }
     ui.setStatus(`Проверяем папку «${folder.name}»…`);
@@ -221,7 +230,8 @@ async function pickRootFolderWithChecks() {
       minimum: MINIMUM_LIBRARY_BOOKS, resourceKey: folder.resourceKey || '',
     });
     if (count < MINIMUM_LIBRARY_BOOKS) {
-      await showRootFolderPopup(`В папке «${folder.name}» всего ${count} индексируемых книг, а нужно не менее ${MINIMUM_LIBRARY_BOOKS}.`, 'ВЫБРАТЬ ДРУГУЮ ПАПКУ');
+      const choice = await showRootFolderPopup(`В папке «${folder.name}» всего ${count} индексируемых книг, а нужно не менее ${MINIMUM_LIBRARY_BOOKS}.`, 'ВЫБРАТЬ ДРУГУЮ ПАПКУ');
+      if (choice === 'close') return null;
       continue;
     }
     ui.clearError();
