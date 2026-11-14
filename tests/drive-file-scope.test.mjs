@@ -243,3 +243,14 @@ test('a failed Drive API operation can invalidate the remembered Picker selectio
     if (previousLocalStorage === undefined) delete globalThis.localStorage; else globalThis.localStorage = previousLocalStorage;
   }
 });
+
+test('Picker failure messages carry the Brave storage guidance for Brave users', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const pickerSource = await readFile(new URL('../js/google-picker.js', import.meta.url), 'utf8');
+  const dialogSource = await readFile(new URL('../js/root-folder-picker.js', import.meta.url), 'utf8');
+  assert.match(pickerSource, /isBraveBrowserSync\(\) \? ` \$\{BRAVE_PICKER_HINT\}` : ''/, 'both picker error paths must append the hint');
+  assert.match(pickerSource, /Google Sign-In/, 'the hint must name the Brave shields permission');
+  const hintLine = pickerSource.split('\n').find((l) => l.includes('BRAVE_PICKER_HINT = ')) || '';
+  assert.doesNotMatch(hintLine, /sessionStorage|localStorage|firestore|appData|drive.file/i, 'the hint must not leak infrastructure names');
+  assert.match(dialogSource, /isBraveBrowserSync\(\) \? ` \$\{BRAVE_PICKER_HINT\}` : ''/, 'the folder dialog must warn before the picker opens');
+});

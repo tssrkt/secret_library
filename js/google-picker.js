@@ -4,6 +4,25 @@ import { ensureAccessToken, getSessionUserEmail } from './auth.js?v=20261114-bra
 let pickerLoadPromise = null;
 export const DRIVE_ITEM_AUTHORIZATION_MARKER_PREFIX = 'secret-library-drive-file-authorized-v2:';
 
+// Brave blocks third-party storage for the Google Picker iframe, so the Picker
+// shows "Sign in — You must sign in to access this content" instead of files.
+// There is no code-side alternative under drive.file: the user must allow
+// Google sign-in or all cookies for this site, then retry.
+let braveFlag = false;
+const bravePromise = (async () => {
+  try {
+    const brave = globalThis.navigator?.brave;
+    if (brave && typeof brave.isBrave === 'function') braveFlag = Boolean(await brave.isBrave());
+  } catch { /* non-Brave browsers without navigator.brave */ }
+  return braveFlag;
+})();
+
+export function isBraveBrowserSync() {
+  return braveFlag;
+}
+
+export const BRAVE_PICKER_HINT = 'Похоже, Brave блокирует вход Google в этом окне. Щёлкните иконку щита Brave в адресной строке и разрешите «Google Sign-In» или все файлы cookie для этого сайта, затем повторите действие.';
+
 function pickerProviderCode(data) {
   const candidates = [data?.error?.code, data?.error?.status, data?.error?.type, data?.errorCode, data?.code];
   for (const value of candidates) {
@@ -147,7 +166,8 @@ export async function authorizeDriveItem({ id, name = '', mimeType = '', isFolde
     };
     selectionTimer = setTimeout(() => {
       const callbackState = callbackCount ? lastAction : 'no_callback';
-      finish(null, Object.assign(new Error(`Google Picker не завершил выбор за 45 секунд (code: picker_selection_timeout; callback: ${callbackState}). Закройте окно, проверьте доступ к Google Drive и попробуйте ещё раз.`), {
+      const hint = isBraveBrowserSync() ? ` ${BRAVE_PICKER_HINT}` : '';
+      finish(null, Object.assign(new Error(`Google Picker не завершил выбор за 45 секунд (code: picker_selection_timeout; callback: ${callbackState}). Закройте окно, проверьте доступ к Google Drive и попробуйте ещё раз.${hint}`), {
         code: 'picker_selection_timeout', details: { timeoutMs: 45000, isFolder, callbackCount, lastAction },
       }));
     }, 45000);
@@ -181,7 +201,8 @@ export async function authorizeDriveItem({ id, name = '', mimeType = '', isFolde
             isFolder,
           });
           const diagnostic = providerCode ? `; provider: ${providerCode}` : '';
-          finish(null, Object.assign(new Error(`Google Picker сообщил об ошибке (code: picker_callback_error${diagnostic}). Проверьте доступ к Google Drive и ограничения API key.`), {
+          const hint = isBraveBrowserSync() ? ` ${BRAVE_PICKER_HINT}` : '';
+          finish(null, Object.assign(new Error(`Google Picker сообщил об ошибке (code: picker_callback_error${diagnostic}). Проверьте доступ к Google Drive и ограничения API key.${hint}`), {
             code: 'picker_callback_error', details: { action: response.action, providerCode: providerCode || null, isFolder },
           }));
           return;
