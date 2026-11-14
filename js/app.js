@@ -2,14 +2,14 @@ import {
   clearAccessToken, clearPersistedAuth, consumeRedirectTokenResponse, createAuthAttemptGuard,
   initializeAuth, persistAuthSession, recoverAuthSession, requestAccessToken, settleRedirectResponse,
 } from './auth.js?v=20261114-brave-oauth2-redirect';
-import { downloadDriveFile, getCurrentDriveUser, getFolder, listFolderChildren } from './drive.js';
+import { downloadDriveFile, getCurrentDriveUser, getFolder } from './drive.js';
 import { removeCovers, removeOrphanCovers, storeCover } from './cover-cache.js';
 import {
   deleteBuildingIndex, IndexError, loadBuildingIndex, loadIndex, readIndexFile,
   saveBuildingIndex, saveIndex,
 } from './library-index.js';
 import { createLibraryRefresher, scanStatus, scanFailureMessage } from './library-refresh.js';
-import { scanLibrary } from './library-tree.js';
+import { countIndexableBooks } from './library-tree.js';
 import { indexPendingBooks, resetProcessingBooks } from './metadata-indexer.js';
 import {
   canResumeBuildingIndex, prepareBuildingIndex, updateBuildProgress, validateCompletedIndex,
@@ -23,8 +23,7 @@ import { checkpointKey, loadCheckpoint, saveCheckpoint, deleteCheckpoint, commit
 import { createLibraryTabs } from './library-tabs.js';
 import { createLibrarySelection } from './library-selection.js?v=20261107-stable-friend-loading';
 import { loadUserSettings, loadRootFolderPreference, loadRootFolderResourceKey, saveRootFolderPreference } from './user-settings.js';
-import { chooseRootFolder } from './root-folder-picker.js?v=20261114-brave-picker-guidance';
-import { ensureDriveFolderAuthorized } from './google-picker.js?v=20261114-brave-picker-guidance';
+import { ensureDriveFolderAuthorized, pickDriveFolder } from './google-picker.js?v=20261114-picker-root-choice';
 import { firebaseConfigured } from './firebase-config.js';
 import { hasMinimumBooks, MINIMUM_LIBRARY_BOOKS } from './library-access.js';
 
@@ -159,6 +158,65 @@ function renderLibrary(index) {
   selection.setOwn(index);
 }
 
+const ROOT_FOLDER_RESTRICTION_MESSAGE = 'Корневой папкой библиотеки может быть только папка непосредственно в корне Google Диска. Выберите другую';
+
+// One Google Picker window for every root-folder choice. The Picker itself
+// cannot be locked to My Drive root level, so the pick is validated here:
+// a nested folder is rejected with the restriction message, and the folder
+// must hold at least the minimum number of indexable books. On a rejected
+// pick the Picker reopens so the user can choose again without leaving the flow.
+async function pickRootFolderWithChecks() {
+  while (true) {
+    const picked = await pickDriveFolder();
+    if (!picked) return null;
+    const [folder, driveRoot] = await Promise.all([
+      getFolder(picked.id, { resourceKey: picked.resourceKey || '' }),
+      getFolder('root'),
+    ]);
+    if (!Array.isArray(folder.parents) || !folder.parents.includes(driveRoot.id)) {
+      ui.showError(ROOT_FOLDER_RESTRICTION_MESSAGE);
+      continue;
+    }
+    ui.setStatus(`Проверяем папку «${folder.name}»…`);
+    const count = await countIndexableBooks(folder.id, {
+      minimum: MINIMUM_LIBRARY_BOOKS, resourceKey: folder.resourceKey || '',
+    });
+    if (count < MINIMUM_LIBRARY_BOOKS) {
+      ui.showError(`В папке «${folder.name}» всего ${count} индексируемых книг, а нужно не менее ${MINIMUM_LIBRARY_BOOKS}.`);
+      continue;
+    }
+    ui.clearError();
+    return folder;
+  }
+}
+
+// Switching libraries must stay in-page: a full page load never restores the
+// session by design, so a reload would look like a forced sign-out.
+async function switchToRootFolder(folder) {
+  await saveRootFolderPreference(folder.id, folder.resourceKey);
+  // A stale ?library= deep link must not reopen another person's tab after reload.
+  const url = new URL(window.location.href);
+  url.searchParams.delete('library');
+  window.history.replaceState(null, '', url);
+  sharingVersion++; shareableIndex = null;
+  currentIndex = null;
+  buildingIndex = null;
+  buildingIndexFileId = null;
+  indexFileId = null;
+  refreshCommitUncertain = false;
+  libraryAccessGranted = false;
+  tabsRoot.hidden = true;
+  selection.reset();
+  localCheckpointKey = checkpointKey(authorizedOwner, folder.id);
+  activeRootFolderId = folder.id;
+  activeRootFolderResourceKey = folder.resourceKey;
+  social.setRootFolder(folder.id);
+  ui.resetUi();
+  ui.setAuthorized(true);
+  ui.setStatus(`Корневая папка изменена на «${folder.name}». Сканируем новую библиотеку…`);
+  await rebuildIndex();
+}
+
 async function ensureMinimumBookAccess(index) {
   if (hasMinimumBooks(index)) { libraryAccessGranted = true; return true; }
   libraryAccessGranted = false;
@@ -167,21 +225,17 @@ async function ensureMinimumBookAccess(index) {
   const count = Array.isArray(index?.books) ? index.books.length : 0;
   const reason = 'В вашей папке всего ' + count + ' книг, а нужно не менее ' + MINIMUM_LIBRARY_BOOKS + '!';
   ui.setStatus(reason + ' Выберите другую корневую папку.');
-  while (true) {
-    const folder = await chooseRootFolder({ listChildren: listFolderChildren, getFolder, scanFolder: scanLibrary, onExit: signOut,
-      description: reason + ' Выберите корневую папку, где после сканирования найдётся не менее ' + MINIMUM_LIBRARY_BOOKS + ' книг. Учитываются книги во вложенных папках.' });
-    if (!folder) {
-      if (getAccessToken()) ui.setStatus('Доступ к каталогу закрыт: нужно не менее ' + MINIMUM_LIBRARY_BOOKS + ' книг. Выберите подходящую корневую папку через личное меню.');
-      return false;
-    }
-    if (folder.id === activeRootFolderId) {
-      await rebuildIndex();
-      return false;
-    }
-    await saveRootFolderPreference(folder.id, folder.resourceKey);
-    window.location.reload();
+  const folder = await pickRootFolderWithChecks();
+  if (!folder) {
+    if (getAccessToken()) ui.setStatus(reason + ' Выберите подходящую корневую папку через личное меню.');
     return false;
   }
+  if (folder.id === activeRootFolderId) {
+    await rebuildIndex();
+    return false;
+  }
+  await switchToRootFolder(folder);
+  return false;
 }
 
 const libraryRefresher = createLibraryRefresher({
@@ -443,7 +497,7 @@ async function afterAuthorization() {
   if (!activeRootFolderId) {
     ui.setAuthorized(true);
     ui.setStatus('Выберите корневую папку вашей библиотеки.');
-    const folder = await chooseRootFolder({ listChildren: listFolderChildren, getFolder, scanFolder: scanLibrary, onExit: signOut });
+    const folder = await pickRootFolderWithChecks();
     if (!folder) {
       if (getAccessToken()) ui.setStatus('Корневая папка не выбрана. Выберите её через личное меню.');
       return;
@@ -525,15 +579,13 @@ async function changeRootFolder() {
   if (!authorizedOwner || metadataController || libraryRefresher.running) return;
   ui.clearError();
   try {
-    const folder = await chooseRootFolder({ listChildren: listFolderChildren, getFolder, scanFolder: scanLibrary, onExit: signOut });
-    if (!folder || folder.id === activeRootFolderId) return;
-    if (!window.confirm(`Сменить корневую папку на «${folder.name}»? Текущий каталог останется сохранён, а для новой папки будет создан отдельный индекс.`)) return;
-    await saveRootFolderPreference(folder.id, folder.resourceKey);
-    const url = new URL(window.location.href);
-    url.searchParams.delete('library');
-    window.history.replaceState(null, '', url);
-    ui.setStatus(`Корневая папка изменена на «${folder.name}». Загружаем её библиотеку…`);
-    window.location.reload();
+    const folder = await pickRootFolderWithChecks();
+    if (!folder) return;
+    if (folder.id === activeRootFolderId) {
+      ui.setStatus('Эта папка уже является корневой.');
+      return;
+    }
+    await switchToRootFolder(folder);
   } catch (error) {
     ui.showError(readableError(error));
   }

@@ -250,3 +250,102 @@ export async function ensureDriveFolderAuthorized(folder) {
     id: folder?.id, name: folder?.name, mimeType: FOLDER_MIME_TYPE, isFolder: true,
   });
 }
+
+/**
+ * Let the user pick any library root folder in one Google Picker window.
+ * Unlike authorizeDriveItem, the view starts at My Drive and navigation stays
+ * open: eligibility (Drive root parent, minimum books) is validated by the
+ * caller after the pick, so the Picker itself needs no fixed target ID.
+ */
+export async function pickDriveFolder({ title = 'Выберите корневую папку библиотеки' } = {}) {
+  if (!GOOGLE_PICKER_API_KEY) {
+    throw new Error('Для безопасной авторизации Google Picker нужно настроить GOOGLE_PICKER_API_KEY в js/config.js. До этого операции изменения файлов отключены.');
+  }
+  await loadPickerApi();
+  const token = await ensureAccessToken();
+  const picker = globalThis.google.picker;
+  const view = new picker.DocsView(picker.ViewId.FOLDERS);
+  // drive.file does not grant thumbnail access; keep the same list-mode and
+  // folder-inclusion settings as the authorization Picker.
+  if (picker.DocsViewMode?.LIST && typeof view.setMode === 'function') {
+    view.setMode(picker.DocsViewMode.LIST);
+  }
+  if (typeof view.setIncludeFolders === 'function') view.setIncludeFolders(true);
+  if (typeof view.setSelectFolderEnabled === 'function') view.setSelectFolderEnabled(true);
+  // Start inside My Drive; a nested-folder pick is rejected by the caller.
+  if (typeof view.setParent === 'function') view.setParent('root');
+
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let selectionTimer;
+    let callbackCount = 0;
+    let lastAction = 'none';
+    const finish = (value, error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(selectionTimer);
+      if (error) reject(error); else resolve(value);
+    };
+    selectionTimer = setTimeout(() => {
+      const callbackState = callbackCount ? lastAction : 'no_callback';
+      const hint = isBraveBrowserSync() ? ` ${BRAVE_PICKER_HINT}` : '';
+      finish(null, Object.assign(new Error(`Google Picker не завершил выбор за 45 секунд (code: picker_selection_timeout; callback: ${callbackState}). Закройте окно, проверьте доступ к Google Drive и попробуйте ещё раз.${hint}`), {
+        code: 'picker_selection_timeout', details: { timeoutMs: 45000, isFolder: true, callbackCount, lastAction },
+      }));
+    }, 45000);
+    const builder = new picker.PickerBuilder()
+      .setAppId(GOOGLE_CLOUD_PROJECT_NUMBER)
+      .setDeveloperKey(GOOGLE_PICKER_API_KEY)
+      .setOAuthToken(token)
+      .setOrigin(window.location.protocol + '//' + window.location.host)
+      .setTitle(title)
+      .addView(view);
+    // Hiding the navigation pane keeps the Picker inside My Drive views.
+    if (picker.Feature?.NAV_HIDDEN) builder.enableFeature(picker.Feature.NAV_HIDDEN);
+    builder.setCallback((data) => {
+      callbackCount += 1;
+      const response = readPickerResponse(data, picker);
+      lastAction = response.action || 'missing_action';
+      if (!response.action) {
+        finish(null, new Error('Google Picker вернул ответ без действия (code: picker_invalid_response). Повторите выбор папки.'));
+        return;
+      }
+      if (response.cancelled) {
+        finish(null);
+        return;
+      }
+      if (response.failed) {
+        const providerCode = pickerProviderCode(data);
+        // Log only stable error codes, never the full provider payload or OAuth token.
+        console.warn('[Secret Library] Google Picker error', {
+          action: response.action,
+          providerCode: providerCode || 'not-provided',
+          isFolder: true,
+        });
+        const diagnostic = providerCode ? `; provider: ${providerCode}` : '';
+        const hint = isBraveBrowserSync() ? ` ${BRAVE_PICKER_HINT}` : '';
+        finish(null, Object.assign(new Error(`Google Picker сообщил об ошибке (code: picker_callback_error${diagnostic}). Проверьте доступ к Google Drive и ограничения API key.${hint}`), {
+          code: 'picker_callback_error', details: { action: response.action, providerCode: providerCode || null, isFolder: true },
+        }));
+        return;
+      }
+      // LOADED and other non-terminal lifecycle events are expected; keep waiting for PICKED/CANCEL.
+      if (!response.picked) return;
+      const selected = response.docs[0];
+      if (!selected?.id) {
+        finish(null, new Error('Google Picker вернул выбор без идентификатора папки. Повторите выбор.'));
+        return;
+      }
+      rememberDriveItemAuthorization(selected.id);
+      finish({ id: selected.id, name: selected.name || '', resourceKey: selected.resourceKey || '' });
+    });
+    try {
+      builder.build().setVisible(true);
+    } catch (error) {
+      const detail = typeof error?.message === 'string' ? error.message.slice(0, 160) : 'unknown';
+      finish(null, Object.assign(new Error('Не удалось открыть Google Picker (code: picker_build_failed): ' + detail), {
+        code: 'picker_build_failed', details: { isFolder: true },
+      }));
+    }
+  });
+}
