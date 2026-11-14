@@ -210,6 +210,34 @@ export async function runSocialUiTests(test, assert, equal) {
       assert(!page.querySelector('.friends-table').textContent.includes('private-admin@gmail.com'), 'administrator email never appears, even after the refresh');
     } finally { cleanup(); page.remove(); }
   });
+  await test('share action copies the email before opening Drive and confirms the copy on the button', async () => {
+    const page = document.createElement('div'); document.body.append(page);
+    const social = stub({ friends: [{ uid: 'share-uid', displayName: 'Share Friend', email: 'share@gmail.com', inbound: true, outbound: false }] });
+    // Keep the flow active after the click: an already-granted access would
+    // end it immediately and return the button to its action label.
+    social.checkFriendAccess = async () => ({ granted: false, inherited: false, wasOutbound: false });
+    social.getOwnFolderUrl = () => 'https://drive.google.com/drive/folders/root';
+    const order = [];
+    const nativeOpen = window.open;
+    const nativeExecCommand = document.execCommand;
+    window.open = (url) => { order.push(['open', url]); return null; };
+    document.execCommand = (command) => { if (command === 'copy') order.push(['copy']); return true; };
+    const cleanup = mountFriends(page, social, () => {});
+    try {
+      await tick();
+      const shareButton = [...page.querySelectorAll('.friends-table .settings-save-button')].find((button) => button.textContent === 'ПОДЕЛИТЬСЯ');
+      assert(shareButton, 'share button exists for a friend with an email');
+      shareButton.click();
+      await tick(); await tick(); await tick();
+      equal(order.map((entry) => entry[0]), ['copy', 'open'], 'email copy happens before the Drive tab can steal focus');
+      const confirmed = [...page.querySelectorAll('.friends-table .settings-save-button')].find((button) => button.textContent === 'ЕМЕЙЛ СКОПИРОВАН');
+      assert(confirmed && confirmed.disabled, 'button shows the copy confirmation while the flow runs');
+    } finally {
+      window.open = nativeOpen;
+      document.execCommand = nativeExecCommand;
+      cleanup(); page.remove();
+    }
+  });
   await test('friend emails appear after the admin check fails, but not while it loads', async () => {
     const page = document.createElement('div'); document.body.append(page);
     const social = stub({ friends: [{ uid: 'plain-uid', displayName: 'Plain Friend', email: 'plain@gmail.com', inbound: true, outbound: false }] });

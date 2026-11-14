@@ -12,7 +12,7 @@ import { filterBooksByDirectValue, russianBookCount } from './direct-filter.js';
 import { createSearchController } from './search-ui.js';
 import { createIndexingErrorsController } from './indexing-errors-ui.js';
 import { createUserSettingsController } from './user-settings-ui.js?v=20261108-folder-access-save-fix';
-import { mountFriends } from './friends-ui.js?v=20261113-share-email-copy';
+import { mountFriends } from './friends-ui.js?v=20261114-clipboard-copy-first';
 import { createNotificationsController } from './notifications-ui.js?v=20261112-guided-manual-sharing';
 import { social } from './social-runtime.js?v=20261112-guided-manual-sharing';
 import { getAccessToken } from './auth.js?v=20261109-oauth-picker-diagnostics';
