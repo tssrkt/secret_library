@@ -661,8 +661,15 @@ try {
   if (redirectSignInResponse) {
     // The user explicitly completed sign-in before the redirect; finishing it
     // here is the continuation of that consent, not an automatic restore.
-    await settleRedirectResponse();
-    await afterAuthorization();
+    // afterAuthorization() can finish without unsetting the busy flag (for
+    // example, when a saved index renders directly), so it must be cleared
+    // here the same way the popup sign-in flow does in its finally block.
+    try {
+      await settleRedirectResponse();
+      await afterAuthorization();
+    } finally {
+      ui.setBusy(false);
+    }
   } else {
     // Never restore an authenticated session during page startup.
     ui.setBusy(false);
