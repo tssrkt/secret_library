@@ -1,5 +1,5 @@
 import { FOLDER_MIME_TYPE, GOOGLE_CLOUD_PROJECT_NUMBER, GOOGLE_PICKER_API_KEY } from './config.js';
-import { ensureAccessToken, getSessionUserEmail } from './auth.js?v=20261114-brave-redirect-signin';
+import { ensureAccessToken, getSessionUserEmail } from './auth.js?v=20261114-brave-oauth2-redirect';
 
 let pickerLoadPromise = null;
 export const DRIVE_ITEM_AUTHORIZATION_MARKER_PREFIX = 'secret-library-drive-file-authorized-v2:';

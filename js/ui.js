@@ -15,7 +15,7 @@ import { createUserSettingsController } from './user-settings-ui.js?v=20261108-f
 import { mountFriends } from './friends-ui.js?v=20261114-clipboard-copy-first';
 import { createNotificationsController } from './notifications-ui.js?v=20261112-guided-manual-sharing';
 import { social } from './social-runtime.js?v=20261112-guided-manual-sharing';
-import { getAccessToken } from './auth.js?v=20261114-brave-redirect-signin';
+import { getAccessToken } from './auth.js?v=20261114-brave-oauth2-redirect';
 import { loadUserSettings, saveUserSettings } from './user-settings.js';
 
 const genresRu = await loadGenreDictionary().catch(() => ({}));

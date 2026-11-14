@@ -1,4 +1,4 @@
-import { initializeAuth, requestAccessToken, getAccessToken } from './auth.js?v=20261114-brave-redirect-signin';
+import { initializeAuth, requestAccessToken, getAccessToken } from './auth.js?v=20261114-brave-oauth2-redirect';
 import { startFirebaseSession } from './firebase-session.js';
 import { INVITATION_MAILER_URL } from './config.js';
 
