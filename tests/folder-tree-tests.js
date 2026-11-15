@@ -30,7 +30,7 @@ export async function runFolderTreeTests(test, assert, equal) {
     assert(!folderHasAnyBooks(lookups, 'folders'), 'branch of empty subfolders has no books');
     assert(folderHasAnyBooks(lookups, 'mixed'), 'folder with a nested book-bearing subfolder');
     assert(folderHasAnyBooks(lookups, 'root'), 'the root holds books through its children');
-    assert(folderHasAnyBooks(lookups, 'missing-id'), 'unknown ids answer false without throwing');
+    assert(!folderHasAnyBooks(lookups, 'missing-id'), 'unknown ids answer false without throwing');
   });
   await test('folder notes survive index rebuild and are saved by stable folder ID', async () => {
     const settings = normalizeUserSettings({ version: 1, rootFolderId: 'root', sharing: { excludedFolderIds: [] },

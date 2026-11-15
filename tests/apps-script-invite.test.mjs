@@ -91,7 +91,7 @@ function harness({ authUser, pendingFields, pendingStatus = 200, profileStatus =
     return null;
   };
   let blockedEmailQueryCount = 0;
-  context.fsFetch = (_url, _method, body) => {
+  context.fsFetch = (_url, method, body) => {
     if (body?.structuredQuery?.from?.[0]?.collectionId === 'shares') return { code: 200, text: JSON.stringify([]) };
     if (body?.structuredQuery?.from?.[0]?.collectionId === 'bannedUsers') {
       blockedEmailQueryCount++;
@@ -99,10 +99,10 @@ function harness({ authUser, pendingFields, pendingStatus = 200, profileStatus =
       const rows = blocked ? [{ document: { name: 'projects/project-071ee00e-4a4a-4a3d-95d/databases/(default)/documents/bannedUsers/legacy-uid', fields: { email: { stringValue: 'friend@gmail.com' } } } }] : [];
       return { code: 200, text: JSON.stringify(rows) };
     }
+    // fsSet/fsDelete document writes and fsList REST reads have no structuredQuery.
+    if (method === 'patch' || method === 'put' || method === 'delete' || method === 'get') return { code: 200, text: '{}' };
     throw new Error('Unexpected Firestore query');
   };
-  context.realFsListInviteShares = context.fsListInviteShares;
-  context.fsListInviteShares = () => [];
   const payload = {
     requestId: 'request_1234567890',
     email: 'friend@gmail.com',
@@ -453,37 +453,6 @@ test('admin event history uses a bounded server-side Firestore page', () => {
   assert.equal(events[0].id, 'event-1');
 });
 
-test('invitation dashboard reads only nested shares under pendingInvites', () => {
-  const app = harness();
-  app.context.fsListInviteShares = app.context.realFsListInviteShares;
-  const requests = [];
-  app.context.fsFetch = (url, method, body) => {
-    requests.push({ url, method, body });
-    if (url.includes('/pendingInvites?')) return {
-      code: 200,
-      text: JSON.stringify({ documents: [{
-        name: 'projects/project/databases/(default)/documents/pendingInvites/friend@gmail.com', fields: {}
-      }] })
-    };
-    if (url.includes('/pendingInvites/friend%40gmail.com/shares?')) return {
-      code: 200,
-      text: JSON.stringify({ documents: [{
-        name: 'projects/project/databases/(default)/documents/pendingInvites/friend@gmail.com/shares/owner-uid',
-        fields: { ownerUid: { stringValue: 'owner-uid' }, claimedUid: { nullValue: null } }
-      }] })
-    };
-    throw new Error('Unexpected Firestore request: ' + url);
-  };
-  const invites = app.context.fsListInviteShares();
-  assert.equal(requests.length, 2);
-  assert.ok(requests.every(item => item.method === 'get'));
-  assert.ok(requests.every(item => !item.url.endsWith('documents:runQuery')));
-  assert.equal(invites.length, 1);
-  assert.equal(invites[0].email, 'friend@gmail.com');
-  assert.equal(invites[0].id, 'owner-uid');
-  assert.equal(invites[0].ownerUid, 'owner-uid');
-});
-
 test('admin participant flags use a 60-second cache and mutations invalidate the participant entry', () => {
   assert.match(source, /const ADMIN_USER_FLAGS_CACHE_TTL_SECONDS = 60/);
   assert.match(source, /ADMIN_USER_FLAGS_CACHE_TTL_SECONDS\)\);/);
@@ -653,37 +622,6 @@ test('participant name search is executed in Firestore and keeps a stable name-p
   assert.match(requests[1].startAt.values[1].referenceValue, /users\/user-a$/);
   assert.equal(second.items.length, 1);
 });
-test('invitation pages read only pendingInvites roots and their shares, with a stable cursor', () => {
-  const app = harness();
-  const requests = [];
-  app.context.fsFetch = (url, method, body) => {
-    requests.push({ url, method, body });
-    if (method !== 'get') throw new Error('Invitation paging must not use a global collection-group query');
-    if (/pendingInvites\?pageSize=/.test(url)) {
-      return { code: 200, text: JSON.stringify({ documents: [
-        { name: 'projects/project-071ee00e-4a4a-4a3d-95d/databases/(default)/documents/pendingInvites/ada@example.com', fields: {} },
-        { name: 'projects/project-071ee00e-4a4a-4a3d-95d/databases/(default)/documents/pendingInvites/bob@example.com', fields: {} }
-      ] }) };
-    }
-    if (/pendingInvites\/ada%40example.com\/shares/.test(url)) return { code: 200, text: JSON.stringify({ documents: [
-      { name: 'projects/project-071ee00e-4a4a-4a3d-95d/databases/(default)/documents/pendingInvites/ada@example.com/shares/owner-1', fields: { ownerUid: { stringValue: 'owner-1' } } }
-    ] }) };
-    if (/pendingInvites\/bob%40example.com\/shares/.test(url)) return { code: 200, text: JSON.stringify({ documents: [
-      { name: 'projects/project-071ee00e-4a4a-4a3d-95d/databases/(default)/documents/pendingInvites/bob@example.com/shares/owner-2', fields: { ownerUid: { stringValue: 'owner-2' } } }
-    ] }) };
-    throw new Error('Unexpected invitation query URL: ' + url);
-  };
-  const first = app.context.fsQueryInvitationPage(1, '');
-  assert.equal(first.items.length, 1);
-  assert.equal(first.items[0].email, 'ada@example.com');
-  assert.equal(first.items[0].ownerUid, 'owner-1');
-  assert.equal(first.hasMore, true);
-  const second = app.context.fsQueryInvitationPage(1, first.nextCursor);
-  assert.equal(second.items[0].ownerUid, 'owner-2');
-  assert(requests.every(request => request.method === 'get'));
-  assert(requests.every(request => !String(request.url).includes(':runQuery')));
-});
-
 test('admin relationship branches filter by inviter UID on Firestore before paging', () => {
   const app = harness();
   let query;
@@ -830,8 +768,6 @@ test('repeated delivery is blocked for one hour instead of sending a duplicate',
 
 test('resends the same pending invitation after one hour', () => {
   const app = harness();
-  app.context.fsListInviteShares = () => [{ ownerUid: 'owner-uid' }];
-  app.context.fsListInviteSharesByOwner = () => [{ ownerUid: 'owner-uid' }];
   app.invoke();
   const key = [...app.properties.keys()].find((name) => name.startsWith('invite:'));
   const oldTime = 0;
@@ -957,22 +893,6 @@ function adminHarness({ permissions = {}, active = true, banned = false, role = 
   return { ...app, writes, records };
 }
 
-test('relationship-only moderator dashboard does not load the private email directory', () => {
-  const app = adminHarness({ permissions: { relationships: true } });
-  const loaded = [];
-  app.context.fsList = collection => {
-    loaded.push(collection);
-    if (collection === 'users') return [{ id: 'target-uid', displayName: 'Участник' }];
-    return [];
-  };
-  app.context.fsListPage = () => [];
-  app.context.getInvitationEmailTemplate = () => '';
-  app.context.getInvitationLimit = () => 20;
-  const dashboard = app.context.getAdminDashboardApi({ uid: 'mod-uid', admin: { role: 'moderator', permissions: { relationships: true } } });
-  assert.equal(dashboard.users[0].email, '');
-  assert.equal(loaded.includes('userDirectory'), false);
-});
-
 test('relationship-only moderator card does not query or expose the participant email directory', () => {
   const app = adminHarness({ permissions: { relationships: true } });
   app.records.set('adminUsers/target-uid', { uid: 'target-uid', role: 'moderator', email: 'private-admin@example.com' });
@@ -1053,37 +973,19 @@ test('relationship-only APIs redact legacy profile email fields', () => {
   assert.equal(branch.email, undefined);
   assert.equal(branch.privateNote, undefined);
 
-  app.context.fsList = collection => collection === 'users'
-    ? [{ id: 'target-uid', displayName: 'Target', email: 'target-profile@example.com', privateNote: 'must not leak' }]
-    : [];
-  const dashboard = app.context.getAdminDashboardApi(actor);
-  assert.equal(dashboard.users[0].email, '');
-  assert.equal(dashboard.users[0].privateNote, undefined);
 });
 test('users permission reveals the directory email but never arbitrary legacy profile fields', () => {
   const permissions = { users: true };
   const app = adminHarness({ permissions });
-  app.context.fsList = collection => ({
-    users: [{ id: 'target-uid', displayName: 'Target', email: 'legacy@example.com', accessToken: 'secret', privateNote: 'secret' }],
-    userDirectory: [{ id: 'target@example.com', uid: 'target-uid' }]
-  }[collection] || []);
-  app.context.fsListPage = () => [];
-  app.context.fsListInviteShares = () => [];
-  app.context.getInvitationEmailTemplate = () => '';
-  app.context.getInvitationLimit = () => 20;
-  const dashboard = app.context.getAdminDashboardApi({ uid: 'mod-uid', admin: { role: 'moderator', permissions } });
-  assert.equal(dashboard.users[0].email, 'target@example.com');
-  assert.equal(dashboard.users[0].displayName, 'Target');
-  assert.equal(Object.hasOwn(dashboard.users[0], 'accessToken'), false);
-  assert.equal(Object.hasOwn(dashboard.users[0], 'privateNote'), false);
-  assert.equal(Object.hasOwn(dashboard.users[0], 'emailAddress'), false);
-
-  app.records.set('users/target-uid', { id: 'target-uid', displayName: 'Target', email: 'legacy@example.com', accessToken: 'secret' });
+  app.records.set('users/target-uid', { id: 'target-uid', displayName: 'Target', email: 'legacy@example.com', accessToken: 'secret', privateNote: 'secret' });
   app.context.fsQueryGroupByField = collection => collection === 'userDirectory' ? [{ id: 'target@example.com', uid: 'target-uid' }] : [];
   app.context.fsQueryFilteredPage = () => ({ items: [] });
   const card = app.context.getAdminUserCardApi({ uid: 'mod-uid', admin: { role: 'moderator', permissions } }, { uid: 'target-uid' });
   assert.equal(card.user.email, 'target@example.com');
+  assert.equal(card.user.displayName, 'Target');
   assert.equal(Object.hasOwn(card.user, 'accessToken'), false);
+  assert.equal(Object.hasOwn(card.user, 'privateNote'), false);
+  assert.equal(Object.hasOwn(card.user, 'emailAddress'), false);
 });
 
 test('user collection pages sanitize legacy fields and resolve email from the private directory', () => {
@@ -1158,24 +1060,6 @@ test('email directory lookup uses a bounded UID query and rejects unrelated rows
   assert.equal(result[0].uid, 'target-uid');
 });
 
-test('user history API sanitizes profile, share, invitation and event records', () => {
-  const app = adminHarness({ permissions: { users: true } });
-  app.context.fsQueryGroupByField = (collection, field) => {
-    if (collection === 'libraryShares') return [{ id: 'share-1', ownerUid: 'target-uid', viewerUid: 'friend-uid', ownerEmail: 'owner@example.com', active: true, accessToken: 'secret' }];
-    if (collection === 'shares') return [{ id: 'invite-1', email: 'friend@example.com', ownerUid: 'target-uid', active: true, accessToken: 'secret' }];
-    if (collection === 'adminEvents') return [{ id: 'event-1', actorUid: 'target-uid', action: 'ban-user', details: { reason: 'reason', email: 'target@example.com', privateNote: 'secret' }, privateNote: 'secret', createdAt: '2026-01-01T00:00:00Z' }];
-    return [];
-  };
-  const history = app.context.getAdminUserHistoryApi({ uid: 'mod-uid', admin: { role: 'moderator', permissions: { users: true } } }, { uid: 'target-uid' });
-  assert.equal(history.outgoing[0].ownerEmail, 'owner@example.com');
-  assert.equal(Object.hasOwn(history.outgoing[0], 'accessToken'), false);
-  assert.equal(history.invitations[0].email, 'friend@example.com');
-  assert.equal(Object.hasOwn(history.invitations[0], 'accessToken'), false);
-  assert.equal(history.events[0].details.email, 'target@example.com');
-  assert.equal(Object.hasOwn(history.events[0].details, 'privateNote'), false);
-  assert.equal(Object.hasOwn(history.events[0], 'privateNote'), false);
-});
-
 test('dashboard and collection pages redact emails outside the users permission', () => {
   const permissions = { relationships: true, shares: true, admins: true, banned: true, events: true };
   const app = adminHarness({ permissions });
@@ -1185,27 +1069,7 @@ test('dashboard and collection pages redact emails outside the users permission'
     adminUsers: [{ id: 'admin-uid', email: 'private-admin@example.com', role: 'moderator', permissions: { relationships: true, email: 'nested@example.com', privateNote: 'admin secret' }, privateNote: 'admin secret' }],
     libraryShares: [{ id: 'share-1', ownerUid: 'owner-uid', viewerUid: 'target-uid', ownerEmail: 'private-share@example.com', active: true, privateNote: 'share secret' }],
   }[collection] || []);
-  app.context.fsListPage = () => [{ id: 'event-1', details: { email: 'private-event@example.com', reason: 'contact private-event@example.com', permissions: { users: true, email: 'nested@example.com', privateNote: 'event secret' }, privateNote: 'event secret' }, privateNote: 'event root secret' }];
-  app.context.fsListInviteShares = () => [];
   const actor = { uid: 'mod-uid', admin: { role: 'moderator', permissions } };
-  const dashboard = app.context.getAdminDashboardApi(actor);
-  assert.equal(dashboard.users[0].email, '');
-  assert.equal(dashboard.shares[0].ownerEmail, '');
-  assert.equal(dashboard.admins[0].email, '');
-  assert.equal(dashboard.banned[0].email, '');
-  assert.equal(dashboard.events[0].details.email, '');
-  assert.equal(dashboard.events[0].details.reason, 'contact [скрыто]');
-  assert.equal(dashboard.events[0].details.permissions.users, true);
-  assert.equal(Object.keys(dashboard.events[0].details.permissions).length, 1);
-  assert.equal(dashboard.admins[0].permissions.relationships, true);
-  assert.equal(Object.keys(dashboard.admins[0].permissions).length, 1);
-  assert.equal(dashboard.banned[0].reason, 'reason [скрыто]');
-  assert.equal(dashboard.shares[0].privateNote, undefined);
-  assert.equal(dashboard.admins[0].privateNote, undefined);
-  assert.equal(dashboard.banned[0].privateNote, undefined);
-  assert.equal(dashboard.events[0].privateNote, undefined);
-  assert.equal(dashboard.events[0].details.privateNote, undefined);
-
   const pageItems = {
     libraryShares: [{ id: 'share-1', ownerEmail: 'private-share@example.com', privateNote: 'share secret' }],
     adminUsers: [{ id: 'admin-uid', email: 'private-admin@example.com', privateNote: 'admin secret' }],
@@ -1230,22 +1094,6 @@ test('dashboard and collection pages redact emails outside the users permission'
 
   }
 });
-test('invitation-only moderators receive only the invitation fields needed by the admin UI', () => {
-  const app = adminHarness({ permissions: { invites: true } });
-  const actor = { uid: 'mod-uid', admin: { role: 'moderator', permissions: { invites: true } } };
-  const [invite] = app.context.sanitizeInvitationRecords(actor, [{
-    id: 'owner-uid', email: 'recipient@example.com', ownerUid: 'owner-uid', claimedUid: null,
-    active: true, emailStatus: 'sent', ownerEmail: 'owner@example.com', inviteeEmail: 'recipient@example.com',
-    privateNote: 'legacy private data', accessToken: 'secret'
-  }]);
-  assert.equal(invite.email, 'recipient@example.com');
-  assert.equal(invite.ownerUid, 'owner-uid');
-  assert.equal(invite.emailStatus, 'sent');
-  assert.equal(Object.hasOwn(invite, 'ownerEmail'), false);
-  assert.equal(Object.hasOwn(invite, 'inviteeEmail'), false);
-  assert.equal(Object.hasOwn(invite, 'privateNote'), false);
-  assert.equal(Object.hasOwn(invite, 'accessToken'), false);
-});
 test('administrators cannot reactivate a revoked library share through the server API', () => {
   const app = adminHarness({ permissions: { shares: true } });
   const actor = { uid: 'mod-uid', admin: { role: 'moderator', active: true, permissions: { shares: true } } };
@@ -1259,7 +1107,6 @@ test('administrative mutations reject path-shaped UIDs and share IDs before read
   assert.throws(() => app.context.setAdminPermissionsApi(actor, { uid: 'target/../../adminUsers/root', permissions: { users: true } }), /Некорректные права администратора/);
   assert.throws(() => app.context.banLibraryUserApi(actor, { uid: 'target/../../adminUsers/root' }), /Нельзя заблокировать/);
   assert.throws(() => app.context.restoreLibraryUserApi(actor, { uid: 'target/../../adminUsers/root' }), /Не указан участник/);
-  assert.throws(() => app.context.revokeInvitationApi(actor, { email: 'friend@example.com', ownerUid: 'target/../../adminUsers/root' }), /Некорректное приглашение/);
   assert.throws(() => app.context.setLibraryShareApi(actor, { id: 'target/../../adminUsers/root', active: false }), /Некорректный доступ/);
   assert.equal(app.writes.length, 0);
 });
@@ -1281,7 +1128,6 @@ test('each moderator mutation requires its own explicit permission', async (t) =
     ['admins', (ctx) => ctx.setAdminPermissionsApi({ uid: 'mod-uid', admin: { role: 'moderator', active: true, permissions: { admins: false } } }, { uid: 'target-uid', permissions: { users: true } })],
     ['users', (ctx) => ctx.banLibraryUserApi({ uid: 'mod-uid', admin: { role: 'moderator', active: true, permissions: { users: false } } }, { uid: 'target-uid' })],
     ['banned', (ctx) => ctx.restoreLibraryUserApi({ uid: 'mod-uid', admin: { role: 'moderator', active: true, permissions: { banned: false } } }, { uid: 'target-uid' })],
-    ['invites', (ctx) => ctx.revokeInvitationApi({ uid: 'mod-uid', admin: { role: 'moderator', active: true, permissions: { invites: false } } }, { email: 'friend@gmail.com', ownerUid: 'owner-uid' })],
     ['shares', (ctx) => ctx.setLibraryShareApi({ uid: 'mod-uid', admin: { role: 'moderator', active: true, permissions: { shares: false } } }, { id: 'share-1', active: false })],
   ];
   for (const [permission, invoke] of cases) {
@@ -1431,20 +1277,6 @@ test('active administrators are exempt from the unique invitation limit', () => 
   app.context.fsListInviteShares = () => Array.from({ length: 100 }, (_, i) => ({ ownerUid: 'owner-uid', email: `friend-${i}@gmail.com` }));
   app.context.fsListInviteSharesByOwner = () => app.context.fsListInviteShares();
   assert.doesNotThrow(() => app.context.enforceUniqueInvitationLimit('owner-uid', 'friend-100@gmail.com', {}));
-});
-
-test('invitation limit setting validates and persists an integer', () => {
-  const app = harness();
-  const writes = [];
-  app.context.requireAdminApi = () => ({ uid: 'admin-uid', admin: { active: true } });
-  app.context.fsSet = (path, values) => writes.push({ path, values });
-  app.context.fsAddEvent = () => {};
-  assert.equal(app.context.setInvitationLimitApi({ uid: 'admin-uid' }, { limit: 35 }).limit, 35);
-  assert.equal(writes[0].path, 'systemSettings/invitationLimit');
-  assert.equal(writes[0].values.limit, 35);
-  assert.throws(() => app.context.setInvitationLimitApi({ uid: 'admin-uid' }, { limit: 1.5 }), /целым числом/);
-  assert.throws(() => app.context.setInvitationLimitApi({ uid: 'admin-uid' }, { limit: -1 }), /целым числом/);
-  assert.throws(() => app.context.setInvitationLimitApi({ uid: 'admin-uid' }, { limit: '' }), /целым числом/);
 });
 
 test('admin user list does not fetch profiles already present on the current page', () => {

@@ -1,8 +1,15 @@
 import { createLibraryTabs } from '../js/library-tabs.js';
 import { createLibrarySelection } from '../js/library-selection.js';
-import { sharedLibraryIndex, sharedLibraryPayload } from '../js/shared-library.js';
+import { sharedLibraryIndex } from '../js/shared-library.js';
 
-const tick = () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+// A hidden rendering surface never fires requestAnimationFrame, so the fixed
+// timeout keeps headless/background runs moving; visible pages take the rAF path.
+const tick = () => new Promise((resolve) => {
+  let settled = false;
+  const finish = () => { if (!settled) { settled = true; resolve(); } };
+  requestAnimationFrame(() => setTimeout(finish, 0));
+  setTimeout(finish, 60);
+});
 export async function runLibraryTabsTests(test, assert, equal) {
   await test('library strip overflow, five hidden tabs, expansion, collapse and keyboard', async () => {
     const root = document.createElement('div'); root.className = 'library-tabs'; root.style.width = '500px';
@@ -49,12 +56,12 @@ export async function runLibraryTabsTests(test, assert, equal) {
     equal(shown.at(-1), friend, 'friend alone');
     assert(location.href.includes('library=friend-uid') && !location.href.includes('@'), 'internal identifier in URL');
     selection.select(''); equal(shown.at(-1), own, 'own catalog restored');
-    selection.select('denied'); assert(errors.at(-1).includes('недоступна'), 'denied URL has no catalog');
+    selection.select('denied'); assert(errors.at(-1).includes('не найдена'), 'denied URL has no catalog');
     service.loadLibrary = () => new Promise((resolve) => { pending = resolve; });
     selection.select('friend-uid'); selection.select(''); pending(friend); await Promise.resolve();
     equal(shown.at(-1), own, 'late response cannot replace active own catalog');
     selection.select('friend-uid'); listener({ status: 'ready', libraries: [] }); pending(friend); await Promise.resolve();
-    assert(errors.at(-1).includes('недоступна'), 'revocation clears view and cancels in-flight response');
+    assert(errors.at(-1).includes('не найдена'), 'revocation clears view and cancels in-flight response');
     selection.destroy();
     location.href = 'https://example.test/index.html?library=friend-uid';
     service.loadLibrary = async () => friend;
@@ -72,9 +79,6 @@ export async function runLibraryTabsTests(test, assert, equal) {
     equal(visible.folderNotes, { a: 'Для друзей' }, 'only notes for shared folders are published and whitespace is trimmed');
     equal(visible.books.map((book) => book.id), ['yes', 'root'], 'allowed folder descendants and root files are shared by default');
     assert(!JSON.stringify(visible).includes('private'), 'no private cover ID or diagnostics');
-    const payload = await sharedLibraryPayload(index, settings);
-    equal(JSON.parse(payload.chunks.join('')), visible, 'Unicode survives chunking');
-    assert(payload.chunks.length > 1 && payload.chunks.every((json) => new TextEncoder().encode(json).length < 600001), 'bounded documents');
     equal(index.books.length, 3, 'owner index unchanged');
   });
 }

@@ -22,7 +22,7 @@ import { BOOKS_PER_PAGE, createPaginator, paginateItems, paginationTokens } from
 import { filterBooksByDirectValue, russianBookCount } from '../js/direct-filter.js';
 import { seriesLabel } from '../js/book-series.js';
 import { runSearchTests } from './search-tests.js';
-import { runUserSettingsTests } from './user-settings-tests.js';
+import { runUserSettingsTests } from './user-settings-tests.js?v=20261115-avatar-bisect';
 import { runFolderTreeTests } from './folder-tree-tests.js';
 import { runPublicDocumentsTests } from './public-documents-tests.js';
 import { runIndexingErrorTests } from './indexing-errors-tests.js';
@@ -1572,6 +1572,17 @@ await test('direct result navigation uses all folders, current-page DOM, home an
   fixture.remove();
 });
 
+// A failing dynamic import must not silently kill the remaining suites: an
+// uncaught module error previously stopped the run without a final summary.
+async function runFileSuite(path, entry, withZip = false) {
+  try {
+    const module = await import(path);
+    await module[entry](test, assert, equal, ...(withZip ? [makeZip] : []));
+  } catch (error) {
+    failures.push(`${path}: ${error?.stack || error?.message || String(error)}`);
+    output.textContent = `${passed} passed, ${failures.length} failed; running: ${path}\n\n${failures.join('\n\n')}`;
+  }
+}
 await (await import('./library-refresh-tests.js')).runLibraryRefreshTests(test, assert, equal, makeZip);
 await runSearchTests(test, assert, equal);
 await runUserSettingsTests(test, assert, equal);
@@ -1579,14 +1590,16 @@ await runFolderTreeTests(test, assert, equal);
 await runPublicDocumentsTests(test, assert, equal);
 await runIndexingErrorTests(test, assert, equal, makeZip);
 await runBinaryRecoveryTests(test, assert, equal);
-await (await import('./metadata-only-tests.js')).runMetadataOnlyTests(test, assert, equal, makeZip);
+await runFileSuite('./metadata-only-tests.js?v=20261115-test-suite-fixes', 'runMetadataOnlyTests', true);
 await runIndexingRunTests(test, assert, equal);
 await runIndexerResilienceTests(test, assert, equal, makeZip);
 await runBookFormatTests(test, assert, equal, makeZip);
 await runSocialUiTests(test, assert, equal);
-await (await import('./resumable-indexing-tests.js')).runResumableIndexingTests(test, assert, equal);
-await (await import('./drive-error-journal-tests.js')).runDriveErrorJournalTests(test, assert, equal);
-await (await import('./library-tabs-tests.js')).runLibraryTabsTests(test, assert, equal);
+await runFileSuite('./resumable-indexing-tests.js?v=20261115-test-suite-fixes', 'runResumableIndexingTests');
+await runFileSuite('./drive-error-journal-tests.js?v=20261115-test-suite-fixes', 'runDriveErrorJournalTests');
+await runFileSuite('./library-tabs-tests.js?v=20261115-tabs-tick-fix', 'runLibraryTabsTests');
+// The last test never writes a final summary (it is only written when the next test starts).
+setTimeout(() => { output.textContent = `${passed} passed, ${failures.length} failed; done\n\n${failures.join('\n\n')}`; }, 0);
 
 output.textContent = failures.length
   ? `${passed} passed, ${failures.length} failed\n\n${failures.join('\n\n')}`
