@@ -106,3 +106,35 @@
 }
 .info-page .app-footer a:hover { color: #342c24; }
 .info-page .app-footer a:focus-visible { outline: 2px solid currentColor; outline-offset: 4px; }
+
+/* Instruction page: restrained emphasis using the existing warm document palette. */
+.info-document .instruction-note {
+  margin: 1rem 0 1.1rem !important;
+  padding: .85rem 1rem;
+  border-left: 3px solid #b9a58c;
+  border-radius: 0 .35rem .35rem 0;
+  background: #f5f1e8;
+  text-align: left;
+}
+.info-document h1 {
+  padding-bottom: .35rem;
+  border-bottom: 1px solid #e5ddd1;
+}
+.info-document ul,
+.info-document ol {
+  padding-left: 1.75rem;
+}
+.info-document li::marker {
+  color: #8a735b;
+}
+.info-document code {
+  padding: .08em .28em;
+  border: 1px solid #e7ded2;
+  border-radius: .25rem;
+  background: #f7f2ea;
+  font-size: .88em;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 650px) {
+  .info-document .instruction-note { padding: .75rem; }
+}
