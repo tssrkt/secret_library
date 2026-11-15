@@ -2,7 +2,7 @@ import { initializeApp } from 'firebase-admin/app';
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 import { getAuth } from 'firebase-admin/auth';
 import { HttpsError, onCall } from 'firebase-functions/v2/https';
-import { canRestoreAdminRights, isBootstrapAdminEmailMatch, isValidLibraryShareId, isValidUid, projectDashboardAdmin, projectDashboardBan, projectDashboardEvent, projectDashboardInvitation, projectDashboardShare, projectDashboardUser } from './admin-security.js';
+import { canRestoreAdminRights, isBootstrapAdminEmailMatch, isValidLibraryShareId, isValidUid } from './admin-security.js';
 
 initializeApp();
 const db = getFirestore();
@@ -85,67 +85,6 @@ export const bootstrapAdmin = onCall({ region: 'europe-west1', invoker: 'public'
   await db.doc(`users/${uid}`).set({ isAdmin: true }, { merge: true });
   await logAdminEvent(uid, 'bootstrap-admin');
   return { ok: true };
-});
-
-export const getAdminDashboard = onCall({ region: 'europe-west1', invoker: 'public' }, async (request) => {
-  const { admin } = await requireAdmin(request);
-  const allPermissions = admin.role === 'superadmin'
-    ? Object.fromEntries(ADMIN_SECTIONS.map((key) => [key, true]))
-    : Object.fromEntries(ADMIN_SECTIONS.filter((key) => typeof admin.permissions?.[key] === 'boolean').map((key) => [key, admin.permissions[key]]));
-  if (!Object.values(allPermissions).some(Boolean)) throw new HttpsError('permission-denied', 'Не назначены права для просмотра админки.');
-
-  const needsUsers = Boolean(allPermissions.users || allPermissions.relationships);
-  const needsBans = Boolean(allPermissions.banned || allPermissions.users || allPermissions.relationships);
-  const needsAdmins = Boolean(allPermissions.admins || allPermissions.users);
-  const needsShares = Boolean(allPermissions.shares || allPermissions.relationships);
-  const [users, invitations, shares, admins, banned, events, directory] = await Promise.all([
-    needsUsers ? db.collection('users').get() : Promise.resolve(null),
-    allPermissions.invites ? db.collectionGroup('shares').where('inviteeEmail', '!=', '').get() : Promise.resolve(null),
-    needsShares ? db.collection('libraryShares').get() : Promise.resolve(null),
-    needsAdmins ? db.collection('adminUsers').get() : Promise.resolve(null),
-    needsBans ? db.collection('bannedUsers').get() : Promise.resolve(null),
-    allPermissions.events ? db.collection('adminEvents').orderBy('createdAt', 'desc').limit(100).get() : Promise.resolve(null),
-    allPermissions.users ? db.collection('userDirectory').get() : Promise.resolve(null)
-  ]);
-  const userDocs = users?.docs || [];
-  const invitationDocs = invitations?.docs || [];
-  const shareDocs = shares?.docs || [];
-  const adminDocs = admins?.docs || [];
-  const bannedDocs = banned?.docs || [];
-  const eventDocs = events?.docs || [];
-  const emailByUid = new Map((directory?.docs || []).map((d) => [d.data().uid, d.id]));
-  const bannedUids = new Set(bannedDocs.map((doc) => doc.id));
-  const adminUids = new Set(adminDocs.map((doc) => doc.id));
-  const userRows = userDocs.map((d) => projectDashboardUser(d.id, d.data(), {
-    includeEmail: Boolean(allPermissions.users),
-    email: emailByUid.get(d.id) || '',
-    banned: bannedUids.has(d.id),
-    admin: adminUids.has(d.id)
-  }));
-  // One collection-group query replaces a root query plus one subcollection
-  // query per invitation. Every invitation-share document carries inviteeEmail.
-  const inviteRows = invitationDocs.map((item) => projectDashboardInvitation(
-    item.id,
-    item.ref.parent.parent?.id || '',
-    item.data()
-  ));
-  return {
-    permissions: allPermissions,
-    counts: {
-      users: allPermissions.users ? userDocs.length : null,
-      invitations: allPermissions.invites ? inviteRows.length : null,
-      acceptedInvitations: allPermissions.invites ? inviteRows.filter((x) => Boolean(x.claimedUid)).length : null,
-      shares: allPermissions.shares ? shareDocs.filter((d) => d.data().active === true).length : null,
-      admins: allPermissions.admins ? adminDocs.length : null,
-      banned: allPermissions.banned ? bannedDocs.length : null
-    },
-    users: allPermissions.users || allPermissions.relationships ? userRows : [],
-    invitations: allPermissions.invites ? inviteRows : [],
-    shares: needsShares ? shareDocs.map((d) => projectDashboardShare(d.id, d.data(), { includeOwnerEmail: Boolean(allPermissions.shares) })) : [],
-    admins: allPermissions.admins ? adminDocs.map((d) => projectDashboardAdmin(d.id, d.data(), { includeEmail: Boolean(allPermissions.users) })) : [],
-    banned: allPermissions.banned ? bannedDocs.map((d) => projectDashboardBan(d.id, d.data(), { includeUserDetails: Boolean(allPermissions.users) })) : [],
-    events: allPermissions.events ? eventDocs.map((d) => projectDashboardEvent(d.id, d.data(), { includeUserDetails: Boolean(allPermissions.users) })) : []
-  };
 });
 
 export const setAdminPermissions = onCall({ region: 'europe-west1', invoker: 'public' }, async (request) => {
