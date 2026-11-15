@@ -175,6 +175,28 @@ export async function runSocialUiTests(test, assert, equal) {
       assert(!page.querySelector('.friends-count').textContent.includes('отправлено еще'), 'stale invite does not consume the displayed invitation quota');
     } finally { cleanup(); page.remove(); }
   });
+  await test('sent invitations paginate past 25 rows with the book pagination controls', async () => {
+    const page = document.createElement('div'); document.body.append(page);
+    const invitations = Array.from({ length: 26 }, (_, i) => ({ inviteeEmail: `pending${i}@gmail.com`, active: true, createdAt: Date.now() - i * 1000 }));
+    const social = stub({ invitations });
+    social.getInvitationStatuses = async (emails) => Object.fromEntries(emails.map((email) => [email, { invitationStatus: 'pending', lastSentAt: Date.now() - 1000 }]));
+    const cleanup = mountFriends(page, social, () => {});
+    try {
+      await tick(); await tick();
+      const section = page.querySelector('.sent-invitations-section');
+      assert(!section.hidden, 'pending invitations become visible once statuses load');
+      assert(section.querySelectorAll('.sent-invitations-table tbody tr').length === 25, 'only first 25 invitation rows exist');
+      const paginator = section.querySelector('.book-pagination');
+      assert(paginator && paginator.getAttribute('aria-label') === 'Страницы приглашений', 'paginator uses the book pagination style with its own label');
+      paginator.querySelector('[aria-label="Страница 2"]').click();
+      equal(section.querySelectorAll('.sent-invitations-table tbody tr').length, 1, 'second page is a slice');
+      page.querySelector('[aria-label="Страница 1"]').click();
+      // 25 pending invitations fit a single page: no paginator at all.
+      social.update({ invitations: invitations.slice(0, 25) });
+      await tick();
+      assert(!page.querySelector('.sent-invitations-section .book-pagination') && page.querySelectorAll('.sent-invitations-table tbody tr').length === 25, '25 invitations show no paginator, page clamps');
+    } finally { cleanup(); page.remove(); }
+  });
   await test('cancelled invitations are excluded from the friends summary', async () => {
     const page = document.createElement('div'); document.body.append(page);
     const social = stub({ friends: [{ uid: 'friend', displayName: 'Friend', email: 'friend@gmail.com' }], invitations: [{ inviteeEmail: 'cancelled@gmail.com', active: true }] });
@@ -258,7 +280,7 @@ export async function runSocialUiTests(test, assert, equal) {
     const cleanup = mountFriends(page, social, () => {}, (uid) => openedLibraries.push(uid));
     try {
       await tick(); await tick();
-      equal(page.querySelectorAll('.friends-table tbody tr').length, 50, 'only first 50 friend rows exist');
+      equal(page.querySelectorAll('.friends-table tbody tr').length, 25, 'only first 25 friend rows exist');
       // The count line also carries the invitation-quota reminder once the
       // authoritative statuses (with __quota) have loaded.
       assert(page.querySelector('.friends-count').textContent === 'У вас 51 друг. Вы можете пригласить еще 20 друзей.', 'grammatical count');
@@ -272,9 +294,9 @@ export async function runSocialUiTests(test, assert, equal) {
       rows[0].querySelector('.settings-save-button').click(); await tick(); await tick();
       assert(social.calls.some((call) => Array.isArray(call) && call[0] === 'openFriendAccessGuide' && call[1] === 'reader@gmail.com'), 'share action opens the guided Drive flow for an existing friend');
       assert(social.calls.some((call) => Array.isArray(call) && call[0] === 'checkFriendAccess' && call[1] === 'reader@gmail.com'), 'share action verifies the manual Drive permission read-only');
-      page.querySelector('[aria-label="Страница 2"]').click(); equal(page.querySelectorAll('.friends-table tbody tr').length, 1, 'second page is a slice');
-      social.update({ friends: friends.slice(0, 50) });
-      assert(!page.querySelector('.book-pagination') && page.querySelectorAll('.friends-table tbody tr').length === 50, '50 friends no paginator, page clamps');
+      page.querySelector('[aria-label="Страница 2"]').click(); equal(page.querySelectorAll('.friends-table tbody tr').length, 25, 'second page is a slice');
+      social.update({ friends: friends.slice(0, 25) });
+      assert(!page.querySelector('.book-pagination') && page.querySelectorAll('.friends-table tbody tr').length === 25, '25 friends no paginator, page clamps');
       const form = page.querySelector('form'); form.elements.email.value = 'known@gmail.com'; form.requestSubmit(); await tick();
       assert(page.querySelector('[role=status]').textContent === 'Доступ предоставлен.', 'success not email sent');
       social.shareWithEmail = async () => { throw new Error('Connection failed'); };

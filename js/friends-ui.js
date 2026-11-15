@@ -3,6 +3,10 @@ import { createPaginator, paginateItems } from './pagination.js';
 import { socialError } from './social-runtime.js?v=20261112-guided-manual-sharing';
 
 const HOUR_MS = 60 * 60 * 1000;
+// Pagination shows up in the settings page only past 25 rows, same as the
+// library grid; the paginator itself reuses the book pagination styles.
+const FRIENDS_PER_PAGE = 25;
+const INVITATIONS_PER_PAGE = 25;
 
 function timestampMillis(value) {
   if (typeof value?.toMillis === 'function') return value.toMillis();
@@ -194,6 +198,7 @@ export function mountFriends(page, social, retry, openLibrary = () => {}) {
   retryButton.addEventListener('click', retry);
   let snapshot = { friends: [], invitations: [], status: 'idle' };
   let pageNumber = 1;
+  let invitationPage = 1;
   let sending = false;
   let closed = false;
   const updateShareButton = () => {
@@ -262,11 +267,13 @@ export function mountFriends(page, social, retry, openLibrary = () => {}) {
       container.replaceChildren();
       return;
     }
+    const paged = paginateItems(invitations, invitationPage, INVITATIONS_PER_PAGE);
+    invitationPage = paged.currentPage;
     invitationsSection.hidden = false;
     const table = document.createElement('table');
     table.className = 'sent-invitations-table';
     table.innerHTML = '<thead><tr><th scope="col">Пользователь</th><th scope="col">Дата отправки</th><th scope="col">Действие</th></tr></thead><tbody></tbody>';
-    for (const invite of invitations) {
+    for (const invite of paged.items) {
       const email = String(invite.inviteeEmail || '').trim().toLowerCase();
       const invitationState = invitationStatuses[email]?.invitationStatus;
       const row = document.createElement('tr');
@@ -353,7 +360,9 @@ export function mountFriends(page, social, retry, openLibrary = () => {}) {
       row.append(cell);
       table.querySelector('tbody').append(row);
     }
-    container.replaceChildren(table);
+    const paginator = createPaginator({ ...paged, onPageChange: (next) => { invitationPage = next; renderInvitations(); } });
+    paginator?.setAttribute('aria-label', 'Страницы приглашений');
+    container.replaceChildren(table, ...(paginator ? [paginator] : []));
     updateCooldowns();
   };
   async function refreshInvitationStatuses(extraEmails = []) {
@@ -426,7 +435,7 @@ export function mountFriends(page, social, retry, openLibrary = () => {}) {
   const render = () => {
     const hasKnownFriends = Array.isArray(snapshot.friends) && snapshot.friends.length > 0;
     const discoveryPending = (snapshot.driveDiscoveryStatus === 'loading' || snapshot.driveDiscoveryStatus === 'idle') && !hasKnownFriends;
-    const paged = paginateItems(discoveryPending ? [] : snapshot.friends, pageNumber, 50);
+    const paged = paginateItems(discoveryPending ? [] : snapshot.friends, pageNumber, FRIENDS_PER_PAGE);
     pageNumber = paged.currentPage;
     const count = paged.totalItems;
     const plural = (value, one, few, many) => {
