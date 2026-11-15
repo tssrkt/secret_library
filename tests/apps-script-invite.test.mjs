@@ -721,41 +721,15 @@ test('recipient blocked during send preparation is rechecked before MailApp is c
   assert.equal(writes.length, 0, 'blocked invitation state is kept out of Firestore');
   const inviteState = JSON.parse(app.properties.get([...app.properties.keys()].find((key) => key.startsWith('invite:'))));
   assert.equal(inviteState.status, 'failed');
-  assert.deepEqual(JSON.parse(app.properties.get('daily:owner-uid')), []);
 });
 
-test('daily invitation limit counts in-flight reservations before emails are sent', () => {
-  const app = harness();
-  const reservations = [];
-  for (let i = 0; i < 10; i++) {
-    reservations.push(app.context.reserveSend('owner-uid', `friend-${i}@gmail.com`, null));
-  }
-  assert.equal(reservations.length, 10);
-  assert.throws(
-    () => app.context.reserveSend('owner-uid', 'friend-11@gmail.com', null),
-    /Достигнут дневной лимит приглашений/
-  );
-  assert.equal(app.sent.length, 0, 'the test fills the quota using reservations without sending mail');
-});
-
-test('failed invitation send releases its daily reservation', () => {
+test('failed invitation send releases its per-email reservation for a retry', () => {
   const app = harness();
   const reservation = app.context.reserveSend('owner-uid', 'failed@gmail.com', null);
   app.context.finishSend('owner-uid', 'failed@gmail.com', false, reservation.reservationId);
-  const next = app.context.reserveSend('owner-uid', 'next@gmail.com', null);
+  const next = app.context.reserveSend('owner-uid', 'failed@gmail.com', null);
   assert.equal(next.status, 'reserved');
-  const daily = JSON.parse(app.properties.get('daily:owner-uid'));
-  assert.equal(daily.length, 1);
-  assert.equal(daily[0].id, next.reservationId);
-});
-
-test('legacy daily counters remain enforced during reservation migration', () => {
-  const app = harness();
-  app.properties.set('daily:owner-uid', JSON.stringify(Array.from({ length: 10 }, (_, i) => Date.now() - i * 1000)));
-  assert.throws(
-    () => app.context.reserveSend('owner-uid', 'friend@gmail.com', null),
-    /Достигнут дневной лимит приглашений/
-  );
+  assert.notEqual(next.reservationId, reservation.reservationId);
 });
 
 test('repeated delivery is blocked for one hour instead of sending a duplicate', () => {

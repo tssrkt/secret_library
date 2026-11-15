@@ -1,7 +1,6 @@
 const FIREBASE_PROJECT_ID = 'project-071ee00e-4a4a-4a3d-95d';
 const FIREBASE_API_KEY = 'AIzaSyDXTowpjzrl6_GfzQED9ITjb7mn9Qzs5J4';
 const SITE_ORIGIN = 'https://tssrkt.github.io';
-const MAX_INVITES_PER_USER_PER_DAY = 10;
 const SENDING_LEASE_MS = 10 * 60 * 1000;
 const RESEND_COOLDOWN_MS = 60 * 60 * 1000;
 
@@ -636,22 +635,9 @@ function reserveSend(uid, email, firestoreSentAt) {
     if (MailApp.getRemainingDailyQuota() < 1) {
       throw new Error('Достигнут бесплатный дневной лимит Gmail. Попробуйте завтра.');
     }
-    const dailyKey = 'daily:' + uid;
-    const recent = JSON.parse(properties.getProperty(dailyKey) || '[]')
-      .map(function (entry) {
-        return typeof entry === 'number' ? { id: 'legacy:' + entry, at: entry, status: 'sent' } : entry;
-      })
-      .filter(function (entry) {
-        return entry && Number.isFinite(Number(entry.at)) && now - Number(entry.at) < 24 * 60 * 60 * 1000;
-      });
-    if (recent.length >= MAX_INVITES_PER_USER_PER_DAY) {
-      throw new Error('Достигнут дневной лимит приглашений. Попробуйте через 24 часа.');
-    }
     const reservationId = Utilities.getUuid();
-    recent.push({ id: reservationId, at: now, status: 'reserved' });
-    properties.setProperty(dailyKey, JSON.stringify(recent));
     properties.setProperty(key, JSON.stringify({ status: 'sending', at: now, lastSentAt: lastSentAt, reservationId: reservationId }));
-    return { status: 'reserved', uid: uid, email: email, key: key, dailyKey: dailyKey, reservationId: reservationId };
+    return { status: 'reserved', uid: uid, email: email, key: key, reservationId: reservationId };
   } finally {
     lock.releaseLock();
   }
@@ -664,30 +650,13 @@ function finishSend(uid, email, success, reservationId) {
     const properties = PropertiesService.getScriptProperties();
     const key = reservationKey(uid, email);
     const current = JSON.parse(properties.getProperty(key) || 'null');
-    const dailyKey = 'daily:' + uid;
     const now = Date.now();
-    const recent = JSON.parse(properties.getProperty(dailyKey) || '[]')
-      .map(function (entry) {
-        return typeof entry === 'number' ? { id: 'legacy:' + entry, at: entry, status: 'sent' } : entry;
-      })
-      .filter(function (entry) {
-        return entry && Number.isFinite(Number(entry.at)) && now - Number(entry.at) < 24 * 60 * 60 * 1000;
-      });
     if (success) {
       const sentAt = now;
       properties.setProperty(key, JSON.stringify({ status: 'sent', at: sentAt, lastSentAt: sentAt }));
-      const reservation = recent.find(function (entry) { return entry.id === reservationId; });
-      if (reservation) {
-        reservation.at = sentAt;
-        reservation.status = 'sent';
-      }
     } else {
       properties.setProperty(key, JSON.stringify({ status: 'failed', at: now, lastSentAt: Number(current?.lastSentAt) || 0 }));
-      for (let i = recent.length - 1; i >= 0; i--) {
-        if (recent[i].id === reservationId) recent.splice(i, 1);
-      }
     }
-    properties.setProperty(dailyKey, JSON.stringify(recent));
   } finally {
     lock.releaseLock();
   }
