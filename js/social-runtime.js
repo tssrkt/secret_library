@@ -76,6 +76,20 @@ let ledgerInvitationRowsCache = [];
 let lastDriveFriendEmailSignature = '';
 const closedAccessEmails = new Set();
 let configuredRootFolderId = '';
+// «Вы делитесь» marks describe one concrete root folder. Registered sharing
+// records and the local friend cache survive a root-folder change, so they are
+// trusted only while their folder is still the current one. The folder id is
+// kept per user in localStorage so that later sessions (and reloads) see the
+// mismatch too, not only the live session that changed the folder.
+const OUTBOUND_FOLDER_PREFIX = 'secret-library-outbound-folder-v1:';
+const reverifiedOutboundEmails = new Set();
+let outboundFolderId = '';
+function readOutboundFolderId(uid) {
+  try { return String(globalThis.localStorage?.getItem(OUTBOUND_FOLDER_PREFIX + uid) || ''); } catch { return ''; }
+}
+function writeOutboundFolderId(uid, folderId) {
+  try { globalThis.localStorage?.setItem(OUTBOUND_FOLDER_PREFIX + uid, String(folderId || '')); } catch { /* storage unavailable */ }
+}
 let connectedDriveUser = null;
 let connectionReadyPromise = Promise.resolve(false);
 let resolveConnectionReady = null;
@@ -107,6 +121,13 @@ async function resolveOwnRootFolderId() {
   }
   return rootFolderId;
 }
+// Registered sharing records do not know which root folder they were granted
+// for, so they count only while the folder they were established against is
+// still current. Friends re-verified via the guided «ПОДЕЛИТЬСЯ» flow are
+// honored individually.
+function registeredOutboundAllowed(email) {
+  return Boolean(configuredRootFolderId) && (configuredRootFolderId === outboundFolderId || reverifiedOutboundEmails.has(email));
+}
 function combineFriendRows() {
   const friends = [...driveFriends];
   const byUid = new Map(friends.map((friend) => [friend.uid, friend]));
@@ -116,13 +137,13 @@ function combineFriendRows() {
     const existing = byUid.get(registered.uid) || (email ? byEmail.get(email) : null);
     if (existing) {
       existing.inbound ||= registered.inbound === true;
-      existing.outbound ||= registered.outbound === true;
+      existing.outbound ||= registered.outbound === true && registeredOutboundAllowed(email);
       if ((!existing.email || String(existing.email).startsWith('email:')) && email) existing.email = email;
       if (registered.displayName && (!existing.displayName || existing.displayName === existing.email)) existing.displayName = registered.displayName;
       continue;
     }
     const friend = { ...registered, email, inbound: registered.inbound === true,
-      outbound: registered.outbound === true && !closedAccessEmails.has(email), isAdmin: registered.isAdmin === true, catalogId: '' };
+      outbound: registered.outbound === true && registeredOutboundAllowed(email) && !closedAccessEmails.has(email), isAdmin: registered.isAdmin === true, catalogId: '' };
     friends.push(friend);
     byUid.set(friend.uid, friend);
     if (email) byEmail.set(email, friend);
@@ -138,7 +159,18 @@ function combineFriendRows() {
       existing.displayName = accepted.displayName;
     }
   }
-  return friends.filter((friend) => friend.inbound === true || friend.outbound === true);
+  // A registered sharing relationship keeps its row visible even when its
+  // outbound mark is suppressed after a root-folder change: the friend stays
+  // in the list with a ✕ and a «ПОДЕЛИТЬСЯ» button instead of disappearing.
+  const registeredOutboundEmails = new Set(registeredShareFriends
+    .filter((friend) => friend.outbound === true)
+    .map((friend) => String(friend.email || '').trim().toLowerCase())
+    .filter(Boolean));
+  return friends.filter((friend) => {
+    if (friend.inbound === true || friend.outbound === true) return true;
+    const email = String(friend.email || '').trim().toLowerCase();
+    return email && registeredOutboundEmails.has(email) && !closedAccessEmails.has(email);
+  });
 }
 function writeFriendCache(uid, friends) {
   if (!uid || !Array.isArray(friends)) return;
@@ -266,6 +298,12 @@ async function refreshDriveFriends(user, currentGeneration = generation, knownFr
     // Background refreshes may retain the last confirmed list to avoid disruptive false-zero states.
     driveFriends = result.friends.length ? result.friends
       : (!announceLoading && cachedFriends?.length ? cachedFriends : (knownFriends || []));
+    // Fallback rows (local cache or the previous in-memory list) describe the
+    // root folder they were established on; their outbound marks do not apply
+    // to a newly selected folder. Freshly discovered rows are always accurate.
+    if (!result.friends.length && configuredRootFolderId !== outboundFolderId) {
+      driveFriends = driveFriends.map((friend) => friend.outbound ? { ...friend, outbound: false } : friend);
+    }
     const discoveryMessage = result.errors?.join(' ') || '';
     const usedFriendFallback = result.friends.length === 0 && driveFriends.length > 0;
     emit({ friends: combineFriendRows(), notifications: buildDriveNotifications(driveFriends), ownRootFolderId: result.rootFolderId || configuredRootFolderId, driveDiscoveryMessage: usedFriendFallback ? `Не удалось повторно обнаружить библиотеки в Google Drive; временно показан последний сохранённый список друзей. ${discoveryMessage}` : discoveryMessage, driveDiscoveryStatus: usedFriendFallback ? 'error' : (result.discoveryStatus || 'ready') });
@@ -278,7 +316,20 @@ async function refreshDriveFriends(user, currentGeneration = generation, knownFr
 
 export const social = {
   setRootFolder(rootFolderId) {
+    const previousFolderId = configuredRootFolderId;
     configuredRootFolderId = String(rootFolderId || '');
+    // Outbound marks were verified against the previous root folder. The new
+    // one has no Drive permissions yet, so every «Вы делитесь» mark resets to
+    // ✕ immediately — without waiting for the background discovery or a page
+    // reload. Registered records keep describing the previous folder and stay
+    // suppressed; switching back to that folder restores the marks.
+    if (previousFolderId && configuredRootFolderId && previousFolderId !== configuredRootFolderId) {
+      reverifiedOutboundEmails.clear();
+      for (const friend of driveFriends) {
+        if (friend.outbound) friend.outbound = false;
+      }
+      emit({ friends: combineFriendRows(), notifications: buildDriveNotifications(driveFriends), ownRootFolderId: configuredRootFolderId });
+    }
     if (connectedDriveUser) void refreshDriveFriends(connectedDriveUser, generation, driveFriends, false);
   },
   subscribe(listener) { listeners.add(listener); listener(state); return () => listeners.delete(listener); },
@@ -317,6 +368,10 @@ export const social = {
       // invitation API is independent of Firestore registration and subscriptions.
       invitationUser = session.user;
       store = createSocialStore(session);
+      // Registered sharing marks describe the folder they were granted against;
+      // remember it so a later root-folder change is detected even after reloads.
+      outboundFolderId = readOutboundFolderId(invitationUser.uid) || configuredRootFolderId;
+      writeOutboundFolderId(invitationUser.uid, outboundFolderId);
       // Keep shared-library operations unavailable until invitation registration succeeds.
       shared = createSharedLibraryStore({ user: session.user });
       let knownInvitationEmails = [];
@@ -417,6 +472,8 @@ export const social = {
     configuredRootFolderId = '';
     connectedDriveUser = null;
     closedAccessEmails.clear();
+    reverifiedOutboundEmails.clear();
+    outboundFolderId = '';
     emit({ status: 'idle', message: '', friends: [], notifications: [], libraries: [], ownRootFolderId: null });
     void endFirebaseSession().catch(() => {});
   },
@@ -461,6 +518,9 @@ export const social = {
       await store.setSharing(String(registeredStatus.registeredUid), true, normalizedEmail);
       registeredShareFriends = await store.loadFriends();
       closedAccessEmails.delete(normalizedEmail);
+      // Access was just verified on the current root folder; honor this friend's
+      // mark individually even while older registered records describe another folder.
+      reverifiedOutboundEmails.add(normalizedEmail);
       const driveFriend = driveFriends.find((friend) => String(friend.email || '').trim().toLowerCase() === normalizedEmail
         || String(friend.uid || '') === String(registeredStatus.registeredUid));
       const index = acceptedInviteFriends.findIndex((friend) => String(friend.email || '').trim().toLowerCase() === normalizedEmail);
@@ -541,6 +601,10 @@ export const social = {
     const readableAccess = access.granted === true && (access.role === 'reader' || access.role === 'owner');
     if (readableAccess && !wasOutbound) {
       closedAccessEmails.delete(normalizedEmail);
+      // The owner has just granted access on the current root folder: honor
+      // this friend's mark individually even while older registered records
+      // still describe the previous folder.
+      reverifiedOutboundEmails.add(normalizedEmail);
       const partnerUid = registeredShareFriends.find((friend) => matchesEmail(friend) && friend.uid)?.uid
         || acceptedInviteFriends.find((friend) => matchesEmail(friend) && friend.uid && !String(friend.uid).startsWith('email:'))?.uid
         || driveFriends.find((friend) => matchesEmail(friend) && friend.uid && !String(friend.uid).startsWith('email:'))?.uid

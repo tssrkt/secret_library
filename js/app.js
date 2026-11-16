@@ -17,7 +17,7 @@ import {
 import { prepareIndexingRun, createRetryEligibilityCheck } from './indexing-run.js';
 import * as ui from './ui.js?v=20261115-friends-invitations-pagination';
 import { errorDetails, recordIndexingError } from './indexing-errors.js';
-import { social, socialError } from './social-runtime.js?v=20261112-guided-manual-sharing';
+import { social, socialError } from './social-runtime.js?v=20261116-outbound-folder-reset';
 import { getAccessToken } from './auth.js?v=20261114-brave-oauth2-redirect';
 import { checkpointKey, loadCheckpoint, saveCheckpoint, deleteCheckpoint, commitCheckpoint } from './indexing-checkpoint.js';
 import { createLibraryTabs } from './library-tabs.js';
@@ -165,7 +165,11 @@ const ROOT_FOLDER_RESTRICTION_MESSAGE = 'Корневой папкой библ�
 // resolves 'reopen' when the action button is clicked, and 'close' when the
 // window is dismissed (× button, Escape, backdrop click): dismissing the popup
 // abandons the flow and must not reopen the Picker.
-function showRootFolderPopup(message, buttonLabel = 'ВЫБРАТЬ КОРНЕВУЮ ПАПКУ') {
+// options: title — window heading; justify — right-align the text block as
+// justified text; buttonResult — what the action button resolves with ('reopen'
+// re-opens the Picker, 'close' just closes the window).
+function showRootFolderPopup(message, buttonLabel = 'ВЫБРАТЬ КОРНЕВУЮ ПАПКУ', options = {}) {
+  const { title: heading = 'Корневая папка библиотеки', justify = false, buttonResult = 'reopen' } = options;
   return new Promise((resolve) => {
     const backdrop = document.createElement('div');
     backdrop.className = 'modal-backdrop root-folder-backdrop';
@@ -179,9 +183,9 @@ function showRootFolderPopup(message, buttonLabel = 'ВЫБРАТЬ КОРНЕВ
     close.setAttribute('aria-label', 'Закрыть');
     close.textContent = '×';
     const title = document.createElement('h2');
-    title.textContent = 'Корневая папка библиотеки';
+    title.textContent = heading;
     const text = document.createElement('p');
-    text.className = 'root-folder-description';
+    text.className = justify ? 'root-folder-description root-folder-description-justify' : 'root-folder-description';
     text.textContent = message;
     const footer = document.createElement('footer');
     const button = document.createElement('button');
@@ -199,7 +203,7 @@ function showRootFolderPopup(message, buttonLabel = 'ВЫБРАТЬ КОРНЕВ
       resolve(result);
     };
     const onKey = (event) => { if (event.key === 'Escape') finish('close'); };
-    button.addEventListener('click', () => finish('reopen'));
+    button.addEventListener('click', () => finish(buttonResult));
     close.addEventListener('click', () => finish('close'));
     backdrop.addEventListener('click', (event) => { if (event.target === backdrop) finish('close'); });
     document.addEventListener('keydown', onKey);
@@ -239,6 +243,19 @@ async function pickRootFolderWithChecks() {
   }
 }
 
+// Switching the root folder orphans the old Drive sharing: the app itself
+// never grants or revokes Drive permissions, so the owner must re-share the
+// new folder manually. The notice appears immediately after the new folder is
+// saved, while the library is still being rebuilt underneath it.
+function showRootFolderChangeNotice() {
+  const emails = (social.getState().friends || [])
+    .map((friend) => String(friend.email || '').trim())
+    .filter(Boolean);
+  const text = 'Корневая папка изменена, но теперь вам придется выдать все разрешения друзьям вручную и удалить их из старой папки, если желаете закрыть им к ней доступ на Google Drive.'
+    + (emails.length ? ` Вот емейлы ваших друзей: ${emails.join(', ')}.` : '');
+  void showRootFolderPopup(text, 'ГОТОВО', { title: 'Смена корневой папки', justify: true, buttonResult: 'close' });
+}
+
 // Switching libraries must stay in-page: a full page load never restores the
 // session by design, so a reload would look like a forced sign-out.
 async function switchToRootFolder(folder) {
@@ -247,6 +264,7 @@ async function switchToRootFolder(folder) {
   const url = new URL(window.location.href);
   url.searchParams.delete('library');
   window.history.replaceState(null, '', url);
+  showRootFolderChangeNotice();
   sharingVersion++; shareableIndex = null;
   currentIndex = null;
   buildingIndex = null;

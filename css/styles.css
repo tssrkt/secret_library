@@ -676,6 +676,8 @@ dd { margin: 0; color: #000; font-weight: 400; font-variant-numeric: tabular-num
 }
 .root-folder-close { position: absolute; top: .5rem; right: .5rem; }
 .root-folder-dialog h2, .root-folder-dialog .root-folder-description { text-align: center; }
+/* The notice popup explains consequences in full sentences, so its text is justified. */
+.root-folder-dialog .root-folder-description-justify { text-align: justify; }
 .root-folder-dialog header, .root-folder-dialog footer {
   display: flex;
   align-items: center;

@@ -14,7 +14,7 @@ import { createIndexingErrorsController } from './indexing-errors-ui.js';
 import { createUserSettingsController } from './user-settings-ui.js?v=20261108-folder-access-save-fix';
 import { mountFriends } from './friends-ui.js?v=20261115-friends-invitations-pagination';
 import { createNotificationsController } from './notifications-ui.js?v=20261114-notifications-email-copy';
-import { social } from './social-runtime.js?v=20261112-guided-manual-sharing';
+import { social } from './social-runtime.js?v=20261116-outbound-folder-reset';
 import { getAccessToken } from './auth.js?v=20261114-brave-oauth2-redirect';
 import { loadUserSettings, saveUserSettings } from './user-settings.js';
 
