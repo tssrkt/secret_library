@@ -49,8 +49,8 @@ async function copyDonationValue(element) {
     }
   }
   status.textContent = value.startsWith('UQCu')
-    ? 'USDT (TON): Адрес скопирован.'
-    : 'ЮMoney: Номер ЮMoney скопирован.';
+    ? 'Адрес скопирован.'
+    : 'Номер ЮMoney скопирован.';
 }
 
 view?.addEventListener('click', (event) => {
