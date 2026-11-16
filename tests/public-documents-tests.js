@@ -25,6 +25,8 @@ export async function runPublicDocumentsTests(test, assert, equal) {
     assert(loaderHtml.includes('window.location.replace') && loaderHtml.includes('#document='), 'direct document URLs route into the main application shell');
     const documentRouter = await (await fetch('../js/document-view.js')).text();
     assert(documentRouter.includes("fetch(page.url") && documentRouter.includes("history.pushState") && documentRouter.includes("document-view"), 'documents are loaded into the existing page without replacing its header');
+    assert(documentRouter.includes("view?.addEventListener('click'") && documentRouter.includes("view?.addEventListener('keydown'") && documentRouter.includes('navigator.clipboard?.writeText') && documentRouter.includes("document.execCommand('copy')"), 'donation values copy on click or keyboard with a legacy fallback from the mounted document view');
+    assert(documentRouter.includes('donation-copy-status') && documentRouter.includes('Не удалось скопировать'), 'donation copy reports success or a manual-copy fallback message');
     const infoStyles = await (await fetch('../css/info.css')).text();
     assert(infoStyles.includes('.info-document p') && infoStyles.includes('.info-document ul,') && infoStyles.includes('.info-document h1,'), 'instruction and privacy use shared paragraph, list and heading spacing rules');
     const styles = await (await fetch('../css/styles.css')).text();
