@@ -138,3 +138,22 @@
 @media (max-width: 650px) {
   .info-document .instruction-note { padding: .75rem; }
 }
+
+.donation-section { margin-top: 2rem; }
+.donation-section .donation-copy {
+  cursor: pointer;
+  user-select: all;
+  transition: font-weight .12s ease;
+}
+.donation-section .donation-copy:hover,
+.donation-section .donation-copy:focus-visible { font-weight: 700; }
+.donation-section .donation-copy:focus-visible {
+  outline: 2px solid var(--download-accent);
+  outline-offset: 3px;
+}
+.donation-section .donation-copy-status {
+  min-height: 1.5em;
+  margin-top: .6rem !important;
+  text-align: left;
+  font-weight: 600;
+}

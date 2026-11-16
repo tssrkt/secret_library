@@ -88,6 +88,15 @@
       <h1>Если что-то не работает</h1>
       <p>Если сайт не видит книги, индексация зависла или новые файлы не появились, обновите страницу сочетанием <strong>Ctrl + F5</strong>, затем выберите «Обновить библиотеку». Если остались ошибки индексации, воспользуйтесь пунктом «Повторить ошибки». Для корректной работы разрешите сайту открывать всплывающие окна. Если ничего не помогает, <strong><a href="https://t.me/ptica_govorun_bot" target="_blank" rel="noopener noreferrer">напишите в техподдержку</a></strong>, опишите действия перед ошибкой и по возможности приложите скриншот. Список ошибок индексации можно скопировать или скачать в виде лога.
       </p>
+
+      <section class="donation-section" aria-labelledby="donation-title">
+        <h1 id="donation-title">Поддержать проект ❤️</h1>
+        <p>«Тайная Библиотека» создается с любовью к книгам и людям, которые ими делятся. Если проект оказался вам полезен и вы хотите поддержать его развитие, то можете угостить автора чашкой кофе или внести любую комфортную для вас сумму. Любая поддержка помогает проекту жить, развиваться и становиться лучше. Спасибо, что вы с нами!</p>
+        <p><strong>USDT (TON):</strong> <code class="donation-copy" role="button" tabindex="0" data-copy="UQCu1fb6WFRd1KdHt3SCbS0BhOYHrveCYZU97EJWLXDUPPIh" aria-label="Скопировать адрес USDT (TON)">UQCu1fb6WFRd1KdHt3SCbS0BhOYHrveCYZU97EJWLXDUPPIh</code></p>
+        <p><strong>ЮMoney:</strong> <code class="donation-copy" role="button" tabindex="0" data-copy="4100116004998786" aria-label="Скопировать номер ЮMoney">4100116004998786</code></p>
+        <p>Спасибо за поддержку!</p>
+        <p class="donation-copy-status" aria-live="polite" aria-atomic="true"></p>
+      </section>
     </article>
     <footer class="app-footer">
       <a href="./info.html">Инструкция</a>
@@ -96,5 +105,44 @@
     </footer>
   </main>
   <script type="module" src="./js/document-header.js?v=20261108-email-registry-auth"></script>
+  <script>
+    (() => {
+      const section = document.querySelector('.donation-section');
+      if (!section) return;
+      const status = section.querySelector('.donation-copy-status');
+      async function copyDonationValue(element) {
+        const value = element.dataset.copy;
+        try {
+          await navigator.clipboard.writeText(value);
+        } catch {
+          const field = document.createElement('textarea');
+          field.value = value;
+          field.setAttribute('readonly', '');
+          field.style.position = 'fixed';
+          field.style.opacity = '0';
+          document.body.append(field);
+          field.select();
+          const copied = document.execCommand('copy');
+          field.remove();
+          if (!copied) {
+            status.textContent = 'Не удалось скопировать. Выделите реквизиты и скопируйте вручную.';
+            return;
+          }
+        }
+        status.textContent = element.dataset.copy.startsWith('UQCu')
+          ? 'USDT (TON): Адрес скопирован.'
+          : 'ЮMoney: Номер ЮMoney скопирован.';
+      }
+      section.querySelectorAll('.donation-copy').forEach((element) => {
+        element.addEventListener('click', () => copyDonationValue(element));
+        element.addEventListener('keydown', (event) => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            copyDonationValue(element);
+          }
+        });
+      });
+    })();
+  </script>
 </body>
 </html>
