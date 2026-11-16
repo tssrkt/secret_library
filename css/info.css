@@ -142,7 +142,8 @@
 .donation-section { margin-top: 2rem; }
 .donation-section .donation-copy {
   cursor: pointer;
-  user-select: all;
+  user-select: none;
+  -webkit-user-select: none;
   transition: font-weight .12s ease;
 }
 .donation-section .donation-copy:hover,

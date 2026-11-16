@@ -29,6 +29,7 @@ export async function runPublicDocumentsTests(test, assert, equal) {
     assert(documentRouter.includes('donation-copy-status') && documentRouter.includes('Не удалось скопировать'), 'donation copy reports success or a manual-copy fallback message');
     const infoStyles = await (await fetch('../css/info.css')).text();
     assert(infoStyles.includes('.info-document p') && infoStyles.includes('.info-document ul,') && infoStyles.includes('.info-document h1,'), 'instruction and privacy use shared paragraph, list and heading spacing rules');
+    assert(infoStyles.includes('.donation-section .donation-copy {') && infoStyles.includes('user-select: none;') && infoStyles.includes('-webkit-user-select: none;') && !infoStyles.includes('user-select: all;'), 'donation values copy on activation without selecting the address text');
     const styles = await (await fetch('../css/styles.css')).text();
     const ui = await (await fetch('../js/ui.js')).text();
     assert(styles.includes('#stats dd { font-weight: 700; }') && styles.includes('.folder-content-count { flex: none; margin-left: .45rem; color: #000; font-weight: 400;'), 'summary counts are bold while folder row counts stay regular');
