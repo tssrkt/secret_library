@@ -165,11 +165,11 @@ const ROOT_FOLDER_RESTRICTION_MESSAGE = 'Корневой папкой библ�
 // resolves 'reopen' when the action button is clicked, and 'close' when the
 // window is dismissed (× button, Escape, backdrop click): dismissing the popup
 // abandons the flow and must not reopen the Picker.
-// options: title — window heading; justify — right-align the text block as
-// justified text; buttonResult — what the action button resolves with ('reopen'
-// re-opens the Picker, 'close' just closes the window).
+// options: title — window heading; justify — justify the main text; emails —
+// optional email list rendered as a separate left-aligned paragraph; buttonResult
+// — what the action button resolves with ('reopen' or 'close').
 function showRootFolderPopup(message, buttonLabel = 'ВЫБРАТЬ КОРНЕВУЮ ПАПКУ', options = {}) {
-  const { title: heading = 'Корневая папка библиотеки', justify = false, buttonResult = 'reopen' } = options;
+  const { title: heading = 'Корневая папка библиотеки', justify = false, emails = [], buttonResult = 'reopen' } = options;
   return new Promise((resolve) => {
     const backdrop = document.createElement('div');
     backdrop.className = 'modal-backdrop root-folder-backdrop';
@@ -181,19 +181,26 @@ function showRootFolderPopup(message, buttonLabel = 'ВЫБРАТЬ КОРНЕВ
     close.type = 'button';
     close.className = 'secondary compact root-folder-close';
     close.setAttribute('aria-label', 'Закрыть');
-    close.textContent = '×';
+    const closeMark = document.createElement('span');
+    closeMark.setAttribute('aria-hidden', 'true');
+    closeMark.textContent = '×';
+    close.append(closeMark);
     const title = document.createElement('h2');
     title.textContent = heading;
     const text = document.createElement('p');
     text.className = justify ? 'root-folder-description root-folder-description-justify' : 'root-folder-description';
     text.textContent = message;
+    const emailParagraph = document.createElement('p');
+    emailParagraph.className = 'root-folder-emails';
+    emailParagraph.textContent = emails.length ? `Емейлы ваших друзей: ${emails.join(', ')}.` : '';
+    emailParagraph.hidden = !emails.length;
     const footer = document.createElement('footer');
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'settings-save-button';
     button.textContent = buttonLabel;
     footer.append(button);
-    dialog.append(close, title, text, footer);
+    dialog.append(close, title, text, emailParagraph, footer);
     backdrop.append(dialog);
     document.body.append(backdrop);
     const finish = (result) => {
@@ -251,9 +258,8 @@ function showRootFolderChangeNotice() {
   const emails = (social.getState().friends || [])
     .map((friend) => String(friend.email || '').trim())
     .filter(Boolean);
-  const text = 'Корневая папка изменена, но теперь вам придется выдать все разрешения друзьям вручную и удалить их из старой папки, если желаете закрыть им к ней доступ на Google Drive.'
-    + (emails.length ? ` Вот емейлы ваших друзей: ${emails.join(', ')}.` : '');
-  void showRootFolderPopup(text, 'ГОТОВО', { title: 'Смена корневой папки', justify: true, buttonResult: 'close' });
+  const text = 'Корневая папка изменена, но теперь вам придется выдать все разрешения друзьям вручную и удалить их из старой папки, если желаете закрыть им к ней доступ на Google Drive.';
+  void showRootFolderPopup(text, 'ГОТОВО', { title: 'Смена корневой папки', justify: true, emails, buttonResult: 'close' });
 }
 
 // Switching libraries must stay in-page: a full page load never restores the

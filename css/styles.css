@@ -448,9 +448,9 @@ dd { margin: 0; color: #000; font-weight: 400; font-variant-numeric: tabular-num
 .modal-header h2 { margin: 0; padding-right: 3.25rem; font-size: 18px; font-weight: 400; overflow-wrap: anywhere; }
 .annotation-modal-book-title { font-size: 18px; font-weight: 600; }
 .annotation-modal-authors { font-size: 16px; font-weight: 400; }
-#annotation-modal-close { position: absolute; z-index: 2; top: 14px; right: 16px; bottom: auto; width: 2rem; height: 2rem; min-width: 2rem; min-height: 2rem; max-height: 2rem; padding: 0; display: grid; place-items: center; align-self: start; justify-self: end; aspect-ratio: 1; line-height: 1; }
-#annotation-modal-close:hover { background: #d2bea4; color: inherit; }
-#annotation-modal-close > span { position: relative; top: -4px; display: block; line-height: 1; }
+#annotation-modal-close, .root-folder-close { position: absolute; z-index: 2; top: 14px; right: 16px; bottom: auto; width: 2rem; height: 2rem; min-width: 2rem; min-height: 2rem; max-height: 2rem; padding: 0; display: grid; place-items: center; align-self: start; justify-self: end; aspect-ratio: 1; line-height: 1; }
+#annotation-modal-close:hover, .root-folder-close:hover { background: #d2bea4; color: inherit; }
+#annotation-modal-close > span, .root-folder-close > span { position: relative; top: -4px; display: block; line-height: 1; }
 .annotation-modal-genres { margin: .45rem 0 0; flex: 0 0 auto; color: #756b60; font-size: 15px; }
 .annotation-modal-content > #annotation-modal-text {
   min-height: 0;
@@ -674,8 +674,8 @@ dd { margin: 0; color: #000; font-weight: 400; font-variant-numeric: tabular-num
   background: #fffdf9;
   box-shadow: 0 10px 32px rgb(45 32 20 / 20%);
 }
-.root-folder-close { position: absolute; top: .5rem; right: .5rem; }
 .root-folder-dialog h2, .root-folder-dialog .root-folder-description { text-align: center; }
+.root-folder-emails { margin: 0; color: #6a6359; text-align: left; overflow-wrap: anywhere; }
 /* The notice popup explains consequences in full sentences, so its text is justified. */
 .root-folder-dialog .root-folder-description-justify { text-align: justify; }
 .root-folder-dialog header, .root-folder-dialog footer {
