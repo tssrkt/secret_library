@@ -1,5 +1,5 @@
 import { setupDropdown } from './dropdown.js';
-import { buildLibraryLookups, folderHasAnyBooks, folderHasLibraryChildren } from './library-view-model.js';
+import { buildLibraryLookups, countVisibleFolders, folderHasAnyBooks, folderHasLibraryChildren } from './library-view-model.js';
 import { accountIdentity, createAvatarController } from './avatar.js';
 import { createBookCard, hasPreviousVersionMetadataFailure } from './book-card.js';
 import { createAnnotationModalController } from './annotation-modal.js';
@@ -616,7 +616,7 @@ export function renderLibrary(index, onDownload = async () => {}, { ownerIndex =
     resultsState.page = 1;
     renderResults();
   };
-  showStats(Math.max(0, index.folders.length - (root ? 1 : 0)), index.books.length);
+  showStats(countVisibleFolders(lookups, index.folders), index.books.length);
   updateMetadataActions(ownerIndex);
 }
 

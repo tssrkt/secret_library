@@ -1,4 +1,4 @@
-import { buildLibraryLookups, folderHasAnyBooks } from '../js/library-view-model.js';
+import { buildLibraryLookups, countVisibleFolders, folderHasAnyBooks } from '../js/library-view-model.js';
 import { normalizeUserSettings, saveUserSettings } from '../js/user-settings.js';
 
 export async function runFolderTreeTests(test, assert, equal) {
@@ -22,6 +22,19 @@ export async function runFolderTreeTests(test, assert, equal) {
       { folderCount: 1, bookCount: 0 }, { folderCount: 1, bookCount: 1 },
     ], 'empty, books-only, folders-only/mixed and nested books are distinct');
     equal(count('root'), { folderCount: 4, bookCount: 0 }, 'nested contents do not leak into parent');
+  });
+  await test('folder statistic counts only folders visible to the site', () => {
+    const lookups = buildLibraryLookups(index);
+    equal(countVisibleFolders(lookups, index.folders), 3, 'counts only the three folders with indexable books in their subtrees, excluding the root and empty branches');
+    const onlyOneBookFolder = { folders: [
+      { id: 'root', parentId: null },
+      { id: 'book-folder', parentId: 'root' },
+      { id: 'empty-folder', parentId: 'root' },
+      { id: 'unsupported-files-only', parentId: 'root' },
+      { id: 'nested-empty', parentId: 'empty-folder' },
+    ], books: [{ id: 'book', parentId: 'book-folder' }] };
+    const onlyOneLookups = buildLibraryLookups(onlyOneBookFolder);
+    equal(countVisibleFolders(onlyOneLookups, onlyOneBookFolder.folders), 1, 'folders with no indexed books are excluded even if they contain non-indexable files');
   });
   await test('folders without books in their whole subtree are reported empty', () => {
     const lookups = buildLibraryLookups(index);

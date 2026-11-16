@@ -35,6 +35,10 @@ export function folderHasLibraryChildren(lookups, folderId) {
   return lookups.foldersByParent.has(folderId) || lookups.booksByParent.has(folderId);
 }
 
+export function countVisibleFolders(lookups, folders) {
+  return folders.filter((folder) => folder.parentId != null && folderHasAnyBooks(lookups, folder.id)).length;
+}
+
 const visibilityMemos = new WeakMap();
 
 // A folder belongs to the library only when it holds indexable books, directly
