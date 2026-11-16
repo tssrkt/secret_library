@@ -91,7 +91,7 @@
 
       <section class="donation-section" aria-labelledby="donation-title">
         <h1 id="donation-title">Поддержать проект ❤️</h1>
-        <p>«Тайная Библиотека» создается с любовью к книгам и людям, которые ими делятся. Если проект оказался вам полезен и вы хотите поддержать его развитие, то можете угостить автора чашкой кофе или внести любую комфортную для вас сумму. Любая поддержка помогает проекту жить, развиваться и становиться лучше. Спасибо, что вы с нами!</p>
+        <p>«Тайная Библиотека» создается с любовью к книгам и людям, которые ими делятся. Если проект оказался вам полезен и вы желаете поддержать его развитие, то можете угостить автора чашкой чая или внести любую комфортную для вас сумму. Любая поддержка помогает проекту жить, развиваться и становиться лучше. Спасибо, что вы с нами!</p>
         <p><strong>USDT (TON):</strong> <code class="donation-copy" role="button" tabindex="0" data-copy="UQCu1fb6WFRd1KdHt3SCbS0BhOYHrveCYZU97EJWLXDUPPIh" aria-label="Скопировать адрес USDT (TON)">UQCu1fb6WFRd1KdHt3SCbS0BhOYHrveCYZU97EJWLXDUPPIh</code></p>
         <p><strong>ЮMoney:</strong> <code class="donation-copy" role="button" tabindex="0" data-copy="4100116004998786" aria-label="Скопировать номер ЮMoney">4100116004998786</code></p>
         <p>Спасибо за поддержку!</p>
@@ -110,37 +110,61 @@
       const section = document.querySelector('.donation-section');
       if (!section) return;
       const status = section.querySelector('.donation-copy-status');
+
+      function legacyCopy(value) {
+        const field = document.createElement('textarea');
+        field.value = value;
+        field.setAttribute('readonly', '');
+        field.setAttribute('aria-hidden', 'true');
+        field.style.position = 'fixed';
+        field.style.top = '0';
+        field.style.left = '0';
+        field.style.opacity = '0';
+        document.body.append(field);
+        field.focus();
+        field.select();
+        field.setSelectionRange(0, value.length);
+        let copied = false;
+        try {
+          copied = document.execCommand('copy');
+        } finally {
+          field.remove();
+        }
+        if (!copied) throw new Error('Copy command was rejected');
+      }
+
       async function copyDonationValue(element) {
         const value = element.dataset.copy;
+        status.textContent = 'Копирование...';
         try {
-          await navigator.clipboard.writeText(value);
+          if (window.isSecureContext && navigator.clipboard?.writeText) {
+            await navigator.clipboard.writeText(value);
+          } else {
+            legacyCopy(value);
+          }
         } catch {
-          const field = document.createElement('textarea');
-          field.value = value;
-          field.setAttribute('readonly', '');
-          field.style.position = 'fixed';
-          field.style.opacity = '0';
-          document.body.append(field);
-          field.select();
-          const copied = document.execCommand('copy');
-          field.remove();
-          if (!copied) {
+          try {
+            legacyCopy(value);
+          } catch {
             status.textContent = 'Не удалось скопировать. Выделите реквизиты и скопируйте вручную.';
             return;
           }
         }
-        status.textContent = element.dataset.copy.startsWith('UQCu')
+        status.textContent = value.startsWith('UQCu')
           ? 'USDT (TON): Адрес скопирован.'
           : 'ЮMoney: Номер ЮMoney скопирован.';
       }
-      section.querySelectorAll('.donation-copy').forEach((element) => {
-        element.addEventListener('click', () => copyDonationValue(element));
-        element.addEventListener('keydown', (event) => {
-          if (event.key === 'Enter' || event.key === ' ') {
-            event.preventDefault();
-            copyDonationValue(element);
-          }
-        });
+
+      section.addEventListener('click', (event) => {
+        const element = event.target.closest('.donation-copy');
+        if (element && section.contains(element)) void copyDonationValue(element);
+      });
+      section.addEventListener('keydown', (event) => {
+        const element = event.target.closest('.donation-copy');
+        if (element && section.contains(element) && (event.key === 'Enter' || event.key === ' ')) {
+          event.preventDefault();
+          void copyDonationValue(element);
+        }
       });
     })();
   </script>
