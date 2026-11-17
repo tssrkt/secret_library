@@ -675,7 +675,11 @@ dd { margin: 0; color: #000; font-weight: 400; font-variant-numeric: tabular-num
   box-shadow: 0 10px 32px rgb(45 32 20 / 20%);
 }
 .root-folder-dialog h2, .root-folder-dialog .root-folder-description { text-align: center; }
-.root-folder-emails { margin: 0; color: #6a6359; text-align: left; overflow-wrap: anywhere; }
+.root-folder-link-description, .root-folder-emails, .root-folder-copy-message { margin: 0; color: #6a6359; text-align: left; overflow-wrap: anywhere; }
+.root-folder-link-description a { overflow-wrap: anywhere; }
+.root-folder-email { display: inline; padding: 0; border: 0; color: inherit; background: transparent; font: inherit; text-align: left; cursor: pointer; overflow-wrap: anywhere; }
+.root-folder-email:hover, .root-folder-email:focus-visible { font-weight: 700; }
+.root-folder-copy-message { text-align: left; }
 /* The notice popup explains consequences in full sentences, so its text is justified. */
 .root-folder-dialog .root-folder-description-justify { text-align: justify; }
 .root-folder-dialog header, .root-folder-dialog footer {

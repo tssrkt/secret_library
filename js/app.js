@@ -27,6 +27,7 @@ import { ensureDriveFolderAuthorized, pickDriveFolder } from './google-picker.js
 import { firebaseConfigured } from './firebase-config.js';
 import { hasMinimumBooks, MINIMUM_LIBRARY_BOOKS } from './library-access.js';
 import { hasOutboundLibraryFriends } from './root-folder-notice.js';
+import { copyTextToClipboard } from './clipboard.js';
 
 function reportOperationError(index, error, stage, fileId = '', fileName = '') {
   if (!index || error.indexingLogged) return;
@@ -167,10 +168,13 @@ const ROOT_FOLDER_RESTRICTION_MESSAGE = 'Корневой папкой библ�
 // window is dismissed (× button, Escape, backdrop click): dismissing the popup
 // abandons the flow and must not reopen the Picker.
 // options: title — window heading; justify — justify the main text; emails —
-// optional email list rendered as a separate left-aligned paragraph; buttonResult
-// — what the action button resolves with ('reopen' or 'close').
+// optional email list; folderUrl — optional link to the selected root folder;
+// copyEmails — make email addresses copyable; buttonResult — action button result.
 function showRootFolderPopup(message, buttonLabel = 'ВЫБРАТЬ КОРНЕВУЮ ПАПКУ', options = {}) {
-  const { title: heading = 'Корневая папка библиотеки', justify = false, emails = [], buttonResult = 'reopen' } = options;
+  const {
+    title: heading = 'Корневая папка библиотеки', justify = false, emails = [],
+    folderUrl = '', copyEmails = false, buttonResult = 'reopen',
+  } = options;
   return new Promise((resolve) => {
     const backdrop = document.createElement('div');
     backdrop.className = 'modal-backdrop root-folder-backdrop';
@@ -191,17 +195,55 @@ function showRootFolderPopup(message, buttonLabel = 'ВЫБРАТЬ КОРНЕВ
     const text = document.createElement('p');
     text.className = justify ? 'root-folder-description root-folder-description-justify' : 'root-folder-description';
     text.textContent = message;
+    const folderLinkParagraph = document.createElement('p');
+    folderLinkParagraph.className = 'root-folder-link-description';
+    folderLinkParagraph.hidden = !folderUrl;
+    if (folderUrl) {
+      folderLinkParagraph.append(document.createTextNode('Откройте новую корневую папку библиотеки: '));
+      const folderLink = document.createElement('a');
+      folderLink.href = folderUrl;
+      folderLink.target = '_blank';
+      folderLink.rel = 'noopener noreferrer';
+      folderLink.textContent = 'Открыть папку в Google Drive';
+      folderLinkParagraph.append(folderLink);
+    }
     const emailParagraph = document.createElement('p');
     emailParagraph.className = 'root-folder-emails';
-    emailParagraph.textContent = emails.length ? `Емейлы ваших друзей: ${emails.join(', ')}.` : '';
     emailParagraph.hidden = !emails.length;
+    if (emails.length && copyEmails) {
+      emailParagraph.append(document.createTextNode('Емейлы ваших друзей: '));
+      emails.forEach((rawEmail, index) => {
+        if (index) emailParagraph.append(document.createTextNode(', '));
+        const email = String(rawEmail || '').trim();
+        const emailButton = document.createElement('button');
+        emailButton.type = 'button';
+        emailButton.className = 'root-folder-email';
+        emailButton.textContent = email;
+        emailButton.addEventListener('click', async () => {
+          const copied = await copyTextToClipboard(email);
+          if (copied) {
+            copyMessage.textContent = `Емейл ${email} скопирован.`;
+            copyMessage.hidden = false;
+          }
+        });
+        emailParagraph.append(emailButton);
+      });
+      emailParagraph.append(document.createTextNode('.'));
+    } else {
+      emailParagraph.textContent = emails.length ? `Емейлы ваших друзей: ${emails.join(', ')}.` : '';
+    }
+    const copyMessage = document.createElement('p');
+    copyMessage.className = 'root-folder-copy-message';
+    copyMessage.hidden = true;
     const footer = document.createElement('footer');
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'settings-save-button';
     button.textContent = buttonLabel;
     footer.append(button);
-    dialog.append(close, title, text, emailParagraph, footer);
+    dialog.append(close, title, text, folderLinkParagraph, emailParagraph);
+    if (copyEmails) dialog.append(copyMessage);
+    dialog.append(footer);
     backdrop.append(dialog);
     document.body.append(backdrop);
     const finish = (result) => {
@@ -255,14 +297,19 @@ async function pickRootFolderWithChecks() {
 // never grants or revokes Drive permissions, so the owner must re-share the
 // new folder manually. The notice appears immediately after the new folder is
 // saved, while the library is still being rebuilt underneath it.
-function showRootFolderChangeNotice() {
+function showRootFolderChangeNotice(folder) {
   const friends = social.getState().friends || [];
   if (!hasOutboundLibraryFriends(friends)) return;
   const emails = friends
     .map((friend) => String(friend.email || '').trim())
     .filter(Boolean);
   const text = 'Корневая папка изменена, но теперь вам придется выдать все разрешения друзьям вручную и удалить их из старой папки, если желаете закрыть им к ней доступ на Google Drive.';
-  void showRootFolderPopup(text, 'ГОТОВО', { title: 'Смена корневой папки', justify: true, emails, buttonResult: 'close' });
+  const folderUrl = folder?.id
+    ? `https://drive.google.com/drive/folders/${encodeURIComponent(folder.id)}${folder.resourceKey ? `?resourcekey=${encodeURIComponent(folder.resourceKey)}` : ''}`
+    : '';
+  void showRootFolderPopup(text, 'ГОТОВО', {
+    title: 'Смена корневой папки', justify: true, emails, folderUrl, copyEmails: true, buttonResult: 'close',
+  });
 }
 
 // Switching libraries must stay in-page: a full page load never restores the
@@ -273,7 +320,7 @@ async function switchToRootFolder(folder) {
   const url = new URL(window.location.href);
   url.searchParams.delete('library');
   window.history.replaceState(null, '', url);
-  showRootFolderChangeNotice();
+  showRootFolderChangeNotice(folder);
   sharingVersion++; shareableIndex = null;
   currentIndex = null;
   buildingIndex = null;
