@@ -107,27 +107,40 @@ export async function runSocialUiTests(test, assert, equal) {
     const page = document.createElement('div'); document.body.append(page);
     const social = stub({ invitations: [] });
     let finishSend;
-    social.shareWithEmail = () => new Promise((resolve) => { finishSend = resolve; });
+    let requestedEmail = '';
+    social.shareWithEmail = (email) => { requestedEmail = email; return new Promise((resolve) => { finishSend = resolve; }); };
+    const nativeOpen = window.open;
+    const nativeExecCommand = document.execCommand;
+    const openedTabs = [];
+    let copiedText = '';
+    window.open = (url) => { const tab = { location: { href: url }, close() { this.closed = true; } }; openedTabs.push(tab); return tab; };
+    document.execCommand = () => { copiedText = document.querySelector('textarea')?.value || ''; return true; };
     const cleanup = mountFriends(page, social, () => {});
     try {
       const form = page.querySelector('.social-share-form');
       const input = form.elements.email;
-      input.value = 'pending@gmail.com';
+      input.value = 'Pending@Gmail.com';
       form.requestSubmit();
       await tick();
       const status = page.querySelector('.invitation-send-status');
-      assert(status.textContent === 'Отправляем приглашение…', 'sending status appears immediately');
+      assert(status.textContent === '\u041e\u0442\u043f\u0440\u0430\u0432\u043b\u044f\u0435\u043c \u043f\u0440\u0438\u0433\u043b\u0430\u0448\u0435\u043d\u0438\u0435\u2026', 'sending status appears immediately');
       assert(status.previousElementSibling === input.parentElement, 'sending status is directly below the email field label');
       assert(form.querySelector('button').disabled, 'submit button is disabled while sending');
-      finishSend('Приглашение отправлено.');
-      await tick(); await tick();
-      assert(status.textContent === 'Приглашение отправлено.', 'success replaces sending status');
-    } finally { cleanup(); page.remove(); }
+      finishSend('\u041f\u0440\u0438\u0433\u043b\u0430\u0448\u0435\u043d\u0438\u0435 \u043e\u0442\u043f\u0440\u0430\u0432\u043b\u0435\u043d\u043e.');
+      await tick(); await tick(); await tick();
+      const expected = '\u041f\u0440\u0438\u0433\u043b\u0430\u0448\u0435\u043d\u0438\u0435 \u043e\u0442\u043f\u0440\u0430\u0432\u043b\u0435\u043d\u043e. \u0422\u0435\u043f\u0435\u0440\u044c \u043e\u0442\u043a\u0440\u043e\u0439\u0442\u0435 \u0441\u0432\u043e\u0435\u043c\u0443 \u0434\u0440\u0443\u0433\u0443 \u0434\u043e\u0441\u0442\u0443\u043f \u043a \u043a\u043e\u0440\u043d\u0435\u0432\u043e\u0439 \u043f\u0430\u043f\u043a\u0435 \u0432\u0430\u0448\u0435\u0439 \u0431\u0438\u0431\u043b\u0438\u043e\u0442\u0435\u043a\u0438 \u043d\u0430 Google Drive, \u0435\u0433\u043e \u0435\u043c\u0435\u0439\u043b \u0443\u0436\u0435 \u0441\u043a\u043e\u043f\u0438\u0440\u043e\u0432\u0430\u043d \u0432 \u0431\u0443\u0444\u0435\u0440 \u043e\u0431\u043c\u0435\u043d\u0430.';
+      assert(status.textContent === expected, 'success shows the exact root-folder access instruction');
+      assert(openedTabs[0]?.location.href === 'https://drive.google.com/drive/folders/root', 'success opens the inviter root folder');
+      assert(copiedText === 'pending@gmail.com', 'the exact normalized invitation email is copied to clipboard');
+      assert(requestedEmail === 'pending@gmail.com', 'normalized invitation email is sent');
+    } finally { cleanup(); page.remove(); window.open = nativeOpen; document.execCommand = nativeExecCommand; }
   });
 
   await test('newly sent invitation appears immediately without waiting for Firestore refresh', async () => {
     const page = document.createElement('div'); document.body.append(page);
     const social = stub({ invitations: [] });
+    const nativeExecCommand = document.execCommand;
+    document.execCommand = () => true;
     social.shareWithEmail = async (email) => { social.calls.push(email); return 'Приглашение отправлено.'; };
     const cleanup = mountFriends(page, social, () => {});
     try {
@@ -139,7 +152,7 @@ export async function runSocialUiTests(test, assert, equal) {
       assert(section.textContent.includes('newfriend@gmail.com'), 'new invitation appears in the table immediately');
       assert(section.querySelector('tbody tr button'), 'resend action is rendered without reload');
       assert(form.elements.email.value === '', 'email field resets after successful send');
-    } finally { cleanup(); page.remove(); }
+    } finally { cleanup(); page.remove(); document.execCommand = nativeExecCommand; }
   });
 
   await test('sent invitations show a one-hour resend cooldown and the calculated tooltip', async () => {
