@@ -17,7 +17,7 @@ import {
 import { prepareIndexingRun, createRetryEligibilityCheck } from './indexing-run.js';
 import * as ui from './ui.js?v=20261115-friends-invitations-pagination';
 import { errorDetails, recordIndexingError } from './indexing-errors.js';
-import { social, socialError } from './social-runtime.js?v=20261117-stale-catalog-recovery';
+import { social, socialError } from './social-runtime.js?v=20261117-friend-covers-module-identity';
 import { getAccessToken } from './auth.js?v=20261114-brave-oauth2-redirect';
 import { checkpointKey, loadCheckpoint, saveCheckpoint, deleteCheckpoint, commitCheckpoint } from './indexing-checkpoint.js';
 import { createLibraryTabs } from './library-tabs.js';
