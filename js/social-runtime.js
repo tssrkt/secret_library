@@ -72,10 +72,11 @@ const acceptedLedgerSyncs = new Set();
 const knownContactsSyncs = new Map();
 const FRIEND_CACHE_PREFIX = 'secret-library-social-friends-v1:';
 let driveFriends = [];
-// Per-email relationship checks come only from the latest successful Google Drive reads.
-// Unverified directions retain their previous state instead of turning errors into crosses.
+// Per-email relationship checks come only from the latest Google Drive reads.
+// Missing proof is cleared; the UI shows neutral marks until a fresh check succeeds.
 let verifiedDriveRelationships = new Map();
 let verifiedDriveRootFolderId = '';
+let relationshipRefreshPromise = null;
 let driveRefreshCompletedWithoutAuth = false;
 let notificationBaselineCaptured = false;
 let notificationBaselineFriends = null;
@@ -311,7 +312,23 @@ async function refreshDriveFriends(user, currentGeneration = generation, knownFr
       }
     }
     if (discoveredRootFolderId) verifiedDriveRootFolderId = discoveredRootFolderId;
-    for (const [email, verified] of Object.entries(result.verifiedRelationships || {})) {
+    const freshRelationships = result.verifiedRelationships || {};
+    // A direction omitted by the latest Drive read is unknown, not still verified
+    // from a previous root folder or an earlier render. Clear old proof first.
+    for (const friend of [...knownDriveRows, ...cachedDriveRows]) {
+      const email = String(friend?.email || '').trim().toLowerCase();
+      if (!email) continue;
+      const fresh = freshRelationships[email] || {};
+      const previous = { ...(verifiedDriveRelationships.get(email) || {}) };
+      for (const direction of ['inbound', 'outbound']) {
+        if (fresh[`${direction}Verified`] !== true) {
+          delete previous[direction];
+          delete previous[`${direction}Verified`];
+        }
+      }
+      verifiedDriveRelationships.set(email, previous);
+    }
+    for (const [email, verified] of Object.entries(freshRelationships)) {
       verifiedDriveRelationships.set(email, { ...(verifiedDriveRelationships.get(email) || {}), ...verified });
     }
     if (result.rootFolderId) {
@@ -340,7 +357,9 @@ async function refreshDriveFriends(user, currentGeneration = generation, knownFr
       const verified = verifiedDriveRelationships.get(String(friend.email || '').trim().toLowerCase());
       if (!verified) continue;
       if (verified.inboundVerified === true) friend.inbound = verified.inbound === true;
+      else if (result.discoveryStatus === 'error') friend.inbound = false;
       if (verified.outboundVerified === true) friend.outbound = verified.outbound === true;
+      else if (result.discoveryStatus === 'error') friend.outbound = false;
     }
     // A successful empty Drive search means no currently accessible published
     // libraries; never resurrect stale inbound tabs from the local cache. Keep
@@ -364,13 +383,25 @@ async function refreshDriveFriends(user, currentGeneration = generation, knownFr
     }
     emit({ friends: combineFriendRows(), notifications, ownRootFolderId: result.rootFolderId || configuredRootFolderId, driveDiscoveryMessage: usedFriendFallback ? `Не удалось повторно обнаружить библиотеки в Google Drive; временно показан последний сохранённый список друзей. ${discoveryMessage}` : discoveryMessage, driveDiscoveryStatus: usedFriendFallback ? 'error' : (result.discoveryStatus || 'ready') });
     watchCatalogs(driveFriends);
+    return result.discoveryStatus !== 'error';
   } catch (error) {
-    // Keep the last confirmed Drive-derived list when Drive is temporarily unavailable.
+    // Keep the last confirmed friend list when Drive is temporarily unavailable,
+    // but the UI must not present cached relationship marks as verified.
     emit({ driveDiscoveryMessage: String(error?.message || error), driveDiscoveryStatus: 'error' });
+    return false;
   }
 }
 
 export const social = {
+  refreshFriendRelationships() {
+    if (!invitationUser || state.status !== 'ready') return Promise.resolve(false);
+    if (relationshipRefreshPromise) return relationshipRefreshPromise;
+    const currentUser = invitationUser;
+    const currentGeneration = generation;
+    relationshipRefreshPromise = refreshDriveFriends(currentUser, currentGeneration, combineFriendRows(), false)
+      .finally(() => { relationshipRefreshPromise = null; });
+    return relationshipRefreshPromise;
+  },
   setRootFolder(rootFolderId) {
     const previousFolderId = configuredRootFolderId;
     configuredRootFolderId = String(rootFolderId || '');

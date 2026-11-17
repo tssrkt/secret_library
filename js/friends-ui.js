@@ -74,6 +74,8 @@ export function mountFriends(page, social, retry, openLibrary = () => {}) {
   // The sharing dialog in Google Drive needs the participant's email right away;
   // remember which flow already copied it so the button can confirm the copy.
   const copiedEmails = new Set();
+  let relationshipCheckPending = false;
+  let relationshipRefreshPromise = null;
   // Guided manual sharing: Drive rejects programmatic permission changes on a
   // folder with books the app did not create, so the owner completes sharing in
   // Google Drive's own dialog. The app opens the folder, explains the step and
@@ -432,12 +434,30 @@ export function mountFriends(page, social, retry, openLibrary = () => {}) {
       }
     }
   }
-  const render = () => {
+  const render = (skipRelationshipRefresh = false) => {
+    // Never paint relationship marks from a previous render before a fresh Drive
+    // check. Concurrent UI updates share one check; its completion paints the
+    // confirmed state, while a failed check leaves neutral indicators.
+    if (!skipRelationshipRefresh && snapshot.friends?.length
+        && snapshot.status === 'ready' && typeof social.refreshFriendRelationships === 'function'
+        && !relationshipRefreshPromise) {
+      relationshipCheckPending = true;
+      relationshipRefreshPromise = Promise.resolve()
+        .then(() => social.refreshFriendRelationships())
+        .catch(() => false)
+        .finally(() => {
+          relationshipRefreshPromise = null;
+          relationshipCheckPending = false;
+          if (!closed) render(true);
+        });
+    }
     const hasKnownFriends = Array.isArray(snapshot.friends) && snapshot.friends.length > 0;
     const discoveryPending = (snapshot.driveDiscoveryStatus === 'loading' || snapshot.driveDiscoveryStatus === 'idle') && !hasKnownFriends;
     const paged = paginateItems(discoveryPending ? [] : snapshot.friends, pageNumber, FRIENDS_PER_PAGE);
     pageNumber = paged.currentPage;
     const count = paged.totalItems;
+    const relationshipStatusPending = relationshipCheckPending || snapshot.status !== 'ready'
+      || ['idle', 'loading', 'error'].includes(snapshot.driveDiscoveryStatus);
     const plural = (value, one, few, many) => {
       const n = Math.abs(value) % 100;
       const last = n % 10;
@@ -499,7 +519,7 @@ export function mountFriends(page, social, retry, openLibrary = () => {}) {
       // flash), and an unreachable check falls back to local admin signals
       // instead of hiding every email forever.
       else if ((invitationStatusesLoaded || invitationStatusesFailed) && friend.email) { const detail = document.createElement('small'); detail.textContent = friend.email; openButton.append(detail); }
-      openButton.disabled = !friend.inbound || String(friend.uid).startsWith('email:');
+      openButton.disabled = relationshipStatusPending || !friend.inbound || String(friend.uid).startsWith('email:');
       openButton.title = openButton.disabled ? 'Эта библиотека не открыта вам в Google Drive' : 'Открыть библиотеку друга';
       openButton.addEventListener('click', () => { if (!openButton.disabled) openLibrary(friend.uid); });
       name.append(openButton);
@@ -507,10 +527,11 @@ export function mountFriends(page, social, retry, openLibrary = () => {}) {
       for (const value of [friend.inbound, friend.outbound]) {
         const cell = document.createElement('td');
         const mark = document.createElement('span');
-        mark.className = value ? 'friend-status-mark is-yes' : 'friend-status-mark is-no';
-        mark.textContent = value ? '✓' : '✕';
+        const checking = relationshipStatusPending;
+        mark.className = checking ? 'friend-status-mark is-checking' : value ? 'friend-status-mark is-yes' : 'friend-status-mark is-no';
+        mark.textContent = checking ? '…' : value ? '✓' : '✕';
         mark.setAttribute('role', 'img');
-        mark.setAttribute('aria-label', value ? 'Да' : 'Нет');
+        mark.setAttribute('aria-label', checking ? 'Проверка доступа' : value ? 'Да' : 'Нет');
         cell.append(mark); row.append(cell);
       }
       const actionCell = document.createElement('td');
@@ -525,7 +546,7 @@ export function mountFriends(page, social, retry, openLibrary = () => {}) {
       actionButton.textContent = flowActive && copiedEmails.has(friendEmail)
         ? 'ЕМЕЙЛ СКОПИРОВАН'
         : isSharingWithFriend ? 'ЗАКРЫТЬ ДОСТУП' : 'ПОДЕЛИТЬСЯ';
-      actionButton.disabled = !friendEmail || flowActive;
+      actionButton.disabled = !friendEmail || flowActive || relationshipStatusPending;
       actionButton.title = !friendEmail
         ? 'У друга не указан email'
         : isSharingWithFriend

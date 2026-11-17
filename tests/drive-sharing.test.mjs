@@ -432,3 +432,52 @@ test('rechecks a cached incoming root directly on Drive when its catalog disappe
   assert.equal(result.verifiedRelationships['friend@example.com']?.inboundVerified, true);
   assert.equal(result.friends.some((friend) => friend.email === 'friend@example.com' && friend.inbound), false);
 });
+
+
+test('a cached old root is not treated as the current shared library when its catalog disappears', async () => {
+  const calls = [];
+  const request = async (path) => {
+    calls.push(path);
+    const url = new URL(path, 'https://drive.googleapis.com');
+    const q = url.searchParams.get('q') || '';
+    if (url.pathname === '/files' && q.includes("name = '.secret-library-catalog.json'")) return { files: [] };
+    if (url.pathname === '/files/current-root') return { id: 'current-root', mimeType: 'application/vnd.google-apps.folder' };
+    if (url.pathname === '/files/current-root/permissions') return { permissions: [
+      { type: 'user', emailAddress: 'owner@example.com', role: 'owner' },
+    ] };
+    if (url.pathname === '/files/old-root') return { id: 'old-root', name: 'Old Library', mimeType: 'application/vnd.google-apps.folder', owners: [{ emailAddress: 'friend@example.com' }] };
+    throw new Error(`Unexpected Drive request: ${path}`);
+  };
+  const result = await discoverDriveFriends(
+    { uid: 'me-uid', email: 'owner@example.com' }, 'current-root', { driveFetch: request },
+    [{ uid: 'friend-uid', email: 'friend@example.com', displayName: 'Friend', rootFolderId: 'old-root', inbound: true, outbound: false }],
+  );
+  assert.equal(result.verifiedRelationships['friend@example.com']?.inbound, false,
+    'old folder access is not proof that the friend still publishes that root as their current library');
+  assert.equal(result.verifiedRelationships['friend@example.com']?.inboundVerified, true);
+  assert.equal(result.friends.some((friend) => friend.email === 'friend@example.com' && friend.inbound), false);
+  assert.equal(calls.includes('/files/old-root'), false, 'the stale root is not accepted based on metadata access alone');
+});
+
+
+test('keeps a friend row with an independent outgoing share and crosses the stale incoming root', async () => {
+  const request = async (path) => {
+    const url = new URL(path, 'https://drive.googleapis.com');
+    const q = url.searchParams.get('q') || '';
+    if (url.pathname === '/files' && q.includes("name = '.secret-library-catalog.json'")) return { files: [] };
+    if (url.pathname === '/files/current-root') return { id: 'current-root', mimeType: 'application/vnd.google-apps.folder' };
+    if (url.pathname === '/files/current-root/permissions') return { permissions: [
+      { type: 'user', emailAddress: 'owner@example.com', role: 'owner' },
+      { type: 'user', emailAddress: 'friend@example.com', role: 'reader' },
+    ] };
+    throw new Error(`Unexpected Drive request: ${path}`);
+  };
+  const result = await discoverDriveFriends(
+    { uid: 'me-uid', email: 'owner@example.com' }, 'current-root', { driveFetch: request },
+    [{ uid: 'friend-uid', email: 'friend@example.com', displayName: 'Friend', rootFolderId: 'old-root', inbound: true, outbound: false }],
+  );
+  const friend = result.friends.find((item) => item.email === 'friend@example.com');
+  assert.ok(friend, 'the friend remains visible because outgoing access is still active');
+  assert.equal(friend.inbound, false, 'the stale incoming library is no longer confirmed');
+  assert.equal(friend.outbound, true, 'the outgoing permission is checked independently');
+});

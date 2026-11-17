@@ -165,6 +165,7 @@ export async function discoverDriveFriends(user, configuredRootFolderId = '', ap
   const byEmail = new Map();
   const verifiedRelationships = new Map();
   const checkedInboundRoots = new Set();
+  const uncertainInboundEmails = new Set();
   const setVerifiedRelationship = (email, direction, value) => {
     const address = normalizeEmail(email);
     if (!address) return;
@@ -247,7 +248,13 @@ export async function discoverDriveFriends(user, configuredRootFolderId = '', ap
       let catalog;
       try { catalog = await download(file.id); }
       catch (error) {
+        if (listedOwnerEmail) uncertainInboundEmails.add(listedOwnerEmail);
+        const knownOwner = (Array.isArray(knownFriends) ? knownFriends : []).find((friend) =>
+          friend?.email && normalizeEmail(friend.email) === listedOwnerEmail);
+        if (knownOwner?.email) uncertainInboundEmails.add(normalizeEmail(knownOwner.email));
         note('catalog-download-error', `Файл ${file.id}: HTTP ${error?.status || '?'}; ${error?.message || error}`);
+        catalogDiscoveryFailed = true;
+        driveDiscoveryErrors.push(`Не удалось проверить каталог ${file.id} в Google Drive.`);
         continue;
       }
       if (!catalog || typeof catalog.ownerUid !== 'string' || !catalog.ownerUid
@@ -322,36 +329,20 @@ export async function discoverDriveFriends(user, configuredRootFolderId = '', ap
     driveDiscoveryErrors.push(`Не удалось найти опубликованные каталоги друзей: ${error?.message || error}`);
   }
 
-  // Recheck previously known incoming roots even when their catalog is no longer
-  // discoverable. Folder metadata access is the Drive-side proof of root access.
+  // A cached root is not proof that it is still the owner's current library root.
+  // When Drive catalog discovery succeeded but this root is absent from the current
+  // published catalogs, mark the relationship closed even if the old folder remains
+  // readable. If catalog discovery itself failed, keep the direction unverified.
   for (const friend of (Array.isArray(knownFriends) ? knownFriends : [])) {
     const friendRootId = String(friend?.rootFolderId || '');
     const email = normalizeEmail(friend?.email);
     if (!friendRootId || !email || email === ownEmail || friendRootId === rootFolderId || checkedInboundRoots.has(friendRootId)) continue;
-    checkedInboundRoots.add(friendRootId);
-    try {
-      const root = await getRootFolder(friendRootId, request);
-      if (root?.mimeType !== FOLDER_MIME_TYPE) {
-        setVerifiedRelationship(email, 'inbound', false);
-        continue;
-      }
-      const rootOwnerEmail = normalizeEmail(root.owners?.find((owner) => normalizeEmail(owner.emailAddress))?.emailAddress);
-      if (rootOwnerEmail && rootOwnerEmail !== email) {
-        setVerifiedRelationship(email, 'inbound', false);
-        note('known-root-owner-mismatch', `Корневая папка ${friendRootId} не принадлежит подтверждённому владельцу ${email}.`);
-        continue;
-      }
-      setVerifiedRelationship(email, 'inbound', true);
-      add({ ...friend, rootFolderId: friendRootId, inbound: true });
-    } catch (error) {
-      if (error?.status === 403 || error?.status === 404) setVerifiedRelationship(email, 'inbound', false);
-      else {
-        setUnknownRelationship(email, 'inbound');
-        add(friend);
-        catalogDiscoveryFailed = true;
-        driveDiscoveryErrors.push(`Не удалось проверить корневую папку друга ${email} в Google Drive: ${error?.message || error}`);
-      }
+    if (catalogDiscoveryFailed || uncertainInboundEmails.has(email)) {
+      setUnknownRelationship(email, 'inbound');
+      add(friend);
+      continue;
     }
+    setVerifiedRelationship(email, 'inbound', false);
   }
 
   if (rootFolderId) {
@@ -385,12 +376,16 @@ export async function discoverDriveFriends(user, configuredRootFolderId = '', ap
           friend?.uid && !String(friend.uid).startsWith('email:')
           && normalizeEmail(friend.email) === email);
         if (knownFriend) {
-          add({ ...knownFriend, email, inbound: knownFriend.inbound === true, outbound: true });
+          const verifiedInbound = verifiedRelationships.get(email);
+          add({ ...knownFriend, email,
+            inbound: verifiedInbound?.inboundVerified === true ? verifiedInbound.inbound === true : knownFriend.inbound === true,
+            outbound: true });
         }
 
         }
       }
     } catch (error) {
+      catalogDiscoveryFailed = true;
       driveDiscoveryErrors.push(`Не удалось прочитать права своей корневой папки: ${error?.message || error}`);
     }
   }

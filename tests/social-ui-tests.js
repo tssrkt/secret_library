@@ -30,6 +30,37 @@ export async function runSocialUiTests(test, assert, equal) {
     equal(validateShareEmail(' Ab.C+tag@Gmail.Com ', 'me@gmail.com'), 'ab.c+tag@gmail.com', 'trim lowercase only');
     equal(friendsModel('me', [{ ownerUid: 'owner', viewerUid: 'me', active: true, ownerEmail: 'owner@gmail.com' }], { owner: { displayName: 'Owner' } })[0].email, 'owner@gmail.com', 'incoming friend displays the email attached to their share');
   });
+  await test('friend relationship marks stay neutral until a fresh Drive check finishes on every redraw', async () => {
+    const page = document.createElement('div'); document.body.append(page);
+    const social = stub({ friends: [{ uid: 'friend', displayName: 'Friend', email: 'friend@gmail.com', inbound: true, outbound: true }] });
+    let finishRefresh;
+    let refreshCalls = 0;
+    social.refreshFriendRelationships = () => {
+      refreshCalls += 1;
+      return new Promise((resolve) => {
+        finishRefresh = () => {
+          social.update({ driveDiscoveryStatus: 'ready', friends: [{ uid: 'friend', displayName: 'Friend', email: 'friend@gmail.com', inbound: false, outbound: false }] });
+          resolve(true);
+        };
+      });
+    };
+    const cleanup = mountFriends(page, social, () => {});
+    try {
+      assert(page.querySelector('.friends-table').textContent.includes('…'), 'cached checks are not shown while the new Drive check is pending');
+      await tick();
+      equal(refreshCalls, 1, 'the first friend-list render starts a Drive relationship check');
+      finishRefresh();
+      await tick(); await tick();
+      equal(page.querySelectorAll('.friends-table .friend-status-mark.is-no').length, 2, 'revoked access renders crosses after Drive confirms both directions are absent');
+      social.update({ notifications: [] });
+      assert(page.querySelector('.friends-table').textContent.includes('…'), 'a subsequent redraw hides the previous marks until it checks Drive again');
+      await tick();
+      equal(refreshCalls, 2, 'the next redraw starts a new Drive relationship check');
+      finishRefresh();
+      await tick(); await tick();
+      equal(page.querySelectorAll('.friends-table .friend-status-mark.is-no').length, 2, 'the second check also determines the displayed marks');
+    } finally { cleanup(); page.remove(); }
+  });
   await test('invitation quota display uses permanent server count, not pending invite rows', async () => {
     const page = document.createElement('div'); document.body.append(page);
     const invitations = Array.from({ length: 3 }, (_, i) => ({ inviteeEmail: 'pending' + i + '@gmail.com', active: true, createdAt: Date.now() - i * 1000 }));
