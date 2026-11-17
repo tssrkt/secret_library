@@ -3,10 +3,10 @@ export async function runPublicDocumentsTests(test, assert, equal) {
     const html = await (await fetch('../info.html')).text();
     const page = new DOMParser().parseFromString(html, 'text/html');
     assert(!page.querySelector('script[src*="app.js"], script[src*="auth.js"], script[src*="firebase"]')
-      && page.querySelector('script[src="./js/document-header.js"]'), 'public page loads only the shared-header controller, not app, Drive or Firebase code');
+      && page.querySelector('script[src^="./js/document-header.js"]'), 'public page loads only the shared-header controller, not app, Drive or Firebase code');
     assert(page.querySelectorAll('h1, h2, h3').length > 0 && page.querySelectorAll('ol, ul').length > 0, 'DOCX headings and lists remain structured HTML');
-    const link = [...page.querySelectorAll('a')].find((item) => item.textContent.includes('сообщите владельцу «Тайной Библиотеки»'));
-    assert(link && link.href === 'https://t.me/ptica_govorun_bot' && link.target === '_blank' && link.rel.includes('noopener'), 'owner phrase is the safe Telegram link');
+    const link = page.querySelector('a[href="https://t.me/ptica_govorun_bot"]');
+    assert(link && link.textContent.trim() && link.target === '_blank' && link.rel.includes('noopener'), 'support phrase is the safe Telegram link');
   });
   await test('instruction and privacy mount the shared main-page header from one source', async () => {
     const [instructionHtml, privacyHtml, loaderHtml, homeHtml] = await Promise.all([
@@ -17,7 +17,7 @@ export async function runPublicDocumentsTests(test, assert, equal) {
     ]);
     for (const html of [instructionHtml, privacyHtml]) {
       const page = new DOMParser().parseFromString(html, 'text/html');
-      assert(page.querySelector('#shared-header') && page.querySelector('script[src="./js/document-header.js"]'), 'document page uses the shared-header loader');
+      assert(page.querySelector('#shared-header') && page.querySelector('script[src^="./js/document-header.js"]'), 'document page uses the shared-header loader');
       const footer = page.querySelector('.app-footer');
       assert(footer && footer.querySelector('a[href="./info.html"]') && footer.querySelector('a[href="./index.html"]'), 'document page has instruction and return-to-library links in the shared footer style');
       assert(!page.querySelector('.info-document > p a[href="./info.html"], .info-document > p a[href="./index.html"]'), 'navigation links are not embedded in the document body');

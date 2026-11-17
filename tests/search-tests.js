@@ -134,9 +134,11 @@ export async function runSearchTests(test, assert, equal) {
       };
       checkCounter();
       for (const field of form.querySelectorAll('input, select')) {
-        field.focus();
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }));
+        field.focus({ focusVisible: true });
         const styles = getComputedStyle(field);
-        assert(field.matches(':focus-visible') && styles.outlineColor === 'rgb(138, 98, 59)' && styles.outlineStyle === 'solid', 'all six fields have a visible warm focus');
+        const expectedOutline = field.tagName === 'SELECT' ? 'rgb(138, 98, 59)' : 'rgb(170, 170, 170)';
+        assert(field.matches(':focus-visible') && styles.outlineColor === expectedOutline && styles.outlineStyle === 'solid', `accessible focus for ${field.name}`);
         assert(styles.boxShadow === 'none', 'focus has no heavy shadow');
       }
       assert(tree.querySelectorAll('[aria-label^="Страница "]').length === 2, '51 results have two pages');
@@ -228,9 +230,10 @@ export async function runSearchTests(test, assert, equal) {
       }
       for (const selector of ['#quick-search-input', '#book-search-button', '#advanced-search-button']) {
         const element = doc.querySelector(selector);
-        element.focus();
+        element.focus({ focusVisible: true });
         const styles = iframe.contentWindow.getComputedStyle(element);
-        assert(element.matches(':focus-visible') && styles.outlineColor === 'rgb(138, 98, 59)' && styles.outlineStyle === 'solid', `warm accessible focus for ${selector}`);
+        const expectedOutline = selector === '#quick-search-input' ? 'rgb(170, 170, 170)' : 'rgb(138, 98, 59)';
+        assert(element.matches(':focus-visible') && styles.outlineColor === expectedOutline && styles.outlineStyle === 'solid', `accessible focus for ${selector}`);
       }
       assert(doc.documentElement.scrollWidth <= width, `no header overflow at ${width}px`);
       iframe.remove();

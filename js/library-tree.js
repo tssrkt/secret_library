@@ -66,7 +66,7 @@ export async function scanLibrary(rootFolderId, onProgress = () => {}, {
     if (failure || scanSignal.aborted) return;
     onProgress({ processedFolders, discoveredFolders: Math.max(0, folders.length - 1),
       // Outstanding work includes requests already in flight.
-      queuedFolders: queue.length + running.size + (readingRoot ? 1 : 0),
+      queuedFolders: Math.max(0, queue.length - queueHead) + running.size + (readingRoot ? 1 : 0),
       activeFolders: running.size + (readingRoot ? 1 : 0), books: books.length,
       retrying: retrying.size > 0, elapsedSeconds: Math.floor((now() - started) / 1000) });
   };

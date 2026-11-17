@@ -2,15 +2,14 @@
 import { ROOT_FOLDER_ID, INDEX_VERSION, METADATA_VERSION } from '../js/config.js';
 import { prepareBuildingIndex, updateBuildProgress } from '../js/index-build.js';
 import { checkpointKey, saveCheckpoint, loadCheckpoint } from '../js/indexing-checkpoint.js';
-import { AUTH_SESSION_KEY } from '../js/auth.js?v=20261114-brave-oauth2-redirect';
-import { social } from '../js/social-runtime.js';
+import { social } from '../js/social-runtime.js?v=20261116-outbound-folder-reset';
 
-social.connect = async () => {};
+social.connect = async () => true;
 const owner = 'app-resume@example.com';
 const key = checkpointKey(owner, ROOT_FOLDER_ID);
 const active = { version: INDEX_VERSION, rootFolderId: ROOT_FOLDER_ID, updatedAt: 'app-base',
   folders: [{ id: ROOT_FOLDER_ID, parentId: null, name: 'Library' }],
-  books: Array.from({ length: 6 }, (_, i) => ({ id: `book${i}`, parentId: ROOT_FOLDER_ID,
+  books: Array.from({ length: 10 }, (_, i) => ({ id: `book${i}`, parentId: ROOT_FOLDER_ID,
     fileName: `book${i}.fb2`, sourceType: 'fb2', extension: 'fb2', metadataStatus: 'pending', size: 100 })) };
 if (!sessionStorage.getItem('resume-fixture-started')) {
   const draft = prepareBuildingIndex(active, { mode: 'refresh' });
@@ -21,9 +20,9 @@ if (!sessionStorage.getItem('resume-fixture-started')) {
   await saveCheckpoint(key, draft);
   sessionStorage.setItem('resume-fixture-started', '1');
 }
-sessionStorage.setItem(AUTH_SESSION_KEY, JSON.stringify({ accessToken: 'fixture-old', expiresAt: Date.now() + 3600000,
-  user: { emailAddress: owner } }));
-const state = window.resumeFixture = { deny: true, requests: [], downloads: [], checkpoint: () => loadCheckpoint(key) };
+// The app intentionally never restores a saved token on startup. The harness signs in through the real button.
+const state = window.resumeFixture = { deny: false, requests: [], downloads: [], checkpoint: () => loadCheckpoint(key) };
+localStorage.setItem(`secret-library-drive-file-authorized-v2:app-resume%40example.com:${ROOT_FOLDER_ID}`, '1');
 if (location.pathname === '/libraries-fixture') {
   const listeners = new Set();
   const libraries = Array.from({ length: 20 }, (_, i) => ({ uid: `friend-${i}`, displayName: `Друг ${i} Имя`, revision: 'one' }));
@@ -37,10 +36,13 @@ if (location.pathname === '/libraries-fixture') {
     listeners.forEach((listener) => listener(snapshot));
   };
 }
+let issuedInitialToken = false;
 const client = { requestAccessToken(options) {
   state.requests.push(options);
+  const accessToken = issuedInitialToken ? 'fixture-renewed' : 'fixture-old';
+  issuedInitialToken = true;
   queueMicrotask(() => state.deny ? client.error_callback({ type: 'popup_failed_to_open' })
-    : client.callback({ access_token: 'fixture-renewed', expires_in: 3600 }));
+    : client.callback({ access_token: accessToken, expires_in: 3600 }));
 } };
 window.google = { accounts: { oauth2: { initTokenClient: () => client } } };
 const files = new Map([['active-index', active], ['user-settings', { version: 1, activeRootFolderId: ROOT_FOLDER_ID, activeRootFolderResourceKey: '' }]]);
@@ -50,6 +52,9 @@ window.fetch = async (input, options = {}) => {
   if (url.hostname !== 'www.googleapis.com') return realFetch(input, options);
   const json = (value) => new Response(JSON.stringify(value), { headers: { 'Content-Type': 'application/json' } });
   if (url.pathname.endsWith('/about')) return json({ user: { emailAddress: owner, displayName: 'Resume user' } });
+  if (url.pathname.endsWith('/files/root')) return json({ id: 'drive-root', name: 'My Drive', mimeType: 'application/vnd.google-apps.folder', parents: [] });
+  if (url.pathname.endsWith(`/files/${ROOT_FOLDER_ID}`)) return json({ id: ROOT_FOLDER_ID, name: 'Library', mimeType: 'application/vnd.google-apps.folder',
+    parents: ['drive-root'], isAppAuthorized: true, capabilities: { canShare: true } });
   const id = url.pathname.match(/\/files\/([^/]+)/)?.[1];
   if (options.method === 'DELETE') { files.delete(id); return new Response(null, { status: 204 }); }
   if (options.method === 'PATCH') { files.set(id, JSON.parse(options.body)); return json({ id }); }
@@ -70,4 +75,5 @@ window.fetch = async (input, options = {}) => {
   return json({ files: [] });
 };
 await import('../js/app.js');
+document.querySelector('#sign-in-button').click();
 state.ready = true;

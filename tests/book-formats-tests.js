@@ -231,7 +231,9 @@ export async function runBookFormatTests(test, assert, equal, makeZip) {
     const extract = (book) => { const data = book.sourceType === 'epub' ? epubData : mobiData;
       return extractBookMetadata({ ...book, size: data.length }, { fetchRange: ranges(data) }); };
     const stats = await indexPendingBooks(active, { extract: (book) => book.sourceType === 'epub'
-      ? extractBookMetadata({ ...book, size: 30 }, { fetchRange: ranges(new Uint8Array(30)) }) : extract(book) });
+      ? extractBookMetadata({ ...book, size: 30 }, {
+        fetchRange: ranges(new Uint8Array(30)), downloadFile: async () => new Blob([new Uint8Array(30)]),
+      }) : extract(book) });
     equal([stats.failed, stats.succeeded], [1, 1], 'broken EPUB does not stop MOBI');
     const retry = await prepareIndexingRun(active, { mode: 'retry' });
     equal(retry.buildState.selectedIds, ['epub'], 'common retry selects failed new format');
@@ -276,6 +278,6 @@ export async function runBookFormatTests(test, assert, equal, makeZip) {
       assert(card.textContent.includes(book.title) && card.textContent.includes('Fantasy'), 'ordinary card');
     }
     equal(bookCardView({ ...pending('name', 'epub'), metadataStatus: 'ready' }).title, 'name', 'filename fallback without persisting fake title');
-    equal([INDEX_VERSION, METADATA_VERSION], [4, 2], 'no version bump');
+    equal([INDEX_VERSION, METADATA_VERSION], [4, 3], 'metadata version reflects EPUB/MOBI support');
   });
 }

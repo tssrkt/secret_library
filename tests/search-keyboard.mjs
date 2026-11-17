@@ -155,15 +155,15 @@ try {
   await send('Page.navigate', { url: `http://127.0.0.1:${server.address().port}/resume-fixture` });
   const until = async (condition) => {
     for (let i = 0; i < 200; i++) { if (await evaluate(condition)) return; await delay(50); }
-    throw new Error(`App condition timed out: ${condition}; ${await evaluate("document.querySelector('#status-text')?.textContent")}`);
+    throw new Error(`App condition timed out: ${condition}; status=${await evaluate("document.querySelector('#status-text')?.textContent")}; error=${await evaluate("document.querySelector('#error-text')?.textContent")}; requests=${await evaluate("JSON.stringify(window.resumeFixture?.requests)")}`);
   };
-  await until('window.resumeFixture?.ready');
-  assert.equal(await evaluate("document.querySelector('#status-text').nextElementSibling.textContent"), 'Продолжить индексацию — осталось 3');
+  await until("window.resumeFixture?.ready && document.querySelector('#status-text')?.nextElementSibling?.textContent.includes('осталось 7')");
+  assert.equal(await evaluate("document.querySelector('#status-text').nextElementSibling.textContent"), 'Продолжить индексацию — осталось 7');
   await send('Page.reload');
   await delay(200);
-  await until('window.resumeFixture?.ready');
+  await until("window.resumeFixture?.ready && document.querySelector('#status-text')?.nextElementSibling?.textContent.includes('осталось 7')");
   assert.equal(await evaluate('(async () => (await window.resumeFixture.checkpoint()).buildState.progress.processed)()'), 3, 'real page reload preserves progress');
-  await evaluate("document.querySelector('#status-text').nextElementSibling.click()");
+  await evaluate("window.resumeFixture.deny = true; document.querySelector('#status-text').nextElementSibling.click()");
   await until("(async () => (await window.resumeFixture.checkpoint())?.buildState.status === 'paused' && !document.querySelector('#sign-in-button').hidden)()");
   assert.equal(await evaluate("document.querySelector('#user-controls').hidden"), false, 'expired token never logs app out');
   assert.equal(await evaluate('(async () => (await window.resumeFixture.checkpoint()).buildState.progress.processed)()'), 3, 'failed renewal keeps checkpoint');
@@ -173,12 +173,13 @@ try {
   assert.equal(await evaluate("document.querySelector('#sign-in-button').hidden"), true, 'reconnection restores connected controls');
   console.log('Real app checks passed: reload, paused auth, no logout, automatic continuation, verified commit and checkpoint cleanup.');
   await send('Page.navigate', { url: `http://127.0.0.1:${server.address().port}/libraries-fixture` });
-  await until('window.resumeFixture?.ready');
+  await until("window.resumeFixture?.ready && document.querySelector('[role=tab][aria-selected=true]')?.textContent === 'Моя библиотека' && document.querySelector('[data-library=friend-0]') && document.querySelector('.library-tab-strip')?.scrollWidth > document.querySelector('.library-tab-strip')?.clientWidth");
   assert.equal(await evaluate("document.querySelector('[role=tab][aria-selected=true]').textContent"), 'Моя библиотека');
   const mouse = (type, x, y, extra = {}) => send('Input.dispatchMouseEvent', { type, x, y, ...extra });
   const dragTab = await evaluate(`(() => { const r = document.querySelector('[data-library="friend-0"]').getBoundingClientRect(); return {x:r.x+r.width/2, y:r.y+r.height/2}; })()`);
   await mouse('mouseMoved', dragTab.x, dragTab.y);
   await mouse('mousePressed', dragTab.x, dragTab.y, { button: 'left', buttons: 1, clickCount: 1 });
+  await delay(60);
   await mouse('mouseMoved', dragTab.x - 110, dragTab.y, { button: 'left', buttons: 1 });
   await mouse('mouseReleased', dragTab.x - 110, dragTab.y, { button: 'left', clickCount: 1 });
   assert.equal(await evaluate("document.querySelector('[role=tab][aria-selected=true]').dataset.library"), '', 'mouse drag never selects starting tab');
@@ -196,7 +197,7 @@ try {
   await evaluate("window.resumeFixture.revoke('friend-1')");
   assert.equal(await evaluate("document.querySelectorAll('.book-card').length"), 0, 'revocation clears catalog');
   assert.equal(await evaluate("document.querySelector('[data-library=friend-1]')"), null, 'revoked tab removed');
-  await evaluate("document.querySelector('#library-selection-message button').click()");
+  await evaluate("document.querySelector('[role=tab][data-library=\"\"]').click()");
   assert.equal(await evaluate("document.querySelector('[role=tab][aria-selected=true]').textContent"), 'Моя библиотека');
   await send('Emulation.setDeviceMetricsOverride', { width: 390, height: 800, deviceScaleFactor: 1, mobile: true });
   await delay(100);

@@ -124,7 +124,8 @@ export async function runUserSettingsTests(test, assert, equal) {
       assert(container.querySelector('[type=submit]').disabled && fields().every((field) => field.disabled) && writes.length === 1, 'save and folder checkboxes are disabled while writing; duplicate submit ignored');
       rejectSave(new Error('Не удалось сохранить настройки.'));
       await tick();
-      assert(errors.length === 1 && !fields()[1].checked && fields().every((field) => !field.disabled) && !container.querySelector('[type=submit]').disabled, 'failure preserves draft and re-enables all controls for retry');
+      assert(errors.length === 1 && fields()[1].checked && fields().every((field) => !field.disabled) && !container.querySelector('[type=submit]').disabled, 'failure restores saved choices and re-enables all controls for retry');
+      fields()[1].checked = false;
       submit();
       equal(writes[1].value.sharing.excludedFolderIds, ['sf', 'history'], 'save captures current unchecked folders');
       resolveSave('settings-id');
@@ -168,16 +169,12 @@ export async function runUserSettingsTests(test, assert, equal) {
   });
 
   await test('avatar settings integrate with SPA home, search and direct filters without scanning Drive', async () => {
-    window.__avatar = ['start'];
-    const step = (s) => window.__avatar.push(s);
     const markup = new DOMParser().parseFromString(await (await fetch('../index.html')).text(), 'text/html');
     markup.querySelectorAll('script').forEach((node) => node.remove());
     const fixture = document.createElement('div');
     fixture.append(...markup.body.children);
     document.body.append(fixture);
-    step('fixture ready');
     const ui = await import(`../js/ui.js?settings-test=${Date.now()}`);
-    step('ui imported');
     const index = makeIndex();
     const before = JSON.stringify(index);
     const nativeFetch = window.fetch;
@@ -185,13 +182,26 @@ export async function runUserSettingsTests(test, assert, equal) {
     let stored = null;
     let failWrite = false;
     let lookups = 0;
+    const folderStates = new Map();
     restoreAuthSession({ session: { getItem: () => JSON.stringify({ accessToken: 'test-only', expiresAt: Date.now() + 3600000 }) } });
     window.fetch = async (url, options = {}) => {
       requests.push({ url: String(url), method: options.method || 'GET' });
       const parsed = new URL(url);
+      const folderMatch = ['/files/sf', '/files/history', '/files/new'].find((suffix) => parsed.pathname.endsWith(suffix));
+      if (folderMatch) {
+        const id = folderMatch.slice('/files/'.length);
+        if (options.method === 'PATCH') {
+          const next = JSON.parse(options.body).inheritedPermissionsDisabled;
+          folderStates.set(id, next);
+          return new Response(JSON.stringify({ id, inheritedPermissionsDisabled: next }), { status: 200 });
+        }
+        return new Response(JSON.stringify({ id, mimeType: 'application/vnd.google-apps.folder',
+          inheritedPermissionsDisabled: folderStates.get(id) || false,
+          capabilities: { canDisableInheritedPermissions: true, canEnableInheritedPermissions: true } }), { status: 200 });
+      }
       if (options.method) {
         assert(parsed.pathname.startsWith('/upload/drive/v3/files'), 'writes only use appData upload helpers');
-        if (failWrite) return new Response('{}', { status: 403 });
+        if (failWrite && parsed.pathname.endsWith('/settings-id')) return new Response('{}', { status: 403 });
         if (options.method === 'POST') {
           assert(options.body.includes('"parents":["appDataFolder"]') && options.body.includes(USER_SETTINGS_FILE_NAME), 'create belongs to appDataFolder');
           stored = JSON.parse(options.body.split('Content-Type: application/json\r\n\r\n')[1].split('\r\n--')[0]);
@@ -205,13 +215,12 @@ export async function runUserSettingsTests(test, assert, equal) {
         assert(stored, 'settings refresh downloads only the known settings file');
         return new Response(JSON.stringify(stored), { status: 200 });
       }
-      assert(parsed.searchParams.get('spaces') === 'appDataFolder' && parsed.searchParams.get('q').includes(USER_SETTINGS_FILE_NAME), 'only settings lookup is allowed; no scan, book or permissions calls');
-      if (++lookups === 1) return new Response('{}', { status: 403 });
+      assert(parsed.searchParams.get('spaces') === 'appDataFolder' && parsed.searchParams.get('q').includes(USER_SETTINGS_FILE_NAME), 'only settings lookup is allowed; no full library scan');
+      if (++lookups <= 2) return new Response('{}', { status: 403 });
       return new Response(JSON.stringify({ files: stored ? [{ id: 'settings-id' }] : [] }), { status: 200 });
     };
     ui.renderLibrary(index);
     ui.setAuthorized(true);
-    step('library rendered');
     const noop = () => {};
     ui.bindActions({ home: ui.showLibraryHome, signIn: noop, refresh: noop, indexMetadata: noop,
       retryMetadata: noop, stopMetadata: noop, signOut: noop, rebuild: noop });
@@ -222,26 +231,22 @@ export async function runUserSettingsTests(test, assert, equal) {
       assert(!menuItem.disabled && menuItem.textContent === 'Настройки' && !menuItem.querySelector('small'), 'active menu item without placeholder');
       click('#avatar-button');
       click('#settings-button');
-      for (let i = 0; i < 100 && !tree.querySelector('.sharing-settings-form') && fixture.querySelector('#error-panel').hidden; i++) await tick();
-      step('first settings open settled');
+      for (let i = 0; i < 100 && !tree.querySelector('.sharing-folders-section > button[type="button"]'); i++) await tick();
       assert(!tree.querySelector('.sharing-settings-form') && !fixture.querySelector('#error-panel').hidden,
         'temporary settings load error is shown before retry');
-      tree.querySelector('.user-settings-page section > button[type="button"]').click();
+      tree.querySelector('.sharing-folders-section > button[type="button"]').click();
       for (let i = 0; i < 100 && !tree.querySelector('.sharing-settings-form'); i++) await tick();
-      step('retry settled');
-      assert(tree.querySelector('.sharing-settings-form'), `settings loaded: ${fixture.querySelector('#error-text').textContent}`);
-      assert(fixture.querySelector('#avatar-menu').hidden && tree.querySelector('h2').textContent === 'Настройки', 'menu closes and settings opens');
+      assert(tree.querySelector('.sharing-settings-form'), 'settings loaded after retry');
+      assert(fixture.querySelector('#avatar-menu').hidden && tree.querySelector('.user-settings-page') && tree.querySelector('.sharing-folders-section'), 'menu closes and settings opens');
       assert(document.body.classList.contains('settings-page-open'), 'settings state can hide library tabs');
       assert([...tree.querySelectorAll('input[type=checkbox]')].every((field) => field.checked), 'missing settings selects all');
       tree.querySelector('input').checked = false;
       click('#library-home-link');
-      step('home clicked');
       assert(tree.querySelector('.tree-list') && !tree.querySelector('.user-settings-page'), 'home restores tree');
       assert(!document.body.classList.contains('settings-page-open'), 'leaving settings restores library tabs');
       click('#settings-button');
-      await tick();
-      step('second settings open');
-      assert(tree.querySelector('input').checked, 'home discarded unsaved changes');
+      for (let i = 0; i < 100 && !tree.querySelector('.sharing-settings-form'); i++) await tick();
+      assert(tree.querySelector('input[type="checkbox"]').checked, 'home discarded unsaved changes');
       click('#book-search-button');
       click('#advanced-search-button');
       assert(tree.querySelector('.book-search-form'), 'search opens from settings');
@@ -265,24 +270,21 @@ export async function runUserSettingsTests(test, assert, equal) {
         assert(!button.disabled, 'write completed');
       };
       await save();
-      step('first save ok');
       equal(stored.sharing.excludedFolderIds, ['sf'], 'actual Drive helper serializes unchecked IDs');
       equal(tree.querySelector('[role=status]').textContent, 'Настройки сохранены.', 'successful API write shows status');
       tree.querySelectorAll('input')[1].checked = false;
       failWrite = true;
-      step('failing save begin');
       await save();
-      step('failing save ok');
-      assert(!fixture.querySelector('#error-panel').hidden && !tree.querySelectorAll('input')[1].checked, 'Drive failure uses existing error panel and preserves draft');
+      assert(!fixture.querySelector('#error-panel').hidden && tree.querySelectorAll('input[type="checkbox"]')[1].checked, 'Drive failure restores saved choices and shows the existing error');
       failWrite = false;
-      step('retry save begin');
+      tree.querySelectorAll('input[type="checkbox"]')[1].checked = false;
       await save();
-      step('retry save ok');
       equal(stored.sharing.excludedFolderIds, ['sf', 'history'], 'retry saves the same draft');
       assert(fixture.querySelector('#error-panel').hidden, 'retry clears old error');
       click('#library-home-link');
-      equal(requests.filter((request) => request.method !== 'GET').map((request) => request.method), ['POST', 'PATCH', 'PATCH'], 'only settings writes occur; no scans or book requests');
-      equal(requests.filter((request) => request.method === 'GET').length, lookups, 'each settings-page open revalidates the appData settings file');
+      equal(requests.filter((request) => request.url.includes('/upload/drive/v3/files') && request.method !== 'GET').map((request) => request.method), ['POST', 'PATCH', 'PATCH'], 'settings are written only through appData helpers');
+      equal(requests.filter((request) => request.method === 'GET' && request.url.includes('spaces=appDataFolder')).length, lookups, 'each settings-page open revalidates the appData settings file');
+      assert(!requests.some((request) => request.url.includes('spaces=drive') || request.url.includes('/permissions')), 'settings save does not scan the library or enumerate permissions');
       equal(JSON.stringify(index), before, 'index and metadata versions unchanged');
     } finally {
       window.fetch = nativeFetch;

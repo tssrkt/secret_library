@@ -1,4 +1,4 @@
-import { initializeAuth, requestAccessToken, restoreAuthSession, clearAccessToken, getAccessToken } from '../js/auth.js?v=20261114-brave-oauth2-redirect';
+import { initializeAuth, requestAccessToken, restoreAuthSession, clearAccessToken, getAccessToken, AUTH_SCOPE_VERSION_KEY } from '../js/auth.js?v=20261114-brave-oauth2-redirect';
 import { driveFetch, downloadDriveFile } from '../js/drive.js';
 import { prepareBuildingIndex, canResumeBuildingIndex, updateBuildProgress } from '../js/index-build.js';
 import { indexPendingBooks } from '../js/metadata-indexer.js';
@@ -13,6 +13,8 @@ const library = (count, pending = count) => ({ version: INDEX_VERSION, rootFolde
 async function withGoogle(run) {
   const oldGoogle = window.google;
   const oldFetch = window.fetch;
+  const oldScopeVersion = localStorage.getItem(AUTH_SCOPE_VERSION_KEY);
+  localStorage.setItem(AUTH_SCOPE_VERSION_KEY, 'drive-file-picker-v1');
   const requests = [];
   let deny = false;
   const client = { requestAccessToken(options) {
@@ -25,7 +27,12 @@ async function withGoogle(run) {
   restoreAuthSession({ session: { getItem: () => JSON.stringify({ accessToken: 'old', expiresAt: Date.now() + 3600000,
     user: { emailAddress: 'checkpoint@example.com' } }) } });
   try { await run({ requests, deny: (value) => { deny = value; } }); }
-  finally { clearAccessToken(); window.google = oldGoogle; window.fetch = oldFetch; }
+  finally {
+    clearAccessToken();
+    if (oldScopeVersion === null) localStorage.removeItem(AUTH_SCOPE_VERSION_KEY);
+    else localStorage.setItem(AUTH_SCOPE_VERSION_KEY, oldScopeVersion);
+    window.google = oldGoogle; window.fetch = oldFetch;
+  }
 }
 
 export async function runResumableIndexingTests(test, assert, equal) {

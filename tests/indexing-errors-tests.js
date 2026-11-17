@@ -29,7 +29,8 @@ export async function runIndexingErrorTests(test, assert, equal, makeZip) {
     await withDrive(() => new Response(fb2), async (calls) => {
       const index = { books: [pendingBook('good')] };
       const stats = await indexPendingBooks(index);
-      equal([stats.succeeded, stats.failed, calls.length, calls[0].range, index.indexingErrors.length], [1, 0, 1, null, 0], 'single full read');
+      const bookReads = calls.filter((call) => call.fileId === 'good');
+      equal([stats.succeeded, stats.failed, bookReads.length, bookReads[0]?.range ?? null, index.indexingErrors.length], [1, 0, 1, null, 0], 'single full read; unrelated profile lookups are not book downloads');
       equal(index.books[0].title, 'Good', 'XML parsed');
     });
   });

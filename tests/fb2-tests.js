@@ -21,15 +21,15 @@ import { genreLabels, loadGenreDictionary } from '../js/genre-labels.js';
 import { BOOKS_PER_PAGE, createPaginator, paginateItems, paginationTokens } from '../js/pagination.js';
 import { filterBooksByDirectValue, russianBookCount } from '../js/direct-filter.js';
 import { seriesLabel } from '../js/book-series.js';
-import { runSearchTests } from './search-tests.js';
-import { runUserSettingsTests } from './user-settings-tests.js?v=20261115-avatar-bisect';
+import { runSearchTests } from './search-tests.js?v=20261117-release-prep';
+import { runUserSettingsTests } from './user-settings-tests.js?v=20261117-release-prep';
 import { runFolderTreeTests } from './folder-tree-tests.js';
-import { runPublicDocumentsTests } from './public-documents-tests.js';
-import { runIndexingErrorTests } from './indexing-errors-tests.js';
+import { runPublicDocumentsTests } from './public-documents-tests.js?v=20261117-release-prep';
+import { runIndexingErrorTests } from './indexing-errors-tests.js?v=20261117-release-prep';
 import { runBinaryRecoveryTests } from './fb2-binary-recovery-tests.js';
 import { runIndexingRunTests } from './indexing-run-tests.js';
 import { runIndexerResilienceTests } from './indexer-resilience-tests.js';
-import { runBookFormatTests } from './book-formats-tests.js';
+import { runBookFormatTests } from './book-formats-tests.js?v=20261117-release-prep4';
 import { runSocialUiTests } from './social-ui-tests.js';
 import {
   AUTH_SESSION_KEY, PREVIOUS_SIGN_IN_KEY, PERSISTED_PROFILE_KEY, clearAccessToken, clearPersistedAuth,
@@ -39,6 +39,10 @@ import {
 const output = document.querySelector('#results');
 let passed = 0;
 const failures = [];
+// Home-link clicks are SPA actions in these fixtures; never let a test navigate away from the runner.
+document.addEventListener('click', (event) => {
+  if (event.target.closest?.('#library-home-link')) event.preventDefault();
+}, true);
 
 function assert(value, message) {
   if (!value) throw new Error(message);
@@ -964,7 +968,7 @@ await test('whole card opens annotation while download remains an independent ac
   assert(downloads === 1 && opened.length === 4, 'download click downloads without opening annotation');
   download.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
   assert(opened.length === 4, 'keyboard event from download does not activate card');
-  equal(opened[1].book, { annotation: 'Long '.repeat(500).trim(), title: 'Noah', author: 'Julia', authors: ['Julia'], genres: [], coverFileId: null }, 'card passes existing modal data unchanged');
+  equal(opened[1].book, { annotation: 'Long '.repeat(500).trim(), title: 'Noah', author: 'Julia', authors: ['Julia'], genres: [], coverFileId: null, coverBook: { metadataStatus: 'ready', fileName: 'long.fb2', title: 'Noah', authors: ['Julia'], annotation: 'Long '.repeat(500) } }, 'card passes modal data and original book for cover loading');
   shortCard.remove();
   longCard.remove();
 });
@@ -1185,7 +1189,7 @@ await test('lazy folder tree renders books as cards only after folder expansion'
   fixture.innerHTML = `
     <button id="sign-in-button"></button><button id="refresh-button"></button><button id="metadata-button"></button>
     <button id="retry-metadata-button"></button><button id="stop-button"></button>
-    <div id="user-controls"><button id="avatar-button"><span id="avatar-placeholder"></span><img id="avatar-image"></button><div id="avatar-menu"><div class="account-identity"><strong id="account-display-name">Пользователь Google</strong><span id="account-email" hidden></span></div><button id="sign-out-button" role="menuitem">Выйти</button></div></div>
+    <div id="user-controls"><button id="avatar-button"><span id="avatar-placeholder"></span><img id="avatar-image"></button><div id="avatar-menu"><a class="account-identity-link" href="#"><div class="account-identity"><strong id="account-display-name">Пользователь Google</strong><span id="account-email" hidden></span></div></a><button id="sign-out-button" role="menuitem">Выйти</button></div></div>
     <p id="status-text"></p><dl id="stats"><div><dd id="folder-count"></dd></div><div><dd id="book-count"></dd></div></dl>
     <div id="error-panel"><p id="error-text"></p></div><button id="retry-button"></button>
     <section id="library-panel"><div id="library-tree"></div></section>
@@ -1590,7 +1594,7 @@ await runFolderTreeTests(test, assert, equal);
 await runPublicDocumentsTests(test, assert, equal);
 await runIndexingErrorTests(test, assert, equal, makeZip);
 await runBinaryRecoveryTests(test, assert, equal);
-await runFileSuite('./metadata-only-tests.js?v=20261115-test-suite-fixes', 'runMetadataOnlyTests', true);
+await runFileSuite('./metadata-only-tests.js?v=20261117-release-prep', 'runMetadataOnlyTests', true);
 await runIndexingRunTests(test, assert, equal);
 await runIndexerResilienceTests(test, assert, equal, makeZip);
 await runBookFormatTests(test, assert, equal, makeZip);

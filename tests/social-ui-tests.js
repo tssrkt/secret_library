@@ -409,7 +409,7 @@ export async function runSocialUiTests(test, assert, equal) {
       doc.querySelector('#notifications-panel').hidden = false;
       const panel = rect('#notifications-panel'); assert(panel.left >= 0 && panel.right <= width, 'dropdown fits viewport');
       const bell = doc.querySelector('#notifications-button'); bell.focus();
-      equal(frame.contentWindow.getComputedStyle(bell).outlineColor, 'rgb(116, 107, 96)', 'warm keyboard focus');
+      equal(frame.contentWindow.getComputedStyle(bell).outlineColor, 'rgb(138, 98, 59)', 'warm keyboard focus');
       frame.remove();
     }
   });

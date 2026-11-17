@@ -105,7 +105,7 @@ export function createSearchController({ container, header, button, quickForm, q
     header.classList.add('quick-search-open');
     button.setAttribute('aria-expanded', 'true');
     quickForm.inert = false;
-    quickInput.focus();
+    quickInput.focus({ preventScroll: true });
   });
   listen(quickInput, 'input', () => { searchState.query = quickInput.value; });
   listen(quickForm, 'submit', (event) => {
