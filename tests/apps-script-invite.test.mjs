@@ -1084,9 +1084,9 @@ test('administrative mutations reject path-shaped UIDs and share IDs before read
   assert.throws(() => app.context.setLibraryShareApi(actor, { id: 'target/../../adminUsers/root', active: false }), /Некорректный доступ/);
   assert.equal(app.writes.length, 0);
 });
-test('an active admin record remains authoritative when a ban record exists', () => {
+test('a banned administrator is denied even when their admin record is active', () => {
   const app = adminHarness({ permissions: { users: true }, banned: true });
-  assert.doesNotThrow(() => app.context.requireAdminApi('mod-uid', 'users'));
+  assert.throws(() => app.context.requireAdminApi('mod-uid', 'users'));
   assert.equal(app.writes.length, 0);
 });
 

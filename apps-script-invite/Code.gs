@@ -757,9 +757,10 @@ function handleAdminRequest(input) {
 }
 
 function requireAdminApi(uid, permission) {
-  // Admin access is determined by the admin record, not the user ban list.
   const admin = getAdminRecordCached(uid);
   if (!admin || admin.active !== true) throw new Error('Нет прав администратора.');
+  // A ban overrides an otherwise active administrator record, including superadmins.
+  if (fsGet('bannedUsers/' + uid)) throw new Error('\u041d\u0435\u0442 \u043f\u0440\u0430\u0432 \u0430\u0434\u043c\u0438\u043d\u0438\u0441\u0442\u0440\u0430\u0442\u043e\u0440\u0430.');
   if (admin.role !== 'superadmin' && permission && admin.permissions?.[permission] !== true) {
     throw new Error('Недостаточно прав для этого действия.');
   }
