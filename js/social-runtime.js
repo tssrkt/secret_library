@@ -1,4 +1,5 @@
 import { startFirebaseSession, endFirebaseSession } from './firebase-session.js';
+import { mergeAcceptedInvitationRows } from './social-model.js';
 import { createSocialStore } from './social-store.js?v=20261108-registered-sharing-relationship';
 import { createSharedLibraryStore } from './shared-library.js?v=20261117-stale-catalog-recovery';
 import { discoverDriveFriends, getRootFolderAccessState } from './drive-sharing.js?v=20261117-stale-catalog-recovery';
@@ -148,24 +149,26 @@ function combineFriendRows() {
     byUid.set(friend.uid, friend);
     if (email) byEmail.set(email, friend);
   }
-  // Accepted invitations are metadata, not an ongoing friendship. A person stays
-  // in Friends only while at least one library-sharing direction is active.
-  for (const accepted of acceptedInviteFriends) {
-    const email = String(accepted.email || '').trim().toLowerCase();
-    const existing = byUid.get(accepted.uid) || (email ? byEmail.get(email) : null);
-    if (!existing) continue;
-    if ((!existing.email || String(existing.email).startsWith('email:')) && email) existing.email = email;
-    if (accepted.displayName && (!existing.displayName || existing.displayName === existing.email)) {
-      existing.displayName = accepted.displayName;
-    }
+  // An accepted invitation establishes the inviter's outbound-sharing relationship.
+  // Keep the invited person visible while Drive discovery catches up; inbound access
+  // remains based only on an independently confirmed share from that person.
+  const withAcceptedInvitations = mergeAcceptedInvitationRows(friends, acceptedInviteFriends,
+    (accepted) => registeredOutboundAllowed(String(accepted.email || '').trim().toLowerCase())
+      && !closedAccessEmails.has(String(accepted.email || '').trim().toLowerCase()));
+  friends.splice(0, friends.length, ...withAcceptedInvitations);
+  byUid.clear(); byEmail.clear();
+  for (const friend of friends) {
+    byUid.set(friend.uid, friend);
+    const email = String(friend.email || '').trim().toLowerCase();
+    if (email) byEmail.set(email, friend);
   }
   // A registered sharing relationship keeps its row visible even when its
   // outbound mark is suppressed after a root-folder change: the friend stays
   // in the list with a ✕ and a «ПОДЕЛИТЬСЯ» button instead of disappearing.
-  const registeredOutboundEmails = new Set(registeredShareFriends
-    .filter((friend) => friend.outbound === true)
-    .map((friend) => String(friend.email || '').trim().toLowerCase())
-    .filter(Boolean));
+  const registeredOutboundEmails = new Set([
+    ...registeredShareFriends.filter((friend) => friend.outbound === true),
+    ...acceptedInviteFriends,
+  ].map((friend) => String(friend.email || '').trim().toLowerCase()).filter(Boolean));
   return friends.filter((friend) => {
     if (friend.inbound === true || friend.outbound === true) return true;
     const email = String(friend.email || '').trim().toLowerCase();
@@ -289,7 +292,15 @@ async function refreshDriveFriends(user, currentGeneration = generation, knownFr
       discoverDriveFriends(user, configuredRootFolderId, {}, combineFriendRows()).then(resolve, reject).finally(() => clearTimeout(timeout));
     });
     if (currentGeneration !== generation) return;
-    if (result.rootFolderId) configuredRootFolderId = result.rootFolderId;
+    if (result.rootFolderId) {
+      configuredRootFolderId = result.rootFolderId;
+      // If the root was discovered after Firebase connected, establish the
+      // initial folder baseline now so accepted invitees do not lose their mark.
+      if (!outboundFolderId) {
+        outboundFolderId = result.rootFolderId;
+        if (invitationUser?.uid) writeOutboundFolderId(invitationUser.uid, outboundFolderId);
+      }
+    }
     // If Drive's catalog search temporarily returns no records, retain the last
     // confirmed friend list from this browser instead of showing a false zero.
     // This fallback is local-only and does not add Firestore reads.

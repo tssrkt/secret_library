@@ -6,6 +6,31 @@ export function validateShareEmail(value, ownEmail) {
   return email;
 }
 export const shareId = (owner, viewer) => `${owner}__${viewer}`;
+
+// An accepted invitation belongs to the inviter's outbound-sharing list.
+// Keep the row even before Drive discovery catches up, but never infer inbound access.
+export function mergeAcceptedInvitationRows(friends = [], acceptedInvitations = [], canShare = () => true) {
+  const rows = [...(Array.isArray(friends) ? friends : [])];
+  for (const accepted of Array.isArray(acceptedInvitations) ? acceptedInvitations : []) {
+    const email = normalizeEmail(accepted?.email);
+    const uid = String(accepted?.uid || '');
+    if (!email || !uid) continue;
+    const existing = rows.find((friend) => String(friend.uid || '') === uid
+      || normalizeEmail(friend.email) === email);
+    const outbound = canShare(accepted) === true;
+    if (existing) {
+      existing.outbound ||= outbound;
+      if (!existing.email || String(existing.email).startsWith('email:')) existing.email = email;
+      if (accepted.displayName && (!existing.displayName || existing.displayName === existing.email)) {
+        existing.displayName = accepted.displayName;
+      }
+      continue;
+    }
+    rows.push({ uid, email, displayName: String(accepted.displayName || email), inbound: false,
+      outbound, isAdmin: false, catalogId: '' });
+  }
+  return rows;
+}
 export function friendsModel(uid, shares, profiles = {}, contacts = {}) {
   const friends = new Map();
   for (const share of shares) {

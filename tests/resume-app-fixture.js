@@ -2,7 +2,7 @@
 import { ROOT_FOLDER_ID, INDEX_VERSION, METADATA_VERSION } from '../js/config.js';
 import { prepareBuildingIndex, updateBuildProgress } from '../js/index-build.js';
 import { checkpointKey, saveCheckpoint, loadCheckpoint } from '../js/indexing-checkpoint.js';
-import { social } from '../js/social-runtime.js?v=20261117-friend-covers-module-identity';
+import { social } from '../js/social-runtime.js?v=20261117-accepted-invite-sharing';
 
 social.connect = async () => true;
 const owner = 'app-resume@example.com';

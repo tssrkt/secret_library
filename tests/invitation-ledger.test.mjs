@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { mergeAcceptedInvitationRows } from '../js/social-model.js';
 import {
   createInvitationLedger,
   normalizeInvitationLedger,
@@ -16,6 +17,21 @@ test('accepted ledger records restore friends after reconnect without exposing t
   ] };
   assert.deepEqual(acceptedInvitationFriends(ledger), [{ uid: 'friend-uid', email: 'friend@example.com', displayName: 'Reader' }]);
   assert.deepEqual(invitationLedgerRows(ledger).map((row) => row.inviteeEmail), ['pending@example.com']);
+});
+
+test('an accepted invitee stays in the inviter friend list with outbound sharing enabled', () => {
+  const accepted = [{ uid: 'smilodon-uid', email: 'Smilodon@example.com', displayName: 'Смилодон' }];
+  const rows = mergeAcceptedInvitationRows([], accepted, () => true);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].displayName, 'Смилодон');
+  assert.equal(rows[0].inbound, false, 'an invitation must not imply reciprocal sharing');
+  assert.equal(rows[0].outbound, true, 'the inviter shares their library with the registered invitee');
+
+  const refreshed = mergeAcceptedInvitationRows([{ ...rows[0], inbound: false, outbound: false }], accepted, () => true);
+  assert.equal(refreshed.length, 1, 'refresh must not duplicate the friend row');
+  assert.equal(refreshed[0].outbound, true, 'refresh restores the outbound mark');
+  assert.equal(mergeAcceptedInvitationRows([], accepted, () => false)[0].outbound, false,
+    'a changed root folder must not inherit old sharing permissions');
 });
 
 test('ledger rows expose only pending invitations and omit accepted emails', () => {
