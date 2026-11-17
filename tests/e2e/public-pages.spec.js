@@ -260,6 +260,10 @@ test('friend library cover uses the shared social loader and appears as an image
   await expect(page.locator('#sign-in-button')).toBeEnabled();
   await mountLibraryInBrowser(page, { friend: true });
 
+  await expect(page.locator('body')).toHaveClass(/viewing-friend-library/);
+  await expect(page.locator('#library-panel')).toHaveClass(/friend-library/);
+  await expect(page.locator('.folder-note-edit')).toHaveCount(0);
+
   const cover = page.locator('.book-cover-image');
   await expect(cover).toBeVisible();
   await expect(cover).toHaveAttribute('alt', 'Обложка: Книга для браузерного теста');

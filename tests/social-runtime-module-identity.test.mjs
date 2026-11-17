@@ -14,3 +14,15 @@ test('app, library UI, and friends UI share one social runtime module instance',
   assert.equal(new Set(imports.map(({ specifier }) => specifier)).size, 1,
     'different query strings create separate ES module instances and split shared Drive state');
 });
+
+test('resume fixture shares the app social runtime module instance', async () => {
+  const app = await readFile(new URL('../js/app.js', import.meta.url), 'utf8');
+  const fixture = await readFile(new URL('./resume-app-fixture.js', import.meta.url), 'utf8');
+  const specifier = (source, label) => {
+    const match = source.match(/social-runtime\.js(\?[^'\"]*)?/);
+    assert.ok(match, label + ' must import the social runtime');
+    return match[1] || '';
+  };
+  assert.equal(specifier(fixture, 'resume fixture'), specifier(app, 'app'),
+    'the fixture must patch the same module instance used by app.js, not trigger real Firebase auth');
+});
