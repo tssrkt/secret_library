@@ -258,6 +258,8 @@ export async function runUserSettingsTests(test, assert, equal) {
       await tick();
       assert(!tree.querySelector('.book-search-form') && tree.querySelector('.user-settings-page'), 'settings exits search');
       click('#library-home-link');
+      tree.querySelector('.folder-toggle').click();
+      assert(tree.querySelector('.book-author-link'), 'expanding a folder renders its books before filtering');
       click('.book-author-link');
       assert(tree.querySelector('.direct-results-title'), 'direct filter still works');
       click('.book-card-title');
