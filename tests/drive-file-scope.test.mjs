@@ -289,10 +289,11 @@ test('Every root-folder choice validates the Drive root and minimum books before
   assert.match(appSource, /индексируемых книг, а нужно не менее \$\{MINIMUM_LIBRARY_BOOKS\}\./, 'the minimum-books popup must state the real count and minimum');
   assert.match(appSource, /button\.className = 'settings-save-button'/, 'the popup button must reuse the settings-page button style');
   assert.match(appSource, /emailParagraph\.className = 'root-folder-emails'/, 'friend emails must be rendered as their own paragraph');
-  assert.match(appSource, /dialog\.append\(close, title, text, emailParagraph, footer\)/, 'the email paragraph must follow the main notice');
+  assert.match(appSource, /dialog\.append\(close, title, text, folderLinkParagraph, emailParagraph\)/, 'the optional Google Drive folder link must precede the email paragraph');
+  assert.match(appSource, /if \(copyEmails\) dialog\.append\(copyMessage\);\s*dialog\.append\(footer\)/, 'the optional email-copy feedback must appear before the popup action');
   const styles = await readFile(new URL('../css/styles.css', import.meta.url), 'utf8');
   assert.match(styles, /#annotation-modal-close, \.root-folder-close[^\n]*top: 14px; right: 16px;/, 'all popup close buttons must share the book popup positioning');
   assert.match(styles, /#annotation-modal-close:hover, \.root-folder-close:hover \{ background: #d2bea4; color: inherit; \}/, 'all popup close buttons must share the book popup hover response');
   assert.match(styles, /#annotation-modal-close > span, \.root-folder-close > span \{ position: relative; top: -4px;/, 'all popup close marks must share the book popup vertical offset');
-  assert.match(styles, /\.root-folder-emails \{[^}]*text-align: left;/, 'the email paragraph must be left-aligned');
+  assert.match(styles, /[^\n]*\.root-folder-emails[^\n]*\{[^}]*text-align: left;/, 'the email paragraph must be left-aligned even when sharing a rule with related popup paragraphs');
 });
