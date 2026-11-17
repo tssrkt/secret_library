@@ -1,5 +1,6 @@
 import { startFirebaseSession, endFirebaseSession } from './firebase-session.js';
 import { mergeAcceptedInvitationRows } from './social-model.js';
+import { syncDriveNotifications, getDriveNotifications, markDriveNotificationsSeen as markDriveNotificationsSeenInStorage } from './drive-notifications.js';
 import { createSocialStore } from './social-store.js?v=20261108-registered-sharing-relationship';
 import { createSharedLibraryStore } from './shared-library.js?v=20261117-stale-catalog-recovery';
 import { discoverDriveFriends, getRootFolderAccessState } from './drive-sharing.js?v=20261117-stale-catalog-recovery';
@@ -71,6 +72,9 @@ const acceptedLedgerSyncs = new Set();
 const knownContactsSyncs = new Map();
 const FRIEND_CACHE_PREFIX = 'secret-library-social-friends-v1:';
 let driveFriends = [];
+let driveRefreshCompletedWithoutAuth = false;
+let notificationBaselineCaptured = false;
+let notificationBaselineFriends = null;
 let registeredShareFriends = [];
 let acceptedInviteFriends = [];
 let ledgerInvitationRowsCache = [];
@@ -187,33 +191,16 @@ function writeFriendCache(uid, friends) {
     localStorage.setItem(`${FRIEND_CACHE_PREFIX}${uid}`, JSON.stringify(safe));
   } catch { /* A full or disabled local storage must not break the library. */ }
 }
-const NOTIFICATION_SEEN_PREFIX = 'secret-library-notifications-seen-v1:';
-function notificationIdentity(friend) { return String(friend?.uid || friend?.email || '').trim().toLowerCase(); }
-function readSeenNotifications() {
-  const identity = state.driveUserEmail || invitationUser?.uid || '';
-  if (!identity) return new Set();
-  try {
-    const value = JSON.parse(localStorage.getItem(`${NOTIFICATION_SEEN_PREFIX}${identity}`) || '[]');
-    return new Set(Array.isArray(value) ? value.filter((item) => typeof item === 'string') : []);
-  } catch { return new Set(); }
+function notificationStorageKey() { return state.driveUserEmail || invitationUser?.uid || ''; }
+function buildDriveNotifications(friends = driveFriends, baselineFriends = []) {
+  return syncDriveNotifications(friends, { storageKey: notificationStorageKey(), baselineFriends });
 }
-function buildDriveNotifications(friends = driveFriends) {
-  const seen = readSeenNotifications();
-  return friends.filter((friend) => friend.inbound && friend.uid && !String(friend.uid).startsWith('email:'))
-    .map((friend) => {
-      const key = notificationIdentity(friend);
-      return { ownerUid: friend.uid, email: friend.email || '', displayName: friend.displayName || 'Пользователь',
-        unread: Boolean(key && !seen.has(key)), mutual: friend.outbound === true, notificationKey: key };
-    }).sort((a, b) => a.displayName.localeCompare(b.displayName, 'ru'));
+function refreshDriveNotifications(friends = driveFriends) {
+  return getDriveNotifications(friends, { storageKey: notificationStorageKey() });
 }
 function markDriveNotificationsSeen(items = []) {
-  const identity = state.driveUserEmail || invitationUser?.uid || '';
-  if (!identity) return;
-  const seen = readSeenNotifications();
-  for (const item of items) if (item.notificationKey) seen.add(item.notificationKey);
-  try { localStorage.setItem(`${NOTIFICATION_SEEN_PREFIX}${identity}`, JSON.stringify([...seen].slice(-1000))); }
-  catch { /* Notifications remain usable for this session if storage is unavailable. */ }
-  emit({ notifications: buildDriveNotifications() });
+  markDriveNotificationsSeenInStorage(items, { storageKey: notificationStorageKey() });
+  emit({ notifications: refreshDriveNotifications() });
 }
 const emit = (change) => {
   state = { ...state, ...change };
@@ -304,7 +291,9 @@ async function refreshDriveFriends(user, currentGeneration = generation, knownFr
     // If Drive's catalog search temporarily returns no records, retain the last
     // confirmed friend list from this browser instead of showing a false zero.
     // This fallback is local-only and does not add Firestore reads.
-    const cachedFriends = invitationUser ? readFriendCache(invitationUser.uid) : null;
+    const cachedFriends = invitationUser
+      ? (notificationBaselineCaptured ? notificationBaselineFriends : readFriendCache(invitationUser.uid))
+      : null;
     // On initial discovery, do not present a persisted friend cache as if it were current.
     // Background refreshes may retain the last confirmed list to avoid disruptive false-zero states.
     driveFriends = result.friends.length ? result.friends
@@ -319,7 +308,18 @@ async function refreshDriveFriends(user, currentGeneration = generation, knownFr
     }
     const discoveryMessage = result.errors?.join(' ') || '';
     const usedFriendFallback = result.friends.length === 0 && driveFriends.length > 0;
-    emit({ friends: combineFriendRows(), notifications: buildDriveNotifications(driveFriends), ownRootFolderId: result.rootFolderId || configuredRootFolderId, driveDiscoveryMessage: usedFriendFallback ? `Не удалось повторно обнаружить библиотеки в Google Drive; временно показан последний сохранённый список друзей. ${discoveryMessage}` : discoveryMessage, driveDiscoveryStatus: usedFriendFallback ? 'error' : (result.discoveryStatus || 'ready') });
+    if (!invitationUser) driveRefreshCompletedWithoutAuth = true;
+    const baselineFriends = notificationBaselineCaptured
+      ? (notificationBaselineFriends || [])
+      : (cachedFriends || knownFriends);
+    const notifications = invitationUser
+      ? buildDriveNotifications(driveFriends, baselineFriends)
+      : refreshDriveNotifications(driveFriends);
+    if (invitationUser) {
+      notificationBaselineCaptured = false;
+      notificationBaselineFriends = null;
+    }
+    emit({ friends: combineFriendRows(), notifications, ownRootFolderId: result.rootFolderId || configuredRootFolderId, driveDiscoveryMessage: usedFriendFallback ? `Не удалось повторно обнаружить библиотеки в Google Drive; временно показан последний сохранённый список друзей. ${discoveryMessage}` : discoveryMessage, driveDiscoveryStatus: usedFriendFallback ? 'error' : (result.discoveryStatus || 'ready') });
     watchCatalogs(driveFriends);
   } catch (error) {
     // Keep the last confirmed Drive-derived list when Drive is temporarily unavailable.
@@ -341,7 +341,7 @@ export const social = {
       for (const friend of driveFriends) {
         if (friend.outbound) friend.outbound = false;
       }
-      emit({ friends: combineFriendRows(), notifications: buildDriveNotifications(driveFriends), ownRootFolderId: configuredRootFolderId });
+      emit({ friends: combineFriendRows(), notifications: refreshDriveNotifications(driveFriends), ownRootFolderId: configuredRootFolderId });
     }
     if (connectedDriveUser) void refreshDriveFriends(connectedDriveUser, generation, driveFriends, false);
   },
@@ -369,6 +369,9 @@ export const social = {
       emit({ driveUserEmail: String(driveUser?.email || driveUser?.emailAddress || '').trim().toLowerCase() });
       driveReader?.dispose();
       driveReader = createSharedLibraryStore({ user: { uid: '' } });
+      driveRefreshCompletedWithoutAuth = false;
+      notificationBaselineCaptured = false;
+      notificationBaselineFriends = null;
       driveFriends = [];
       registeredShareFriends = [];
       acceptedInviteFriends = [];
@@ -380,6 +383,12 @@ export const social = {
       // Keep invitation sending available as soon as Firebase Auth is ready. The
       // invitation API is independent of Firestore registration and subscriptions.
       invitationUser = session.user;
+      notificationBaselineFriends = readFriendCache(invitationUser.uid);
+      notificationBaselineCaptured = true;
+      if (driveRefreshCompletedWithoutAuth && connectedDriveUser) {
+        driveRefreshCompletedWithoutAuth = false;
+        void refreshDriveFriends(connectedDriveUser, current, driveFriends, false);
+      }
       store = createSocialStore(session);
       // Registered sharing marks describe the folder they were granted against;
       // remember it so a later root-folder change is detected even after reloads.
@@ -548,7 +557,7 @@ export const social = {
       else acceptedInviteFriends.push(registeredFriend);
       emit({ friends: combineFriendRows(),
         invitations: mergeInvitationRows(state.invitations, ledgerInvitationRowsCache, [normalizedEmail]),
-        notifications: buildDriveNotifications(driveFriends), ownRootFolderId: rootFolderId });
+        notifications: refreshDriveNotifications(driveFriends), ownRootFolderId: rootFolderId });
       watchCatalogs(driveFriends);
       void refreshDriveFriends(invitationUser, generation, driveFriends);
       return `Доступ к библиотеке уже открыт.`;
@@ -576,7 +585,7 @@ export const social = {
     if (known?.inbound) known.outbound = true;
     // Do not add a recipient to Friends merely because a Drive permission was granted.
     // Only a completed registration should create the friend relationship.
-    emit({ friends: combineFriendRows(), invitations: mergeInvitationRows(state.invitations, ledgerInvitationRowsCache, acceptedInviteFriends.map((friend) => friend.email)), notifications: buildDriveNotifications(driveFriends), ownRootFolderId: rootFolderId });
+    emit({ friends: combineFriendRows(), invitations: mergeInvitationRows(state.invitations, ledgerInvitationRowsCache, acceptedInviteFriends.map((friend) => friend.email)), notifications: refreshDriveNotifications(driveFriends), ownRootFolderId: rootFolderId });
     watchCatalogs(driveFriends);
     void refreshDriveFriends(invitationUser, generation, driveFriends);
     return result;
@@ -629,7 +638,7 @@ export const social = {
       for (const friend of driveFriends) {
         if (matchesEmail(friend)) friend.outbound = true;
       }
-      emit({ friends: combineFriendRows(), notifications: buildDriveNotifications(driveFriends), ownRootFolderId: rootFolderId });
+      emit({ friends: combineFriendRows(), notifications: refreshDriveNotifications(driveFriends), ownRootFolderId: rootFolderId });
       watchCatalogs(driveFriends);
       void refreshDriveFriends(invitationUser, generation, driveFriends);
     } else if (!access.granted && wasOutbound) {
