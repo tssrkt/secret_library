@@ -1,5 +1,6 @@
 import { USER_SETTINGS_FILE_NAME } from './config.js';
 import { listAppDataFiles, downloadAppDataFile, createAppDataFile, updateAppDataFile } from './drive.js';
+import { buildLibraryLookups, folderHasAnyBooks } from './library-view-model.js';
 
 async function readStoredSettings({ list = listAppDataFiles, download = downloadAppDataFile } = {}) {
   const files = await list(USER_SETTINGS_FILE_NAME);
@@ -33,7 +34,9 @@ export async function saveRootFolderPreference(rootFolderId, resourceKey = '', a
 }
 
 export function sharingFolders(index) {
-  return index.folders.filter((folder) => folder.parentId === index.rootFolderId);
+  const lookups = buildLibraryLookups(index);
+  return index.folders.filter((folder) => folder.parentId === index.rootFolderId
+    && folderHasAnyBooks(lookups, folder.id));
 }
 
 export function normalizeUserSettings(settings, index) {

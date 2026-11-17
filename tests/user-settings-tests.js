@@ -10,8 +10,11 @@ export async function runUserSettingsTests(test, assert, equal) {
     { id: 'lem', parentId: 'sf', name: 'Лем' },
     { id: 'history', parentId: 'root', name: 'История' },
     { id: 'new', parentId: 'root', name: 'Новые книги' },
-  ], books: [{ id: 'book', parentId: 'root', title: 'Книга', authors: ['Автор'], genres: ['sf'],
-    fileName: 'book.fb2', metadataStatus: 'ready', metadataVersion: METADATA_VERSION }] });
+  ], books: [
+    { id: 'book-sf', parentId: 'sf', title: 'Книга', authors: ['Автор'], genres: ['sf'], fileName: 'book.fb2', metadataStatus: 'ready', metadataVersion: METADATA_VERSION },
+    { id: 'book-history', parentId: 'history', title: 'История', authors: ['Автор'], genres: ['history'], fileName: 'history.fb2', metadataStatus: 'ready', metadataVersion: METADATA_VERSION },
+    { id: 'book-new', parentId: 'new', title: 'Новинка', authors: ['Автор'], genres: ['new'], fileName: 'new.fb2', metadataStatus: 'ready', metadataVersion: METADATA_VERSION },
+  ] });
   const settings = (rootFolderId = 'root') => ({ version: 1, rootFolderId,
     sharing: { excludedFolderIds: ['sf', 'deleted', 'lem', 'sf', null] } });
   const tick = () => new Promise((resolve) => setTimeout(resolve, 0));

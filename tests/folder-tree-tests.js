@@ -1,5 +1,5 @@
 import { buildLibraryLookups, countVisibleFolders, folderHasAnyBooks } from '../js/library-view-model.js';
-import { normalizeUserSettings, saveUserSettings } from '../js/user-settings.js';
+import { normalizeUserSettings, saveUserSettings, sharingFolders } from '../js/user-settings.js';
 
 export async function runFolderTreeTests(test, assert, equal) {
   const index = { rootFolderId: 'root', folders: [
@@ -44,6 +44,15 @@ export async function runFolderTreeTests(test, assert, equal) {
     assert(folderHasAnyBooks(lookups, 'mixed'), 'folder with a nested book-bearing subfolder');
     assert(folderHasAnyBooks(lookups, 'root'), 'the root holds books through its children');
     assert(!folderHasAnyBooks(lookups, 'missing-id'), 'unknown ids answer false without throwing');
+  });
+  await test('sharing folder list excludes empty branches but keeps folders with nested books', () => {
+    equal(sharingFolders(index).map((folder) => folder.id), ['books', 'mixed'],
+      'settings show only root folders that contain indexable books directly or in nested folders');
+    const unsupportedOnly = { rootFolderId: 'root', folders: [
+      { id: 'root', parentId: null }, { id: 'empty', parentId: 'root' },
+      { id: 'unsupported', parentId: 'root' }, { id: 'nested-empty', parentId: 'empty' },
+    ], books: [] };
+    equal(sharingFolders(unsupportedOnly), [], 'folders containing no indexed books are excluded');
   });
   await test('folder notes survive index rebuild and are saved by stable folder ID', async () => {
     const settings = normalizeUserSettings({ version: 1, rootFolderId: 'root', sharing: { excludedFolderIds: [] },
