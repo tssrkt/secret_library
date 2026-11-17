@@ -7,6 +7,8 @@ node_modules/
 *-debug.log
 .firebase/
 .tmp.driveupload/
+test-results/
+playwright-report/
 
 # Keep local environment files and secrets out of Git.
 .env
