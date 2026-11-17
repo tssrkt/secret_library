@@ -26,6 +26,7 @@ import { loadUserSettings, loadRootFolderPreference, loadRootFolderResourceKey, 
 import { ensureDriveFolderAuthorized, pickDriveFolder } from './google-picker.js?v=20261114-picker-no-timeout';
 import { firebaseConfigured } from './firebase-config.js';
 import { hasMinimumBooks, MINIMUM_LIBRARY_BOOKS } from './library-access.js';
+import { hasOutboundLibraryFriends } from './root-folder-notice.js';
 
 function reportOperationError(index, error, stage, fileId = '', fileName = '') {
   if (!index || error.indexingLogged) return;
@@ -255,7 +256,9 @@ async function pickRootFolderWithChecks() {
 // new folder manually. The notice appears immediately after the new folder is
 // saved, while the library is still being rebuilt underneath it.
 function showRootFolderChangeNotice() {
-  const emails = (social.getState().friends || [])
+  const friends = social.getState().friends || [];
+  if (!hasOutboundLibraryFriends(friends)) return;
+  const emails = friends
     .map((friend) => String(friend.email || '').trim())
     .filter(Boolean);
   const text = 'Корневая папка изменена, но теперь вам придется выдать все разрешения друзьям вручную и удалить их из старой папки, если желаете закрыть им к ней доступ на Google Drive.';
