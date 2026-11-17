@@ -1,4 +1,4 @@
-import { initializeAuth, requestAccessToken, restoreAuthSession, clearAccessToken, getAccessToken } from '../js/auth.js';
+import { initializeAuth, requestAccessToken, restoreAuthSession, clearAccessToken, getAccessToken } from '../js/auth.js?v=20261114-brave-oauth2-redirect';
 import { driveFetch, downloadDriveFile } from '../js/drive.js';
 import { prepareBuildingIndex, canResumeBuildingIndex, updateBuildProgress } from '../js/index-build.js';
 import { indexPendingBooks } from '../js/metadata-indexer.js';

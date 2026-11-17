@@ -1,7 +1,7 @@
 import { preserveBookMetadata, scanLibrary } from '../js/library-tree.js';
 import { createLibraryRefresher, scanStatus, scanFailureMessage } from '../js/library-refresh.js';
 import { listFolderChildren } from '../js/drive.js';
-import { restoreAuthSession, clearAccessToken } from '../js/auth.js';
+import { restoreAuthSession, clearAccessToken } from '../js/auth.js?v=20261114-brave-oauth2-redirect';
 import { INDEX_VERSION, METADATA_VERSION, FOLDER_MIME_TYPE } from '../js/config.js';
 import { canResumeBuildingIndex, prepareBuildingIndex, previousRecord, validateCompletedIndex } from '../js/index-build.js';
 import { indexPendingBooks } from '../js/metadata-indexer.js';

@@ -3,7 +3,7 @@ import { indexPendingBooks } from '../js/metadata-indexer.js';
 import { prepareBuildingIndex, validateCompletedIndex } from '../js/index-build.js';
 import { readFb2Description } from '../js/fb2.js';
 import { downloadFileRange } from '../js/drive.js';
-import { restoreAuthSession, clearAccessToken } from '../js/auth.js';
+import { restoreAuthSession, clearAccessToken } from '../js/auth.js?v=20261114-brave-oauth2-redirect';
 import { METADATA_VERSION } from '../js/config.js';
 import { formatIndexingErrors } from '../js/indexing-errors.js';
 import { createIndexingErrorsController } from '../js/indexing-errors-ui.js';

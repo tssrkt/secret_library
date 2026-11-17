@@ -34,7 +34,7 @@ import { runSocialUiTests } from './social-ui-tests.js';
 import {
   AUTH_SESSION_KEY, PREVIOUS_SIGN_IN_KEY, PERSISTED_PROFILE_KEY, clearAccessToken, clearPersistedAuth,
   createAuthAttemptGuard, getAccessToken, persistAuthSession, recoverAuthSession, restoreAuthSession,
-} from '../js/auth.js';
+} from '../js/auth.js?v=20261114-brave-oauth2-redirect';
 
 const output = document.querySelector('#results');
 let passed = 0;

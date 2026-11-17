@@ -1,7 +1,7 @@
 import { loadUserSettings, saveUserSettings, normalizeUserSettings, sharingFolders, loadRootFolderPreference, loadRootFolderResourceKey, saveRootFolderPreference } from '../js/user-settings.js';
 import { createUserSettingsController } from '../js/user-settings-ui.js';
 import { USER_SETTINGS_FILE_NAME, INDEX_VERSION, METADATA_VERSION } from '../js/config.js';
-import { restoreAuthSession, clearAccessToken } from '../js/auth.js';
+import { restoreAuthSession, clearAccessToken } from '../js/auth.js?v=20261114-brave-oauth2-redirect';
 
 export async function runUserSettingsTests(test, assert, equal) {
   const makeIndex = () => ({ version: INDEX_VERSION, rootFolderId: 'root', folders: [
