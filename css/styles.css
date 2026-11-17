@@ -125,6 +125,20 @@ button {
   background: #684629;
 }
 
+/* Keep these prominent actions consistent with the book download button. */
+#retry-button,
+.avatar-button,
+.indexing-continuation-button {
+  color: var(--download-text);
+  background: var(--download-accent);
+}
+
+#retry-button:not(:disabled):hover,
+.avatar-button:not(:disabled):hover,
+.indexing-continuation-button:not(:disabled):hover {
+  background: var(--download-hover);
+}
+
 button.secondary { color: #4f3825; background: #e4d7c5; }
 button.danger { background: #9a342d; }
 button.compact { padding: .2rem .55rem; font-size: 1.25rem; }

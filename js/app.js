@@ -15,7 +15,7 @@ import {
   canResumeBuildingIndex, prepareBuildingIndex, updateBuildProgress, validateCompletedIndex,
 } from './index-build.js';
 import { prepareIndexingRun, createRetryEligibilityCheck } from './indexing-run.js';
-import * as ui from './ui.js?v=20261115-friends-invitations-pagination';
+import * as ui from './ui.js?v=20261117-button-accent';
 import { errorDetails, recordIndexingError } from './indexing-errors.js';
 import { social, socialError } from './social-runtime.js?v=20261117-drive-relationship-verification';
 import { getAccessToken } from './auth.js?v=20261114-brave-oauth2-redirect';

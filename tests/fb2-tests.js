@@ -1359,7 +1359,7 @@ await test('production controls keep stop in status panel and menu actions out o
   assert(!page.querySelector('.app-header #stop-button'), 'stop is absent from header');
   assert(page.querySelector('h1').textContent === 'Тайная Библиотека', 'header title');
   const fixture = document.createElement('div');
-  fixture.innerHTML = '<div class="user-controls" style="width:43px"><button class="avatar-button"></button><div class="avatar-menu"><button>Item</button></div></div><section id="library-panel"><article class="book-card"><button class="book-download-button">СКАЧАТЬ</button></article></section><button class="theme-button">Action</button><button hidden>Hidden</button>';
+  fixture.innerHTML = '<div class="user-controls" style="width:43px"><button class="avatar-button"></button><div class="avatar-menu"><button>Item</button></div></div><section id="library-panel"><article class="book-card"><button class="book-download-button">СКАЧАТЬ</button></article></section><button id="retry-button">Построить индекс заново</button><button class="indexing-continuation-button">Продолжить индексацию</button><button class="theme-button">Action</button><button hidden>Hidden</button>';
   document.body.append(fixture);
   const menuStyles = getComputedStyle(fixture.querySelector('.avatar-menu'));
   assert(menuStyles.position === 'absolute', 'dropdown is outside layout flow');
@@ -1375,11 +1375,14 @@ await test('production controls keep stop in status panel and menu actions out o
   assert(getComputedStyle(fixture.querySelector('#library-panel')).backgroundColor === 'rgb(255, 253, 249)', 'original panel background is restored from history');
   assert(getComputedStyle(fixture.querySelector('.book-card')).backgroundColor === 'rgb(255, 250, 243)', 'original card background is restored from history');
   assert(getComputedStyle(fixture.querySelector('.avatar-menu')).backgroundColor === 'rgb(255, 253, 249)', 'original menu background is restored from history');
-  assert(getComputedStyle(fixture.querySelector('.theme-button')).backgroundColor === 'rgb(104, 70, 41)', 'ordinary buttons use original brown accent');
+  assert(getComputedStyle(fixture.querySelector('.theme-button')).backgroundColor === 'rgb(104, 70, 41)', 'unrelated ordinary buttons retain their existing accent');
   assert(rootStyles.getPropertyValue('--download-accent').trim() === '#273142', 'current download accent is preserved');
   assert(rootStyles.getPropertyValue('--download-hover').trim() === '#11141a', 'current download hover is preserved');
   const downloadColor = getComputedStyle(fixture.querySelector('.book-download-button')).backgroundColor;
   assert(downloadColor === 'rgb(39, 49, 66)', 'download keeps its dedicated accent');
+  assert(getComputedStyle(fixture.querySelector('.indexing-continuation-button')).backgroundColor === downloadColor, 'indexing continuation matches the download accent');
+  assert(getComputedStyle(fixture.querySelector('#retry-button')).backgroundColor === downloadColor, 'rebuild-index action matches the download accent');
+  assert(getComputedStyle(fixture.querySelector('.avatar-button')).backgroundColor === downloadColor, 'avatar button matches the download accent');
   assert(getComputedStyle(fixture.lastElementChild).display === 'none', 'hidden actions take no space');
   fixture.remove();
 });

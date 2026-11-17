@@ -225,6 +225,7 @@ export function setStatus(message) { elements.status.textContent = message; }
 
 const continueIndexing = document.createElement('button');
 continueIndexing.type = 'button';
+continueIndexing.className = 'indexing-continuation-button';
 continueIndexing.hidden = true;
 elements.status.after(continueIndexing);
 export function setIndexingContinuation(state, resume = null) {

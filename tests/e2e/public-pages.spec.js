@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 
 const AUTH_MODULE = '/js/auth.js?v=20261114-brave-oauth2-redirect';
-const UI_MODULE = '/js/ui.js?v=20261115-friends-invitations-pagination';
+const UI_MODULE = '/js/ui.js?v=20261117-button-accent';
 const SOCIAL_MODULE = '/js/social-runtime.js?v=20261117-drive-relationship-verification';
 
 async function mockGoogleIdentity(page, behavior = 'error') {
@@ -159,6 +159,26 @@ test('home page boots and exposes the expected signed-out controls', async ({ pa
   await expect(page.locator('#library-home-link')).toHaveAttribute('href', './index.html');
   await expect(page.locator('#user-controls')).toBeHidden();
   await expect(page.locator('#sign-in-button')).toBeEnabled();
+  const accentCheck = await page.evaluate(() => {
+    const download = document.createElement('button');
+    download.className = 'book-download-button';
+    document.body.append(download);
+    const continuation = document.createElement('button');
+    continuation.className = 'indexing-continuation-button';
+    document.body.append(continuation);
+    const downloadColor = getComputedStyle(download).backgroundColor;
+    const result = {
+      downloadColor,
+      continuationColor: getComputedStyle(continuation).backgroundColor,
+      retryColor: getComputedStyle(document.querySelector('#retry-button')).backgroundColor,
+      avatarColor: getComputedStyle(document.querySelector('#avatar-button')).backgroundColor,
+    };
+    download.remove(); continuation.remove();
+    return result;
+  });
+  expect(accentCheck.continuationColor).toBe(accentCheck.downloadColor);
+  expect(accentCheck.retryColor).toBe(accentCheck.downloadColor);
+  expect(accentCheck.avatarColor).toBe(accentCheck.downloadColor);
 
   expect(pageErrors, 'uncaught browser errors').toEqual([]);
   expect(localFailures, 'failed local assets').toEqual([]);
