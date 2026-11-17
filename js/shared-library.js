@@ -153,7 +153,16 @@ export function createSharedLibraryStore({ user, authorizeItem = ensureDriveItem
           ensureCurrent();
           if (index.ownerUid !== owner || !Array.isArray(index.books) || !Array.isArray(index.folders) || !index.rootFolderId
               || typeof index.signature !== 'string') throw new Error('Каталог библиотеки повреждён или не соответствует владельцу.');
-          if (index.published === false) throw new Error('Владелец библиотеки снял публикацию.');
+          if (index.published === false) {
+            // A tab may hold a catalog ID discovered before the owner restored the
+            // original root and republished. Re-resolve by owner before declaring
+            // the library unpublished; the old ID may now be only a tombstone.
+            if (attempt === 0 && !file.cached) {
+              const replacement = await findDriveCatalogFile(owner);
+              if (replacement && replacement.id !== file.id) { file = replacement; continue; }
+            }
+            throw new Error('Владелец библиотеки снял публикацию.');
+          }
           return index;
         } catch (error) {
           if (attempt === 0 && file.cached && (error?.status === 403 || error?.status === 404)) {

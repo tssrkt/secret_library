@@ -370,3 +370,22 @@ test('does not invalidate Picker state or open Picker when a folder update is re
   assert.deepEqual(forgotten, []);
   assert.equal(calls.at(-1).options.method, 'PATCH');
 });
+
+
+test('ignores an old unpublished catalog tombstone instead of advertising a broken friend tab', async () => {
+  const request = async (path) => {
+    const url = new URL(path, 'https://drive.googleapis.com');
+    const q = url.searchParams.get('q') || '';
+    if (url.pathname === '/files' && q.includes("name = '.secret-library-catalog.json'")) {
+      return { files: [{ id: 'old-tombstone', name: '.secret-library-catalog.json', mimeType: 'application/json', parents: ['root-friend'], owners: [{ emailAddress: 'friend@example.com' }] }] };
+    }
+    if (url.pathname === '/files/root-me') return { id: 'root-me', mimeType: 'application/vnd.google-apps.folder' };
+    if (url.pathname === '/files/root-me/permissions') return { permissions: [] };
+    throw new Error(`Unexpected Drive request: ${path}`);
+  };
+  const result = await discoverDriveFriends(
+    { uid: 'me-uid', email: 'me@example.com' }, 'root-me',
+    { driveFetch: request, downloadDriveJsonFile: async () => ({ ownerUid: 'friend-uid', rootFolderId: 'root-friend', published: false, books: [], folders: [] }) },
+  );
+  assert.equal(result.friends.some((friend) => friend.uid === 'friend-uid' && friend.inbound), false);
+});

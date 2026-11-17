@@ -227,6 +227,7 @@ export async function discoverDriveFriends(user, configuredRootFolderId = '', ap
         continue;
       }
       if (!catalog || typeof catalog.ownerUid !== 'string' || !catalog.ownerUid
+          || catalog.published === false
           || catalog.ownerUid === user?.uid || catalog.rootFolderId === rootFolderId || !catalog.rootFolderId
           || !(file.parents || []).includes(catalog.rootFolderId)) {
         note('catalog-validation', `Файл ${file.id} отклонён: ${!catalog ? 'пустой JSON' : !catalog.ownerUid ? 'нет ownerUid' : catalog.ownerUid === user.uid ? 'это собственный каталог' : !catalog.rootFolderId ? 'нет rootFolderId' : 'rootFolderId отсутствует в parents файла'}.`);

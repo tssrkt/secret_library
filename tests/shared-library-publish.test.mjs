@@ -202,3 +202,34 @@ test('published Drive catalog is created in the selected root without exposing p
   assert.doesNotMatch(requestBody, /private-drive-cover-id|coverFileId/,
     'private Drive cover IDs are not included in the published catalog');
 });
+
+
+test('re-resolves a stale tombstone ID and opens the live catalog for the same owner', async () => {
+  const liveCatalog = {
+    version: 4, rootFolderId: 'restored-root', folders: [{ id: 'restored-root', parentId: null, name: 'Restored root' }],
+    books: [{ id: 'book-1', parentId: 'restored-root', title: 'Visible book' }],
+    ownerUid: 'friend-owner', signature: 'live-signature', published: true,
+  };
+  globalThis.fetch = async (input) => {
+    const url = new URL(String(input));
+    let payload = {};
+    if (url.pathname === '/drive/v3/files') {
+      payload = { files: [
+        { id: 'old-tombstone', name: '.secret-library-catalog.json', mimeType: 'application/json', parents: ['old-root'], appProperties: { secretLibraryOwnerUid: 'friend-owner' } },
+        { id: 'live-catalog', name: '.secret-library-catalog.json', mimeType: 'application/json', parents: ['restored-root'], appProperties: { secretLibraryOwnerUid: 'friend-owner' } },
+      ] };
+    } else if (url.pathname === '/drive/v3/files/old-tombstone') {
+      payload = { version: 4, rootFolderId: 'old-root', folders: [], books: [], ownerUid: 'friend-owner', signature: 'old-signature', published: false };
+    } else if (url.pathname === '/drive/v3/files/live-catalog') {
+      payload = liveCatalog;
+    } else {
+      payload = { error: { message: `Unexpected request ${url.pathname}` } };
+      return { ok: false, status: 400, headers: { get: () => null }, json: async () => payload, clone() { return { json: async () => payload }; } };
+    }
+    return { ok: true, status: 200, json: async () => payload, clone() { return { json: async () => payload }; } };
+  };
+  const store = createSharedLibraryStore({ user: { uid: 'viewer' } });
+  const loaded = await store.load('friend-owner', 'old-tombstone');
+  assert.equal(loaded.signature, 'live-signature');
+  assert.equal(loaded.books[0].title, 'Visible book');
+});

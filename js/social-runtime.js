@@ -1,7 +1,7 @@
 import { startFirebaseSession, endFirebaseSession } from './firebase-session.js';
 import { createSocialStore } from './social-store.js?v=20261108-registered-sharing-relationship';
-import { createSharedLibraryStore } from './shared-library.js?v=20261109-drive-picker-auth-recovery';
-import { discoverDriveFriends, getRootFolderAccessState } from './drive-sharing.js?v=20261112-guided-manual-sharing';
+import { createSharedLibraryStore } from './shared-library.js?v=20261117-stale-catalog-recovery';
+import { discoverDriveFriends, getRootFolderAccessState } from './drive-sharing.js?v=20261117-stale-catalog-recovery';
 import { findDriveCatalogFile, downloadDriveJsonFile, getCurrentDriveUser } from './drive.js';
 import { sendInvitationEmail, getInvitationStatuses as fetchInvitationStatuses, cancelInvitation as cancelInvitationToken } from './invitation-mailer.js?v=20261108-email-registry-auth';
 import { createInvitationLedger, acceptedInvitationFriends, invitationLedgerRows, mergeInvitationRows } from './invitation-ledger.js?v=20261107-ledger-server-discovery';
@@ -297,10 +297,12 @@ async function refreshDriveFriends(user, currentGeneration = generation, knownFr
     // On initial discovery, do not present a persisted friend cache as if it were current.
     // Background refreshes may retain the last confirmed list to avoid disruptive false-zero states.
     driveFriends = result.friends.length ? result.friends
-      : (!announceLoading && cachedFriends?.length ? cachedFriends : (knownFriends || []));
-    // Fallback rows (local cache or the previous in-memory list) describe the
-    // root folder they were established on; their outbound marks do not apply
-    // to a newly selected folder. Freshly discovered rows are always accurate.
+      : (!announceLoading && result.discoveryStatus === 'error'
+        ? (cachedFriends?.length ? cachedFriends : (knownFriends || [])) : []);
+    // A successful empty Drive search means no currently accessible published
+    // libraries; never resurrect stale inbound tabs from the local cache. Keep
+    // cached rows only when catalog discovery itself failed, and mark those rows
+    // as unverified. Freshly discovered rows are always authoritative.
     if (!result.friends.length && configuredRootFolderId !== outboundFolderId) {
       driveFriends = driveFriends.map((friend) => friend.outbound ? { ...friend, outbound: false } : friend);
     }
