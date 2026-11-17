@@ -1,6 +1,6 @@
 import { copyTextToClipboard } from './clipboard.js';
 import { createPaginator, paginateItems } from './pagination.js';
-import { socialError } from './social-runtime.js?v=20261117-notification-events';
+import { socialError } from './social-runtime.js?v=20261117-drive-relationship-verification';
 
 const HOUR_MS = 60 * 60 * 1000;
 // Pagination shows up in the settings page only past 25 rows, same as the

@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 
 const AUTH_MODULE = '/js/auth.js?v=20261114-brave-oauth2-redirect';
 const UI_MODULE = '/js/ui.js?v=20261115-friends-invitations-pagination';
-const SOCIAL_MODULE = '/js/social-runtime.js?v=20261117-notification-events';
+const SOCIAL_MODULE = '/js/social-runtime.js?v=20261117-drive-relationship-verification';
 
 async function mockGoogleIdentity(page, behavior = 'error') {
   await page.route('https://accounts.google.com/gsi/client', (route) => route.fulfill({

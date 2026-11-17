@@ -87,7 +87,7 @@ test('does not enumerate shared folders without a published catalog', async () =
   assert.equal(result.errors.join(' ').includes('shared-folder-no-catalog'), false);
 });
 
-test('finds a friend library by known email without requiring reciprocal sharing', async () => {
+test('does not treat a shared catalog as inbound access when its root folder is inaccessible', async () => {
   const request = async (path) => {
     const url = new URL(path, 'https://drive.googleapis.com');
     const q = url.searchParams.get('q') || '';
@@ -118,9 +118,10 @@ test('finds a friend library by known email without requiring reciprocal sharing
     },
     [{ uid: 'olya-uid', email: 'olya@example.com', displayName: 'Olya' }],
   );
-  assert.ok(result.friends.some((friend) => friend.uid === 'olya-uid' && friend.inbound && friend.email === 'olya@example.com'));
-  assert.match(result.errors.join(' '), /catalog-search/);
-  assert.match(result.errors.join(' '), /метаданные корневой папки root-olya недоступны/);
+  assert.equal(result.friends.some((friend) => friend.uid === 'olya-uid' && friend.inbound), false);
+  assert.equal(result.verifiedRelationships['olya@example.com']?.inbound, false);
+  assert.equal(result.verifiedRelationships['olya@example.com']?.inboundVerified, true);
+  assert.match(result.errors.join(' '), /корневая папка root-olya недоступна/);
 });
 
 test('getRootFolderAccessState verifies reader access read-only without mutating permissions', async () => {
@@ -228,7 +229,7 @@ test('discovers a shared catalog from Drive owner metadata without Firebase UID 
     if (url.pathname === '/files' && q.includes("name = '.secret-library-catalog.json'")) {
       return { files: [{ id: 'catalog-friend', name: '.secret-library-catalog.json', mimeType: 'application/json', parents: ['root-friend'], owners: [{ displayName: 'Friend', emailAddress: 'friend@example.com' }] }] };
     }
-    if (url.pathname === '/files/root-friend') { const error = new Error('metadata unavailable'); error.status = 404; throw error; }
+    if (url.pathname === '/files/root-friend') return { id: 'root-friend', name: 'Friend Library', mimeType: 'application/vnd.google-apps.folder', owners: [{ emailAddress: 'friend@example.com', displayName: 'Friend' }] };
     throw new Error(`Unexpected Drive request: ${path}`);
   };
   const result = await discoverDriveFriends(
@@ -238,7 +239,8 @@ test('discovers a shared catalog from Drive owner metadata without Firebase UID 
     [],
   );
   assert.ok(result.friends.some((friend) => friend.uid === 'friend-uid' && friend.inbound && friend.email === 'friend@example.com' && friend.displayName === 'Olya Shustrik'));
-  assert.match(result.errors.join(' '), /владелец сопоставлен по данным Google Drive/);
+  assert.equal(result.verifiedRelationships['friend@example.com']?.inbound, true);
+  assert.equal(result.verifiedRelationships['friend@example.com']?.inboundVerified, true);
 });
 
 test('folder sharing settings enable and disable real Drive limited access', async () => {
@@ -388,4 +390,45 @@ test('ignores an old unpublished catalog tombstone instead of advertising a brok
     { driveFetch: request, downloadDriveJsonFile: async () => ({ ownerUid: 'friend-uid', rootFolderId: 'root-friend', published: false, books: [], folders: [] }) },
   );
   assert.equal(result.friends.some((friend) => friend.uid === 'friend-uid' && friend.inbound), false);
+});
+
+
+test('successful Drive permission read clears stale outbound relationship when access was revoked', async () => {
+  const request = async (path) => {
+    const url = new URL(path, 'https://drive.googleapis.com');
+    const q = url.searchParams.get('q') || '';
+    if (url.pathname === '/files' && q.includes("name = '.secret-library-catalog.json'")) return { files: [] };
+    if (url.pathname === '/files/root-me') return { id: 'root-me', mimeType: 'application/vnd.google-apps.folder' };
+    if (url.pathname === '/files/root-me/permissions') return { permissions: [
+      { type: 'user', emailAddress: 'me@example.com', role: 'owner' },
+    ] };
+    throw new Error(`Unexpected Drive request: ${path}`);
+  };
+  const result = await discoverDriveFriends(
+    { uid: 'me-uid', email: 'me@example.com' }, 'root-me', { driveFetch: request },
+    [{ uid: 'friend-uid', email: 'friend@example.com', displayName: 'Friend', inbound: false, outbound: true }],
+  );
+  assert.equal(result.verifiedRelationships['friend@example.com']?.outbound, false);
+  assert.equal(result.verifiedRelationships['friend@example.com']?.outboundVerified, true);
+  assert.equal(result.friends.some((friend) => friend.email === 'friend@example.com' && friend.outbound), false);
+});
+
+
+test('rechecks a cached incoming root directly on Drive when its catalog disappears', async () => {
+  const request = async (path) => {
+    const url = new URL(path, 'https://drive.googleapis.com');
+    const q = url.searchParams.get('q') || '';
+    if (url.pathname === '/files' && q.includes("name = '.secret-library-catalog.json'")) return { files: [] };
+    if (url.pathname === '/files/root-me') return { id: 'root-me', mimeType: 'application/vnd.google-apps.folder' };
+    if (url.pathname === '/files/root-me/permissions') return { permissions: [] };
+    if (url.pathname === '/files/root-friend') { const error = new Error('not accessible'); error.status = 404; throw error; }
+    throw new Error(`Unexpected Drive request: ${path}`);
+  };
+  const result = await discoverDriveFriends(
+    { uid: 'me-uid', email: 'me@example.com' }, 'root-me', { driveFetch: request },
+    [{ uid: 'friend-uid', email: 'friend@example.com', displayName: 'Friend', rootFolderId: 'root-friend', inbound: true, outbound: false }],
+  );
+  assert.equal(result.verifiedRelationships['friend@example.com']?.inbound, false);
+  assert.equal(result.verifiedRelationships['friend@example.com']?.inboundVerified, true);
+  assert.equal(result.friends.some((friend) => friend.email === 'friend@example.com' && friend.inbound), false);
 });

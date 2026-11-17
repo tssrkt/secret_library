@@ -3,7 +3,7 @@ import { mergeAcceptedInvitationRows } from './social-model.js';
 import { syncDriveNotifications, getDriveNotifications, markDriveNotificationsSeen as markDriveNotificationsSeenInStorage } from './drive-notifications.js';
 import { createSocialStore } from './social-store.js?v=20261108-registered-sharing-relationship';
 import { createSharedLibraryStore } from './shared-library.js?v=20261117-stale-catalog-recovery';
-import { discoverDriveFriends, getRootFolderAccessState } from './drive-sharing.js?v=20261117-stale-catalog-recovery';
+import { discoverDriveFriends, getRootFolderAccessState } from './drive-sharing.js?v=20261117-drive-relationship-verification';
 import { findDriveCatalogFile, downloadDriveJsonFile, getCurrentDriveUser } from './drive.js';
 import { sendInvitationEmail, getInvitationStatuses as fetchInvitationStatuses, cancelInvitation as cancelInvitationToken } from './invitation-mailer.js?v=20261108-email-registry-auth';
 import { createInvitationLedger, acceptedInvitationFriends, invitationLedgerRows, mergeInvitationRows } from './invitation-ledger.js?v=20261107-ledger-server-discovery';
@@ -72,6 +72,10 @@ const acceptedLedgerSyncs = new Set();
 const knownContactsSyncs = new Map();
 const FRIEND_CACHE_PREFIX = 'secret-library-social-friends-v1:';
 let driveFriends = [];
+// Per-email relationship checks come only from the latest successful Google Drive reads.
+// Unverified directions retain their previous state instead of turning errors into crosses.
+let verifiedDriveRelationships = new Map();
+let verifiedDriveRootFolderId = '';
 let driveRefreshCompletedWithoutAuth = false;
 let notificationBaselineCaptured = false;
 let notificationBaselineFriends = null;
@@ -160,6 +164,15 @@ function combineFriendRows() {
     (accepted) => registeredOutboundAllowed(String(accepted.email || '').trim().toLowerCase())
       && !closedAccessEmails.has(String(accepted.email || '').trim().toLowerCase()));
   friends.splice(0, friends.length, ...withAcceptedInvitations);
+  // Google Drive verification is authoritative for each direction. Do not let
+  // older invitation/store snapshots resurrect a revoked permission mark.
+  for (const friend of friends) {
+    const email = String(friend.email || '').trim().toLowerCase();
+    const verified = verifiedDriveRelationships.get(email);
+    if (!verified) continue;
+    if (verified.inboundVerified === true) friend.inbound = verified.inbound === true;
+    if (verified.outboundVerified === true) friend.outbound = verified.outbound === true;
+  }
   byUid.clear(); byEmail.clear();
   for (const friend of friends) {
     byUid.set(friend.uid, friend);
@@ -186,6 +199,7 @@ function writeFriendCache(uid, friends) {
       .map((friend) => ({
         uid: friend.uid, displayName: String(friend.displayName || '').slice(0, 160),
         email: String(friend.email || '').slice(0, 254), catalogId: String(friend.catalogId || '').slice(0, 256),
+        rootFolderId: String(friend.rootFolderId || '').slice(0, 256),
         inbound: friend.inbound === true, outbound: friend.outbound === true, isAdmin: friend.isAdmin === true,
       }));
     localStorage.setItem(`${FRIEND_CACHE_PREFIX}${uid}`, JSON.stringify(safe));
@@ -229,6 +243,7 @@ async function syncAcceptedInvitationStatuses(emails, currentGeneration = genera
       const previous = existingIndex >= 0 ? acceptedInviteFriends[existingIndex] : {};
       const registered = { uid: String(status.registeredUid), email,
         displayName: String(status.registeredDisplayName || driveFriend?.displayName || email),
+        rootFolderId: String(driveFriend?.rootFolderId || previous.rootFolderId || ''),
         inbound: driveFriend?.inbound === true || previous.inbound === true,
         outbound: driveFriend?.outbound === true || previous.outbound === true };
       if (existingIndex >= 0) acceptedInviteFriends[existingIndex] = { ...previous, ...registered };
@@ -238,7 +253,10 @@ async function syncAcceptedInvitationStatuses(emails, currentGeneration = genera
     }
     if (status?.accepted !== true || !status.acceptedUid) continue;
     acceptedEmails.push(email);
-    const accepted = { uid: String(status.acceptedUid), email, displayName: String(status.acceptedDisplayName || email), inbound: true, outbound: true };
+    const driveFriend = driveFriends.find((friend) => String(friend.email || '').trim().toLowerCase() === email
+      || String(friend.uid || '') === String(status.acceptedUid));
+    const accepted = { uid: String(status.acceptedUid), email, displayName: String(status.acceptedDisplayName || driveFriend?.displayName || email),
+      rootFolderId: String(driveFriend?.rootFolderId || ''), inbound: true, outbound: true };
     const index = acceptedInviteFriends.findIndex((friend) => String(friend.email || "").trim().toLowerCase() === email);
     if (index >= 0) acceptedInviteFriends[index] = { ...acceptedInviteFriends[index], ...accepted };
     else acceptedInviteFriends.push(accepted);
@@ -274,11 +292,28 @@ async function refreshDriveFriends(user, currentGeneration = generation, knownFr
     // Folder discovery, catalog reads and library availability are Google Drive-only.
     // Friend tabs are discovered from Drive permissions and Drive catalogs; a prior
     // local snapshot is only a fallback if Drive unexpectedly returns no friends.
+    const knownDriveRows = combineFriendRows();
+    // The local cache contributes only previously verified root IDs for read-only
+    // Drive rechecks; it is never treated as current access and never written to DB.
+    const cachedDriveRows = invitationUser ? (readFriendCache(invitationUser.uid) || []) : [];
     const result = await new Promise((resolve, reject) => {
       const timeout = setTimeout(() => reject(new Error('Поиск друзей в Google Drive не завершился за 25 секунд. Список зарегистрированных друзей загружен отдельно; повторите обновление, чтобы проверить доступ к библиотекам.')), 25000);
-      discoverDriveFriends(user, configuredRootFolderId, {}, combineFriendRows()).then(resolve, reject).finally(() => clearTimeout(timeout));
+      discoverDriveFriends(user, configuredRootFolderId, {}, [...knownDriveRows, ...cachedDriveRows]).then(resolve, reject).finally(() => clearTimeout(timeout));
     });
     if (currentGeneration !== generation) return;
+    const discoveredRootFolderId = String(result.rootFolderId || configuredRootFolderId || '');
+    if (verifiedDriveRootFolderId && discoveredRootFolderId && verifiedDriveRootFolderId !== discoveredRootFolderId) {
+      for (const [email, previous] of verifiedDriveRelationships) {
+        const next = { ...previous };
+        delete next.outbound;
+        delete next.outboundVerified;
+        verifiedDriveRelationships.set(email, next);
+      }
+    }
+    if (discoveredRootFolderId) verifiedDriveRootFolderId = discoveredRootFolderId;
+    for (const [email, verified] of Object.entries(result.verifiedRelationships || {})) {
+      verifiedDriveRelationships.set(email, { ...(verifiedDriveRelationships.get(email) || {}), ...verified });
+    }
     if (result.rootFolderId) {
       configuredRootFolderId = result.rootFolderId;
       // If the root was discovered after Firebase connected, establish the
@@ -299,6 +334,14 @@ async function refreshDriveFriends(user, currentGeneration = generation, knownFr
     driveFriends = result.friends.length ? result.friends
       : (!announceLoading && result.discoveryStatus === 'error'
         ? (cachedFriends?.length ? cachedFriends : (knownFriends || [])) : []);
+    // Apply verified Drive directions before notification reconciliation too, so a
+    // stale cached inbound mark cannot create a false share notification.
+    for (const friend of driveFriends) {
+      const verified = verifiedDriveRelationships.get(String(friend.email || '').trim().toLowerCase());
+      if (!verified) continue;
+      if (verified.inboundVerified === true) friend.inbound = verified.inbound === true;
+      if (verified.outboundVerified === true) friend.outbound = verified.outbound === true;
+    }
     // A successful empty Drive search means no currently accessible published
     // libraries; never resurrect stale inbound tabs from the local cache. Keep
     // cached rows only when catalog discovery itself failed, and mark those rows
@@ -338,6 +381,13 @@ export const social = {
     // suppressed; switching back to that folder restores the marks.
     if (previousFolderId && configuredRootFolderId && previousFolderId !== configuredRootFolderId) {
       reverifiedOutboundEmails.clear();
+      verifiedDriveRootFolderId = '';
+      for (const [email, previous] of verifiedDriveRelationships) {
+        const next = { ...previous };
+        delete next.outbound;
+        delete next.outboundVerified;
+        verifiedDriveRelationships.set(email, next);
+      }
       for (const friend of driveFriends) {
         if (friend.outbound) friend.outbound = false;
       }
@@ -351,6 +401,8 @@ export const social = {
     settleConnectionReady(false);
     connectionReadyPromise = new Promise((resolve) => { resolveConnectionReady = resolve; });
     configuredRootFolderId = String(rootFolderId || '');
+    verifiedDriveRelationships = new Map();
+    verifiedDriveRootFolderId = '';
     connectedDriveUser = null;
     const current = ++generation;
     // Invitation operations use Firebase Auth ID tokens and the Apps Script registry;
@@ -431,6 +483,19 @@ export const social = {
         if (isQuotaExceeded(error)) notifyQuotaExceeded();
         // Drive discovery remains a fallback, but a failed relationship query must be visible in diagnostics.
         console.warn('Could not load registered friends and library-sharing relationships:', error);
+      }
+      // The first Drive scan can finish before registered friend rows are available.
+      // Reconcile only if the completed row set contains an unverified direction; this
+      // keeps relationship truth on Drive without adding database reads or redundant scans.
+      const completeFriendRows = combineFriendRows();
+      const needsDriveRecheck = completeFriendRows.some((friend) => {
+        const email = String(friend.email || '').trim().toLowerCase();
+        if (!email) return false;
+        const verified = verifiedDriveRelationships.get(email);
+        return verified?.inboundVerified !== true || verified?.outboundVerified !== true;
+      });
+      if (connectedDriveUser && needsDriveRecheck) {
+        void refreshDriveFriends(connectedDriveUser, current, completeFriendRows, false);
       }
       if (current !== generation) return false;
       // Registration verifies the invitation; Firestore rules independently protect private records.
