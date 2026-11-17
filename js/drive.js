@@ -323,6 +323,21 @@ export async function updateDriveJsonFile(fileId, jsonText) {
   return response.json();
 }
 
+// Move the existing app-created catalog instead of creating a new one for each root.
+// Drive requires parent changes as query parameters on files.update; never delete/recreate it.
+export async function moveDriveFile(fileId, newParentId, oldParentId) {
+  if (!fileId || !newParentId || !oldParentId || newParentId === oldParentId) {
+    if (fileId && newParentId && newParentId === oldParentId) return { id: fileId, parents: [newParentId] };
+    throw new Error('Для перемещения каталога не заданы необходимые папки Google Drive.');
+  }
+  const params = new URLSearchParams({ addParents: newParentId, removeParents: oldParentId,
+    fields: 'id,parents', supportsAllDrives: 'true' });
+  const response = await driveFetch(`/files/${encodeURIComponent(fileId)}?${params}`, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json; charset=UTF-8' }, body: JSON.stringify({}),
+  });
+  return response.json();
+}
+
 export async function downloadDriveJsonFile(fileId) {
   const params = new URLSearchParams({ alt: 'media', supportsAllDrives: 'true' });
   return driveFetch(`/files/${encodeURIComponent(fileId)}?${params}`, { readJson: true });

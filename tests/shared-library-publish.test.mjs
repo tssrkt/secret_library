@@ -45,7 +45,8 @@ test('shared catalog lifecycle never deletes Drive files and uses a tombstone wh
   assert.match(deleteImplementation, /drive_file_deletion_blocked/);
   assert.doesNotMatch(deleteImplementation, /driveFetch|method:\s*['"]DELETE['"]/);
   assert.doesNotMatch(sharedSource, /deleteDriveFile\s*\(/);
-  assert.match(sharedSource, /existing = null;/);
+  assert.match(sharedSource, /moveDriveFile\(existing\.id, index\.rootFolderId, oldParentId\)/);
+  assert.doesNotMatch(sharedSource, /existing = null;/);
   assert.match(driveSource, /unpublishedCatalog \|\| inaccessibleMarkedCatalog \|\| null/);
   assert.match(sharedSource, /published:\s*false/);
   assert.match(sharedSource, /index\.published === false/);
@@ -138,13 +139,14 @@ test('failed Drive catalog creation can be retried successfully', async () => {
   assert.equal(creates, 2, 'retry performs a new create attempt after the failed request');
 });
 
-test('changing the root tombstones the old catalog and creates a new one without moving or deleting files', async () => {
+test('changing the root moves and updates the single existing catalog without creating or deleting files', async () => {
   const oldCatalog = {
     version: 4, rootFolderId: 'old-root', folders: [{ id: 'old-root', parentId: null, name: 'Old root' }],
     books: [], folderNotes: {}, ownerUid: 'owner', ownerDisplayName: 'Owner', signature: 'old-signature', published: true,
   };
-  let tombstoneBody = '';
-  let createBody = '';
+  let updatedCatalogBody = '';
+  let createCalls = 0;
+  let moveQuery = null;
   let deleteCalls = 0;
   globalThis.fetch = async (input, options = {}) => {
     const url = new URL(String(input));
@@ -153,16 +155,21 @@ test('changing the root tombstones the old catalog and creates a new one without
         parents: ['old-root'], appProperties: { secretLibraryOwnerUid: 'owner' } }] };
       return { ok: true, status: 200, json: async () => body, clone() { return { json: async () => body }; } };
     }
+    if (url.pathname === '/drive/v3/files/old-catalog' && options.method === 'PATCH') {
+      moveQuery = { addParents: url.searchParams.get('addParents'), removeParents: url.searchParams.get('removeParents') };
+      const body = { id: 'old-catalog', parents: ['new-root'] };
+      return { ok: true, status: 200, json: async () => body, clone() { return { json: async () => body }; } };
+    }
     if (url.pathname === '/drive/v3/files/old-catalog' && url.searchParams.get('alt') === 'media') {
       return { ok: true, status: 200, json: async () => oldCatalog, clone() { return { json: async () => oldCatalog }; } };
     }
     if (url.pathname === '/upload/drive/v3/files/old-catalog' && options.method === 'PATCH') {
-      tombstoneBody = String(options.body);
+      updatedCatalogBody = String(options.body);
       const body = { id: 'old-catalog' };
       return { ok: true, status: 200, json: async () => body, clone() { return { json: async () => body }; } };
     }
     if (url.pathname === '/upload/drive/v3/files' && options.method === 'POST') {
-      createBody = String(options.body);
+      createCalls++;
       const body = { id: 'new-catalog', name: 'secret-library-catalog.json', mimeType: 'application/json', parents: ['new-root'] };
       return { ok: true, status: 200, json: async () => body, clone() { return { json: async () => body }; } };
     }
@@ -173,11 +180,53 @@ test('changing the root tombstones the old catalog and creates a new one without
   const store = createSharedLibraryStore({ user: { uid: 'owner', displayName: 'Owner' }, authorizeItem: async () => true, rememberAuthorization: () => {}, forgetAuthorization: () => {} });
   const index = { version: 4, rootFolderId: 'new-root', folders: [{ id: 'new-root', parentId: null, name: 'New root' }], books: [] };
   const result = await store.publish(index, { sharing: { excludedFolderIds: [] } });
-  assert.equal(result.fileId, 'new-catalog');
-  assert.match(tombstoneBody, /"published":false/);
-  assert.match(tombstoneBody, /"rootFolderId":"old-root"/);
-  assert.match(createBody, /"parents":\["new-root"\]/);
-  assert.equal(deleteCalls, 0, 'root changes do not delete either the old catalog or ordinary Drive files');
+  assert.equal(result.fileId, 'old-catalog');
+  assert.deepEqual(moveQuery, { addParents: 'new-root', removeParents: 'old-root' });
+  assert.match(updatedCatalogBody, /"published":true/);
+  assert.match(updatedCatalogBody, /"rootFolderId":"new-root"/);
+  assert.equal(createCalls, 0, 'changing roots reuses the existing catalog rather than creating another');
+  assert.equal(deleteCalls, 0, 'root changes never delete the catalog or ordinary Drive files');
+});
+
+test('failed catalog move never falls back to creating a duplicate catalog', async () => {
+  const oldCatalog = {
+    version: 4, rootFolderId: 'old-root', folders: [{ id: 'old-root', parentId: null, name: 'Old root' }],
+    books: [], folderNotes: {}, ownerUid: 'owner', ownerDisplayName: 'Owner', signature: 'old-signature', published: true,
+  };
+  let creates = 0;
+  let moves = 0;
+  let authorizations = 0;
+  globalThis.fetch = async (input, options = {}) => {
+    const url = new URL(String(input));
+    let payload = {};
+    if (url.pathname === '/drive/v3/files' && options.method !== 'PATCH') {
+      payload = { files: [{ id: 'old-catalog', name: '.secret-library-catalog.json', mimeType: 'application/json',
+        parents: ['old-root'], appProperties: { secretLibraryOwnerUid: 'owner' } }] };
+    } else if (url.pathname === '/drive/v3/files/old-catalog' && options.method === 'PATCH') {
+      moves++;
+      payload = { error: { message: 'Move denied' } };
+      return { ok: false, status: 403, headers: { get: () => null }, json: async () => payload, clone() { return { json: async () => payload }; } };
+    } else if (url.pathname === '/drive/v3/files/old-catalog' && url.searchParams.get('alt') === 'media') {
+      payload = oldCatalog;
+    } else if (url.pathname === '/upload/drive/v3/files' && options.method === 'POST') {
+      creates++;
+      payload = { id: 'duplicate-catalog' };
+    } else {
+      payload = { error: { message: 'Unexpected Drive request: ' + options.method + ' ' + url.pathname } };
+      return { ok: false, status: 400, headers: { get: () => null }, json: async () => payload, clone() { return { json: async () => payload }; } };
+    }
+    return { ok: true, status: 200, json: async () => payload, clone() { return { json: async () => payload }; } };
+  };
+  const store = createSharedLibraryStore({
+    user: { uid: 'owner', displayName: 'Owner' },
+    authorizeItem: async () => { authorizations++; },
+    rememberAuthorization: () => {}, forgetAuthorization: () => {},
+  });
+  const index = { version: 4, rootFolderId: 'new-root', folders: [{ id: 'new-root', parentId: null, name: 'New root' }], books: [] };
+  await assert.rejects(store.publish(index, { sharing: { excludedFolderIds: [] } }), (error) => error.status === 403);
+  assert.equal(moves, 2, 'after reauthorizing the selected root, the move is retried once');
+  assert.equal(authorizations, 1);
+  assert.equal(creates, 0, 'a failed move never creates a second catalog');
 });
 
 test('published Drive catalog is created in the selected root without exposing private cover IDs', async () => {

@@ -1,6 +1,6 @@
 import { SHARED_CATALOG_FILE_NAME } from './config.js';
 import {
-  createDriveJsonFile, downloadDriveJsonFile, findDriveCatalogFile, updateDriveJsonFile,
+  createDriveJsonFile, downloadDriveJsonFile, findDriveCatalogFile, moveDriveFile, updateDriveJsonFile,
 } from './drive.js';
 import { loadSharedCover } from './shared-cover-cache.js';
 import { ensureDriveItemAuthorized, forgetDriveItemAuthorization, rememberDriveItemAuthorization } from './google-picker.js?v=20261114-picker-no-timeout';
@@ -83,25 +83,25 @@ export function createSharedLibraryStore({ user, authorizeItem = ensureDriveItem
         const signature = await signatureOf({ projection, ownerDisplayName });
         const catalog = JSON.stringify({ ...projection, ownerUid: user.uid, ownerDisplayName, signature, published: true });
         let existing = await findDriveCatalogFile(user.uid);
-        if (existing && !existing.parents?.includes(index.rootFolderId)) {
-          const current = await downloadDriveJsonFile(existing.id);
-          const tombstone = {
-            version: current?.version || 1,
-            rootFolderId: current?.rootFolderId || existing.parents?.[0] || '',
-            updatedAt: new Date().toISOString(),
-            folders: [], books: [], folderNotes: {}, ownerUid: user.uid,
-            ownerDisplayName: typeof user.displayName === 'string' ? user.displayName.trim().slice(0, 160) : '',
-            signature: current?.signature || await signatureOf({ ownerUid: user.uid, published: false }),
-            published: false,
-          };
-          await updateCatalogAuthorized(existing.id, JSON.stringify(tombstone));
-          // Do not move the old file: that would preserve direct Drive permissions
-          // from the old root. Leave an unpublished tombstone and create a fresh
-          // catalog in the newly selected root, inheriting only its permissions.
-          existing = null;
-        }
+        let current = null;
         if (existing) {
-          const current = await downloadDriveJsonFile(existing.id);
+          current = await downloadDriveJsonFile(existing.id);
+          const oldParentId = existing.parents?.[0] || current?.rootFolderId || '';
+          if (!existing.parents?.includes(index.rootFolderId)) {
+            // Move the single app-created catalog to the selected root. If Drive
+            // rejects the move, leave the old catalog and its contents untouched;
+            // never create a second catalog as a fallback for a failed move.
+            if (!oldParentId) throw new Error('Не удалось определить текущую папку каталога библиотеки. Каталог не изменён.');
+            try {
+              await moveDriveFile(existing.id, index.rootFolderId, oldParentId);
+            } catch (error) {
+              if (error?.status !== 403 && error?.status !== 404) throw error;
+              forgetAuthorization(index.rootFolderId);
+              await authorizeItem({ id: index.rootFolderId, name: 'Корневая папка библиотеки', mimeType: 'application/vnd.google-apps.folder' });
+              await moveDriveFile(existing.id, index.rootFolderId, oldParentId);
+            }
+            existing = { ...existing, parents: [index.rootFolderId] };
+          }
           if (current?.published !== false && current?.signature === signature && current.rootFolderId === index.rootFolderId && (current.ownerDisplayName || '') === ownerDisplayName) {
             catalogIds.set(user.uid, existing.id);
             return { fileId: existing.id, revision: signature };
