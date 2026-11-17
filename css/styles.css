@@ -690,7 +690,16 @@ dd { margin: 0; color: #000; font-weight: 400; font-variant-numeric: tabular-num
 }
 .root-folder-dialog h2, .root-folder-dialog .root-folder-description { text-align: center; }
 .root-folder-link-description, .root-folder-emails, .root-folder-copy-message { margin: 0; color: #6a6359; text-align: left; overflow-wrap: anywhere; }
-.root-folder-link-description a { overflow-wrap: anywhere; }
+.root-folder-link-description a {
+  overflow-wrap: anywhere;
+  color: var(--download-accent);
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: .15em;
+  transition: color .15s ease;
+}
+.root-folder-link-description a:hover { color: #687487; }
+.root-folder-link-description a:focus-visible { outline: 2px solid currentColor; outline-offset: 4px; }
 .root-folder-email { display: inline; padding: 0; border: 0; color: inherit; background: transparent; font: inherit; text-align: left; cursor: pointer; overflow-wrap: anywhere; }
 .root-folder-email:hover, .root-folder-email:focus-visible { font-weight: 700; }
 .root-folder-copy-message { text-align: left; }

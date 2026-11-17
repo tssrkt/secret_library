@@ -199,12 +199,11 @@ function showRootFolderPopup(message, buttonLabel = 'ВЫБРАТЬ КОРНЕВ
     folderLinkParagraph.className = 'root-folder-link-description';
     folderLinkParagraph.hidden = !folderUrl;
     if (folderUrl) {
-      folderLinkParagraph.append(document.createTextNode('Откройте новую корневую папку библиотеки: '));
       const folderLink = document.createElement('a');
       folderLink.href = folderUrl;
       folderLink.target = '_blank';
       folderLink.rel = 'noopener noreferrer';
-      folderLink.textContent = 'Открыть папку в Google Drive';
+      folderLink.textContent = 'Открыть новую папку в Google Drive';
       folderLinkParagraph.append(folderLink);
     }
     const emailParagraph = document.createElement('p');
