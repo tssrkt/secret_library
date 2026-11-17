@@ -1220,6 +1220,29 @@ test('superadmin bootstrap provisions only the email configured in Script Proper
 });
 
 
+test('registration invitation quota counts accepted invites but excludes cancelled invites and library shares', () => {
+  const app = harness();
+  const registry = {
+    'pending@gmail.com': { status: 'pending', inviteeEmail: 'pending@gmail.com' },
+    'accepted@gmail.com': { status: 'accepted', inviteeEmail: 'accepted@gmail.com' },
+    'cancelled@gmail.com': { status: 'revoked', inviteeEmail: 'cancelled@gmail.com' },
+    'library-share@gmail.com': { status: 'shared', inviteeEmail: 'library-share@gmail.com' }
+  };
+  assert.equal(app.context.countActiveInvitations(registry), 2);
+});
+
+test('cancelled invitation frees its slot and the same recipient can be invited again', () => {
+  const app = harness();
+  app.context.fsGet = () => null;
+  const registry = Object.fromEntries(Array.from({ length: 20 }, (_, i) => [
+    `friend-${i}@gmail.com`, { status: i === 0 ? 'revoked' : 'pending', inviteeEmail: `friend-${i}@gmail.com` }
+  ]));
+  app.properties.set(app.context.ownerInvitationRegistryKey('owner-uid'), JSON.stringify(registry));
+  assert.equal(app.context.countActiveInvitations(app.context.readOwnerInvitationRegistry('owner-uid')), 19);
+  assert.doesNotThrow(() => app.context.enforceUniqueInvitationLimit('owner-uid', 'friend-0@gmail.com', null));
+  assert.doesNotThrow(() => app.context.enforceUniqueInvitationLimit('owner-uid', 'new-recipient@gmail.com', null));
+});
+
 test('unique invitation limit defaults to 20 and permits an existing recipient at the limit', () => {
   const app = harness();
   assert.equal(app.context.getInvitationLimit(), 20);

@@ -15,7 +15,7 @@ export async function runSocialUiTests(test, assert, equal) {
       async openFriendAccessGuide(email) { calls.push(['openFriendAccessGuide', email]); return { email, rootFolderId: 'root', folderUrl: 'https://drive.google.com/drive/folders/root' }; },
       async checkFriendAccess(email) { calls.push(['checkFriendAccess', email]); return { granted: true, role: 'reader', inherited: false, wasOutbound: false, rootFolderId: 'root' }; },
       async resendInvitation(email) { calls.push(['resendInvitation', email]); return 'Приглашение отправлено.'; },
-      async getInvitationStatuses(emails) { return Object.fromEntries([['__quota', { isAdmin: false, limit: 20, adminUids: [] }], ...emails.map((email) => [email, { lastSentAt: 0, cooldownUntil: 0 }])]); },
+      async getInvitationStatuses(emails) { return Object.fromEntries([['__quota', { isAdmin: false, limit: 20, used: 0, adminUids: [] }], ...emails.map((email) => [email, { lastSentAt: 0, cooldownUntil: 0 }])]); },
       async setSharing(uid, active) { calls.push([uid, active]); },
       async markSeen(items) { calls.push(items); this.update({ notifications: state.notifications.map((item) => items.includes(item) ? { ...item, unread: false } : item) }); },
     };
@@ -29,6 +29,21 @@ export async function runSocialUiTests(test, assert, equal) {
     equal(friends.map((item) => [item.uid, item.inbound, item.outbound, item.email]), [['a', true, true, ''], ['b', false, true, 'known@gmail.com']], 'direction, unique person and stable uid tiebreak');
     equal(validateShareEmail(' Ab.C+tag@Gmail.Com ', 'me@gmail.com'), 'ab.c+tag@gmail.com', 'trim lowercase only');
     equal(friendsModel('me', [{ ownerUid: 'owner', viewerUid: 'me', active: true, ownerEmail: 'owner@gmail.com' }], { owner: { displayName: 'Owner' } })[0].email, 'owner@gmail.com', 'incoming friend displays the email attached to their share');
+  });
+  await test('invitation quota display uses permanent server count, not pending invite rows', async () => {
+    const page = document.createElement('div'); document.body.append(page);
+    const invitations = Array.from({ length: 3 }, (_, i) => ({ inviteeEmail: 'pending' + i + '@gmail.com', active: true, createdAt: Date.now() - i * 1000 }));
+    const social = stub({ invitations });
+    social.getInvitationStatuses = async (emails) => Object.fromEntries([
+      ['__quota', { isAdmin: false, limit: 20, used: 7, adminUids: [] }],
+      ...emails.map((email) => [email, { invitationStatus: 'pending', lastSentAt: Date.now() - 1000 }])
+    ]);
+    const cleanup = mountFriends(page, social, () => {});
+    try {
+      await tick(); await tick();
+      assert(page.querySelector('.friends-count').textContent.includes('13'), 'remaining quota is 20 minus server-owned unique invite count of 7');
+      assert(!page.querySelector('.friends-count').textContent.includes('17'), 'pending row count is not used to calculate remaining quota');
+    } finally { cleanup(); page.remove(); }
   });
   await test('friend discovery never triggers Firestore contact sync', async () => {
     const page = document.createElement('div'); document.body.append(page);

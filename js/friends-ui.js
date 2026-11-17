@@ -472,8 +472,9 @@ export function mountFriends(page, social, retry, openLibrary = () => {}) {
       const currentUserIsAdmin = invitationQuota?.isAdmin === true;
       if (invitationQuota && !currentUserIsAdmin) {
         const limit = Number(invitationQuota.limit);
-        if (Number.isFinite(limit)) {
-          const remaining = Math.max(0, limit - pendingEmails.size);
+        const used = Number(invitationQuota.used);
+        if (Number.isFinite(limit) && Number.isFinite(used)) {
+          const remaining = Math.max(0, limit - used);
           summary += `. Вы можете пригласить еще ${remaining.toLocaleString('ru-RU')} ${plural(remaining, 'друга', 'друзей', 'друзей')}`;
         }
       }

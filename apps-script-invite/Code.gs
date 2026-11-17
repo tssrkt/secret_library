@@ -594,6 +594,7 @@ function reservationKey(uid, email) {
 }
 
 function countActiveInvitations(registry) {
+  // Count unique registration invitations that are not cancelled; library-share rows do not consume quota.
   return Object.values(registry || {}).filter(record => record && !['revoked', 'shared'].includes(record.status)).length;
 }
 
@@ -612,7 +613,7 @@ function enforceUniqueInvitationLimit(uid, email, invitation) {
   const count = countActiveInvitations(registry);
   const current = JSON.parse(PropertiesService.getScriptProperties().getProperty(reservationKey(uid, email)) || 'null');
   const existing = registry[email] || invitation;
-  const previouslySent = Boolean((existing && existing.status !== 'revoked') || current?.status === 'sent');
+  const previouslySent = Boolean((existing && existing.status && !['revoked', 'shared'].includes(existing.status)) || current?.status === 'sent');
   if (!previouslySent && count >= limit) throw new Error('\u0412\u0430\u0448 \u043b\u0438\u043c\u0438\u0442 \u043d\u0430 \u043f\u0440\u0438\u0433\u043b\u0430\u0448\u0435\u043d\u0438\u044f \u0438\u0441\u0447\u0435\u0440\u043f\u0430\u043d.');
   return count + (previouslySent ? 0 : 1);
 }
