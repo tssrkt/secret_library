@@ -146,7 +146,11 @@ test('invitation status checks use Script Properties and skip the owner email', 
   const app = harness();
   app.invoke();
   const before = app.calls.filter(call => call.url.includes('/pendingInvites/')).length;
+  const rateKey = app.context.emailLookupRateKey('owner-uid');
+  const lookupsBefore = app.context.decodeEmailLookupTimestamps(app.properties.get(rateKey)).length;
   const result = app.invoke({ action: 'getInvitationStatuses', emails: ['friend@gmail.com', 'owner@gmail.com', 'other@gmail.com'] });
+  const lookupsAfter = app.context.decodeEmailLookupTimestamps(app.properties.get(rateKey)).length;
+  assert.equal(lookupsAfter, lookupsBefore + 1, 'only the new, unrelated address consumes budget; the existing invitation is free');
   assert.equal(app.calls.filter(call => call.url.includes('/pendingInvites/')).length, before);
   assert.match(result.content, /"friend@gmail.com":\{"lastSentAt":\d+,"cooldownUntil":\d+,"invitationStatus":"pending"/);
   assert.doesNotMatch(result.content, /owner@gmail.com/);
@@ -175,6 +179,56 @@ test('verifyFirebaseUser caches a successful lookup for the same token', () => {
   app.context.verifyFirebaseUser(app.payload.idToken);
   app.context.verifyFirebaseUser(app.payload.idToken);
   assert.equal(app.calls.filter(call => call.url.includes('accounts:lookup')).length, 1);
+});
+
+test('email lookup budget allows the normal 20-recipient invitation workflow and isolates accounts', () => {
+  const app = harness();
+  const emails = Array.from({ length: 20 }, (_, index) => 'friend-' + index + '@example.com');
+  const result = app.context.reserveEmailLookupBudget('owner-uid', emails, 1_000_000);
+  assert.equal(result.checked, 20);
+  assert.equal(app.context.reserveEmailLookupBudget('another-owner', ['other@example.com'], 1_000_001).checked, 1);
+});
+
+test('email lookup budget enforces 30 checks per 10 minutes and allows checks after the window', () => {
+  const app = harness();
+  const first = Array.from({ length: 30 }, (_, index) => 'short-' + index + '@example.com');
+  assert.equal(app.context.reserveEmailLookupBudget('owner-uid', first, 1_000_000).checked, 30);
+  assert.throws(() => app.context.reserveEmailLookupBudget('owner-uid', ['blocked@example.com'], 1_001_000));
+  assert.equal(app.context.reserveEmailLookupBudget('owner-uid', ['after-window@example.com'], 1_601_000).checked, 1);
+});
+
+test('email lookup budget enforces 100 checks in a rolling 24-hour window', () => {
+  const app = harness();
+  let index = 0;
+  for (const minute of [0, 11, 22]) {
+    const emails = Array.from({ length: 30 }, () => 'daily-' + index++ + '@example.com');
+    assert.equal(app.context.reserveEmailLookupBudget('owner-uid', emails, 2_000_000 + minute * 60_000).checked, 30);
+  }
+  const lastTen = Array.from({ length: 10 }, () => 'daily-' + index++ + '@example.com');
+  assert.equal(app.context.reserveEmailLookupBudget('owner-uid', lastTen, 2_000_000 + 33 * 60_000).checked, 10);
+  assert.throws(() => app.context.reserveEmailLookupBudget('owner-uid', ['daily-over-limit@example.com'], 2_000_000 + 34 * 60_000));
+  assert.equal(app.context.reserveEmailLookupBudget('owner-uid', ['after-day@example.com'], 2_000_000 + 24 * 60 * 60_000 + 1).checked, 1);
+});
+
+test('rechecking the same email within the short cache window does not consume another lookup', () => {
+  const app = harness();
+  assert.equal(app.context.reserveEmailLookupBudget('owner-uid', ['same@example.com'], 3_000_000).checked, 1);
+  assert.equal(app.context.reserveEmailLookupBudget('owner-uid', ['SAME@example.com'], 3_001_000).checked, 0);
+  const stored = app.context.decodeEmailLookupTimestamps(app.properties.get(app.context.emailLookupRateKey('owner-uid')));
+  assert.equal(stored.length, 1);
+});
+
+test('bulk status lookup over the per-request budget performs no directory lookups', () => {
+  const app = harness();
+  const directoryReads = [];
+  app.context.fsGet = path => {
+    if (path.startsWith('userDirectory/')) directoryReads.push(path);
+    return null;
+  };
+  const emails = Array.from({ length: 31 }, (_, index) => 'probe-' + index + '@example.com');
+  const result = app.invoke({ action: 'getInvitationStatuses', emails });
+  assert.match(result.content, /"ok":false/);
+  assert.equal(directoryReads.length, 0);
 });
 
 test('admin startup uses bounded summary and paginated collection APIs, not the unbounded dashboard', () => {
@@ -821,6 +875,7 @@ test('registered recipient is not emailed and no invitation reservation is creat
   assert.match(result.content, /"ok":false/);
   assert.equal([...registered.properties.keys()].some((key) => key.startsWith('invite:')), false);
   assert.equal([...registered.properties.keys()].some((key) => key.startsWith('invite_accept_')), false);
+  assert.doesNotMatch(result.content, /registeredUid|registeredDisplayName/, 'the public response does not disclose account existence');
 });
 
 test('does not send if the owner profile cannot be read under Firestore rules', () => {

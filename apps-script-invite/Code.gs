@@ -3,6 +3,14 @@ const FIREBASE_API_KEY = 'AIzaSyDXTowpjzrl6_GfzQED9ITjb7mn9Qzs5J4';
 const SITE_ORIGIN = 'https://tssrkt.github.io';
 const SENDING_LEASE_MS = 10 * 60 * 1000;
 const RESEND_COOLDOWN_MS = 60 * 60 * 1000;
+const EMAIL_LOOKUP_SHORT_WINDOW_MS = 10 * 60 * 1000;
+const EMAIL_LOOKUP_SHORT_LIMIT = 30;
+const EMAIL_LOOKUP_DAILY_WINDOW_MS = 24 * 60 * 60 * 1000;
+const EMAIL_LOOKUP_DAILY_LIMIT = 100;
+const EMAIL_LOOKUP_CACHE_TTL_SECONDS = 10 * 60;
+const EMAIL_LOOKUP_RATE_PREFIX = 'email_lookup_rate_v1_';
+const EMAIL_LOOKUP_SEEN_PREFIX = 'email_lookup_seen_v1_';
+const EMAIL_LOOKUP_PUBLIC_MESSAGE = '\u0417\u0430\u043f\u0440\u043e\u0441 \u043d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u043e\u0431\u0440\u0430\u0431\u043e\u0442\u0430\u0442\u044c. \u041f\u0440\u043e\u0432\u0435\u0440\u044c\u0442\u0435 \u0441\u043f\u0438\u0441\u043e\u043a \u0434\u0440\u0443\u0437\u0435\u0439 \u0438\u043b\u0438 \u043f\u043e\u0432\u0442\u043e\u0440\u0438\u0442\u0435 \u043f\u043e\u0437\u0436\u0435.';
 
 function doGet() {
   return HtmlService.createHtmlOutput('Тайная Библиотека: сервис приглашений готов.');
@@ -59,6 +67,10 @@ function doPost(e) {
     stage = 'verify-server-invitation';
     const invitation = readOwnerInvitationRecord(user.localId, email);
     if (invitation && invitation.status === 'accepted') return responsePage(requestId, true, 'Invitation has already been accepted.');
+    // A first-time address lookup consumes the owner's private budget. The preflight
+    // status request and the subsequent send share a short-lived per-address marker.
+    stage = 'check-registered-recipient';
+    if (!invitation) reserveEmailLookupBudget(user.localId, [email]);
     stage = 'check-blocked-recipient';
     if (isBlockedInvitationEmail(email)) {
       deactivateBlockedInvitation(email, user.localId);
@@ -68,7 +80,8 @@ function doPost(e) {
     stage = 'check-registered-recipient';
     const recipientDirectory = fsGet('userDirectory/' + encodeURIComponent(email));
     if (recipientDirectory && isValidUid(String(recipientDirectory.uid || ''))) {
-      throw new Error('Этот пользователь уже зарегистрирован в Тайной Библиотеке. Приглашение не отправлено. Обновите список друзей.');
+      // Keep the public response indistinguishable from a rate-limited lookup.
+      throw new Error(EMAIL_LOOKUP_PUBLIC_MESSAGE);
     }
     stage = 'check-unique-invitation-limit';
     const invitationCount = enforceUniqueInvitationLimit(user.localId, email, invitation);
@@ -521,25 +534,158 @@ function handleCancelInvitation(input) {
   return { cancelled: true, email: email, invitationStatus: 'revoked' };
 }
 
+function emailLookupRateKey(uid) {
+  return EMAIL_LOOKUP_RATE_PREFIX + acceptanceDigest(String(uid || ''));
+}
+
+function emailLookupSeenKey(uid) {
+  return EMAIL_LOOKUP_SEEN_PREFIX + acceptanceDigest(String(uid || ''));
+}
+
+function emailLookupEmailHash(uid, email) {
+  return acceptanceDigest(String(uid || '') + '\n' + normalizeEmail(email)).slice(0, 16);
+}
+
+function readEmailLookupSeenHashes(cache, uid) {
+  try {
+    const parsed = JSON.parse(cache.get(emailLookupSeenKey(uid)) || '[]');
+    return new Set(Array.isArray(parsed) ? parsed.filter(value => typeof value === 'string') : []);
+  } catch (_) {
+    return new Set();
+  }
+}
+
+function decodeEmailLookupTimestamps(value) {
+  if (!value) return [];
+  const parts = String(value).split('|');
+  if (parts.length !== 3 || parts[0] !== 'v1') throw new Error('Invalid email lookup limiter state.');
+  let current = parseInt(parts[1], 36);
+  if (!Number.isFinite(current) || current < 0) throw new Error('Invalid email lookup limiter state.');
+  const result = [current * 1000];
+  if (parts[2]) {
+    parts[2].split(',').forEach(function (encodedDelta) {
+      const delta = parseInt(encodedDelta, 36);
+      if (!Number.isFinite(delta) || delta < 0) throw new Error('Invalid email lookup limiter state.');
+      current += delta;
+      result.push(current * 1000);
+    });
+  }
+  return result;
+}
+
+function encodeEmailLookupTimestamps(timestamps) {
+  if (!timestamps.length) return '';
+  const seconds = timestamps.map(value => Math.floor(value / 1000));
+  let previous = seconds[0];
+  const deltas = seconds.slice(1).map(value => {
+    const delta = Math.max(0, value - previous);
+    previous = value;
+    return delta.toString(36);
+  });
+  return 'v1|' + seconds[0].toString(36) + '|' + deltas.join(',');
+}
+
+function pruneEmailLookupRateProperties(properties, nowMs) {
+  const cache = CacheService.getScriptCache();
+  const cleanupKey = 'email_lookup_rate_cleanup_v1';
+  if (cache.get(cleanupKey)) return;
+  const all = properties.getProperties();
+  Object.keys(all).forEach(function (key) {
+    if (!key.startsWith(EMAIL_LOOKUP_RATE_PREFIX)) return;
+    try {
+      const active = decodeEmailLookupTimestamps(all[key]).filter(timestamp =>
+        nowMs - timestamp < EMAIL_LOOKUP_DAILY_WINDOW_MS);
+      if (!active.length) properties.deleteProperty(key);
+    } catch (_) {
+      // Corrupt limiter state is retained and will fail closed for that account.
+    }
+  });
+  cache.put(cleanupKey, '1', 6 * 60 * 60);
+}
+
+function reserveEmailLookupBudget(uid, emails, nowMs) {
+  const ownerUid = String(uid || '');
+  const now = Number.isFinite(nowMs) ? nowMs : Date.now();
+  const normalizedEmails = [...new Set((Array.isArray(emails) ? emails : [])
+    .map(normalizeEmail).filter(isValidEmail))];
+  if (!isValidUid(ownerUid) || !normalizedEmails.length) return { checked: 0 };
+
+  const cache = CacheService.getScriptCache();
+  const seenHashes = readEmailLookupSeenHashes(cache, ownerUid);
+  const unseen = normalizedEmails.filter(email => !seenHashes.has(emailLookupEmailHash(ownerUid, email)));
+  if (!unseen.length) return { checked: 0 };
+
+  // Requests for the same owner are serialized only while their small counter is
+  // updated. No shared visitor/IP quota is used; one account cannot consume another's budget.
+  const lock = LockService.getScriptLock();
+  let locked = false;
+  try {
+    lock.waitLock(5000);
+    locked = true;
+    const currentSeenHashes = readEmailLookupSeenHashes(cache, ownerUid);
+    const fresh = unseen.filter(email => !currentSeenHashes.has(emailLookupEmailHash(ownerUid, email)));
+    if (!fresh.length) return { checked: 0 };
+
+    const properties = PropertiesService.getScriptProperties();
+    pruneEmailLookupRateProperties(properties, now);
+    const key = emailLookupRateKey(ownerUid);
+    const timestamps = decodeEmailLookupTimestamps(properties.getProperty(key))
+      .filter(timestamp => now - timestamp < EMAIL_LOOKUP_DAILY_WINDOW_MS);
+    const shortCount = timestamps.filter(timestamp => now - timestamp < EMAIL_LOOKUP_SHORT_WINDOW_MS).length;
+    if (fresh.length > EMAIL_LOOKUP_SHORT_LIMIT ||
+        shortCount + fresh.length > EMAIL_LOOKUP_SHORT_LIMIT ||
+        timestamps.length + fresh.length > EMAIL_LOOKUP_DAILY_LIMIT) {
+      throw new Error(EMAIL_LOOKUP_PUBLIC_MESSAGE);
+    }
+
+    for (let index = 0; index < fresh.length; index++) timestamps.push(now);
+    properties.setProperty(key, encodeEmailLookupTimestamps(timestamps));
+    const updatedSeenHashes = [...currentSeenHashes, ...fresh.map(email => emailLookupEmailHash(ownerUid, email))]
+      .slice(-EMAIL_LOOKUP_SHORT_LIMIT);
+    cache.put(emailLookupSeenKey(ownerUid), JSON.stringify(updatedSeenHashes), EMAIL_LOOKUP_CACHE_TTL_SECONDS);
+    return { checked: fresh.length };
+  } catch (error) {
+    if (error && error.message === EMAIL_LOOKUP_PUBLIC_MESSAGE) throw error;
+    // Fail closed if the counter cannot be updated; never silently disable the guard.
+    throw new Error(EMAIL_LOOKUP_PUBLIC_MESSAGE);
+  } finally {
+    if (locked) {
+      try { lock.releaseLock(); } catch (_) {}
+    }
+  }
+}
+
 function handleInvitationStatuses(input) {
   const idToken = String(input.idToken || '');
   const requestedEmails = Array.isArray(input.emails) ? [...new Set(input.emails.slice(0, 500).map(normalizeEmail))].slice(0, 500) : [];
   if (idToken.length < 100 || idToken.length > 5000 || requestedEmails.some(function (email) { return !isValidEmail(email); })) {
-    throw new Error('Не удалось обновить состояние приглашений. Обновите страницу.');
+    throw new Error(EMAIL_LOOKUP_PUBLIC_MESSAGE);
   }
   const user = verifyFirebaseUser(idToken);
   const properties = PropertiesService.getScriptProperties();
+  const registry = readOwnerInvitationRegistry(user.localId);
   // An empty email list means: return the current user's server-owned invitation registry.
-  const emails = requestedEmails.length ? requestedEmails : Object.keys(readOwnerInvitationRegistry(user.localId)).slice(0, 500);
+  const emails = requestedEmails.length ? requestedEmails : Object.keys(registry).slice(0, 500);
+  const ownerEmail = normalizeEmail(user.email);
+  const lookupCandidates = [];
+
+  // Determine which addresses are already part of this owner's invitation history
+  // before making any directory request. Those known addresses never consume lookup budget.
+  emails.forEach(function (email) {
+    if (email === ownerEmail || registry[email]) return;
+    const current = JSON.parse(properties.getProperty(reservationKey(user.localId, email)) || 'null');
+    if (!current) lookupCandidates.push(email);
+  });
+  reserveEmailLookupBudget(user.localId, lookupCandidates);
+
   const statuses = {};
   emails.forEach(function (email) {
-    if (email === normalizeEmail(user.email)) return;
+    if (email === ownerEmail) return;
     const current = JSON.parse(properties.getProperty(reservationKey(user.localId, email)) || 'null');
-    const invitation = readOwnerInvitationRecord(user.localId, email);
+    const invitation = registry[email] || null;
     const lastSentAt = current ? (current.status === 'sent' ? Number(current.at) || 0 : Number(current.lastSentAt) || 0) : 0;
-    // Always check the canonical email directory, even when the address only
-    // exists in the browser's older Drive invitation ledger and has no server
-    // invitation record. Registered users must never be treated as invitees.
+    // A registered address is resolved only after its owner-specific lookup budget
+    // has been reserved. No result for unrelated, unregistered addresses is returned.
     const directory = fsGet('userDirectory/' + encodeURIComponent(email));
     const registeredUid = directory && isValidUid(String(directory.uid || '')) ? String(directory.uid) : '';
     if (current || invitation || registeredUid) {
@@ -554,7 +700,7 @@ function handleInvitationStatuses(input) {
   statuses.__quota = {
     isAdmin: Boolean(admin && admin.active === true),
     limit: getInvitationLimit(),
-    used: countActiveInvitations(readOwnerInvitationRegistry(user.localId)),
+    used: countActiveInvitations(registry),
     adminUids: getActiveAdminUids()
   };
   return statuses;
@@ -665,6 +811,7 @@ function finishSend(uid, email, success, reservationId) {
 
 function publicError(error) {
   const message = error && error.message ? String(error.message) : '';
+  if (message === EMAIL_LOOKUP_PUBLIC_MESSAGE) return EMAIL_LOOKUP_PUBLIC_MESSAGE;
   if (message.indexOf('Ваш лимит на приглашения исчерпан') === 0 ||
       message.indexOf('Достигнут бесплатный дневной лимит') === 0 ||
       message.indexOf('Достигнут дневной лимит') === 0 ||
