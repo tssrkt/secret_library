@@ -630,12 +630,9 @@ export function mountFriends(page, social, retry, openLibrary = () => {}) {
     sending = true; updateShareButton(); setInvitationMessage('\u041e\u0442\u043f\u0440\u0430\u0432\u043b\u044f\u0435\u043c \u043f\u0440\u0438\u0433\u043b\u0430\u0448\u0435\u043d\u0438\u0435\u2026');
     submit.textContent = '\u041e\u0422\u041f\u0420\u0410\u0412\u041b\u042f\u0415\u041c\u2026';
     const email = String(form.elements.email.value || '').trim().toLowerCase();
-    // Clipboard writes and popup creation need the original click activation.
-    // Keep a temporary tab only when the invitation succeeds.
+    // Copy during the original click activation. Do not open a placeholder tab:
+    // the Drive folder is opened only after the invitation has been confirmed.
     const clipboardPromise = copyTextToClipboard(email);
-    let driveTab = null;
-    try { driveTab = window.open('about:blank', '_blank'); } catch { /* popup may be blocked */ }
-    if (driveTab) { try { driveTab.opener = null; } catch { /* best effort */ } }
     try {
       const result = await social.shareWithEmail(email);
       if (!closed) {
@@ -651,9 +648,7 @@ export function mountFriends(page, social, retry, openLibrary = () => {}) {
           } catch { /* try the cached root URL */ }
           if (!folderUrl && typeof social.getOwnFolderUrl === 'function') folderUrl = social.getOwnFolderUrl() || '';
           let folderOpened = false;
-          if (folderUrl && driveTab) {
-            try { driveTab.location.href = folderUrl; folderOpened = true; } catch { /* report below */ }
-          } else if (folderUrl) {
+          if (folderUrl) {
             try {
               const opened = window.open(folderUrl, '_blank');
               folderOpened = Boolean(opened);
@@ -665,6 +660,14 @@ export function mountFriends(page, social, retry, openLibrary = () => {}) {
           if (!copied) issues.push('\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u0441\u043a\u043e\u043f\u0438\u0440\u043e\u0432\u0430\u0442\u044c email \u0430\u0432\u0442\u043e\u043c\u0430\u0442\u0438\u0447\u0435\u0441\u043a\u0438 \u2014 \u0441\u043a\u043e\u043f\u0438\u0440\u0443\u0439\u0442\u0435 \u0435\u0433\u043e \u0438\u0437 \u043f\u043e\u043b\u044f \u0432\u0440\u0443\u0447\u043d\u0443\u044e.');
           if (!folderOpened) issues.push('\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u043e\u0442\u043a\u0440\u044b\u0442\u044c \u043a\u043e\u0440\u043d\u0435\u0432\u0443\u044e \u043f\u0430\u043f\u043a\u0443 \u0430\u0432\u0442\u043e\u043c\u0430\u0442\u0438\u0447\u0435\u0441\u043a\u0438. \u041e\u0442\u043a\u0440\u043e\u0439\u0442\u0435 \u0435\u0451 \u0447\u0435\u0440\u0435\u0437 Google Drive \u0438 \u0432\u044b\u0434\u0430\u0439\u0442\u0435 \u0434\u0440\u0443\u0433\u0443 \u0434\u043e\u0441\u0442\u0443\u043f \u0432\u0440\u0443\u0447\u043d\u0443\u044e.');
           setInvitationMessage(issues.length ? `${successText} ${issues.join(' ')}` : successText);
+          if (!folderOpened && folderUrl) {
+            const folderLink = document.createElement('a');
+            folderLink.href = folderUrl;
+            folderLink.target = '_blank';
+            folderLink.rel = 'noopener noreferrer';
+            folderLink.textContent = 'Открыть папку Google Drive';
+            message.append(document.createTextNode(' '), folderLink);
+          }
           const normalizedEmail = email.toLowerCase();
           if (normalizedEmail && !snapshot.invitations.some((invite) => String(invite.inviteeEmail || '').trim().toLowerCase() === normalizedEmail)) {
             optimisticInvitations.set(normalizedEmail, {
@@ -682,14 +685,10 @@ export function mountFriends(page, social, retry, openLibrary = () => {}) {
           void refreshInvitationStatuses([email]);
         } else {
           setInvitationMessage(result);
-          try { driveTab?.close(); } catch { /* ignore cleanup failures */ }
         }
-      } else {
-        try { driveTab?.close(); } catch { /* ignore cleanup failures */ }
       }
     }
     catch (error) {
-      try { driveTab?.close(); } catch { /* ignore cleanup failures */ }
       if (!closed) message.textContent = socialError(error);
     }
     finally { sending = false; submit.textContent = '\u041f\u041e\u0414\u0415\u041b\u0418\u0422\u042c\u0421\u042f'; if (!closed) updateShareButton(); }
