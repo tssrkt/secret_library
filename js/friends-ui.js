@@ -339,6 +339,25 @@ export function mountFriends(page, social, retry, openLibrary = () => {}) {
           await social.cancelInvitation(email);
           invitationsMessage.textContent = `Приглашение для ${email} отменено.`;
           await refreshInvitationStatuses([email]);
+          const copied = await copyTextToClipboard(email);
+          const folderUrl = typeof social.getOwnFolderUrl === 'function' ? social.getOwnFolderUrl() : '';
+          let folderOpened = false;
+          if (folderUrl) {
+            try {
+              const opened = window.open(folderUrl, '_blank');
+              folderOpened = Boolean(opened);
+              if (opened) { try { opened.opener = null; } catch { /* best effort */ } }
+            } catch { folderOpened = false; }
+          }
+          if (!copied) invitationsMessage.append(document.createTextNode('\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u0441\u043a\u043e\u043f\u0438\u0440\u043e\u0432\u0430\u0442\u044c \u0430\u0434\u0440\u0435\u0441 \u044d\u043b\u0435\u043a\u0442\u0440\u043e\u043d\u043d\u043e\u0439 \u043f\u043e\u0447\u0442\u044b.'));
+          if (folderUrl && !folderOpened) {
+            const link = document.createElement('a');
+            link.href = folderUrl;
+            link.target = '_blank';
+            link.rel = 'noopener noreferrer';
+            link.textContent = '\u041e\u0442\u043a\u0440\u044b\u0442\u044c \u043a\u043e\u0440\u043d\u0435\u0432\u0443\u044e \u043f\u0430\u043f\u043a\u0443 Google Drive';
+            invitationsMessage.append(document.createTextNode(' '), link);
+          }
         } catch (error) {
           invitationsMessage.textContent = socialError(error);
           // Cancellation feedback belongs below the sent-invitations table, not under the email input.

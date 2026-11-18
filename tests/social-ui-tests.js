@@ -15,6 +15,7 @@ export async function runSocialUiTests(test, assert, equal) {
       async openFriendAccessGuide(email) { calls.push(['openFriendAccessGuide', email]); return { email, rootFolderId: 'root', folderUrl: 'https://drive.google.com/drive/folders/root' }; },
       async checkFriendAccess(email) { calls.push(['checkFriendAccess', email]); return { granted: true, role: 'reader', inherited: false, wasOutbound: false, rootFolderId: 'root' }; },
       async resendInvitation(email) { calls.push(['resendInvitation', email]); return 'Приглашение отправлено.'; },
+      async cancelInvitation(email) { calls.push(['cancelInvitation', email]); return true; },
       async getInvitationStatuses(emails) { return Object.fromEntries([['__quota', { isAdmin: false, limit: 20, used: 0, adminUids: [] }], ...emails.map((email) => [email, { lastSentAt: 0, cooldownUntil: 0 }])]); },
       async setSharing(uid, active) { calls.push([uid, active]); },
       async markSeen(items) { calls.push(items); this.update({ notifications: state.notifications.map((item) => items.includes(item) ? { ...item, unread: false } : item) }); },
@@ -145,7 +146,7 @@ export async function runSocialUiTests(test, assert, equal) {
     const openedTabs = [];
     let copiedText = '';
     window.open = (url) => { const tab = { location: { href: url }, close() { this.closed = true; } }; openedTabs.push(tab); return tab; };
-    document.execCommand = () => { copiedText = document.querySelector('textarea')?.value || ''; return true; };
+    document.execCommand = () => { copiedText = document.querySelectorAll('textarea').at(-1)?.value || ''; return true; };
     const cleanup = mountFriends(page, social, () => {});
     try {
       const form = page.querySelector('.social-share-form');
@@ -294,6 +295,74 @@ export async function runSocialUiTests(test, assert, equal) {
       assert(!page.querySelector('.sent-invitations-section .book-pagination') && page.querySelectorAll('.sent-invitations-table tbody tr').length === 25, '25 invitations show no paginator, page clamps');
     } finally { cleanup(); page.remove(); }
   });
+  await test('cancelling an invitation refreshes status, copies the email and opens the root folder', async () => {
+    const page = document.createElement('div'); document.body.append(page);
+    const email = 'cancel-me@gmail.com';
+    const social = stub({ invitations: [{ inviteeEmail: email, active: true, createdAt: Date.now() - 60000 }] });
+    social.cancelInvitation = async (value) => { social.calls.push(['cancelInvitation', value]); return true; };
+    social.getInvitationStatuses = async (emails) => Object.fromEntries(emails.map((value) => [value, { invitationStatus: 'pending', lastSentAt: 0 }]));
+    social.getOwnFolderUrl = () => 'https://drive.google.com/drive/folders/root';
+    const order = [];
+    const nativeOpen = window.open;
+    const nativeConfirm = window.confirm;
+    const nativeExecCommand = document.execCommand;
+    const nativeClipboard = Object.getOwnPropertyDescriptor(navigator, 'clipboard');
+    window.confirm = () => true;
+    window.open = (url) => { order.push(['open', url]); return { opener: window }; };
+    document.execCommand = () => false;
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async (value) => { order.push(['copy', value]); } } });
+    const cleanup = mountFriends(page, social, () => {});
+    try {
+      await tick(); await tick();
+      const cancelButton = [...page.querySelectorAll('.sent-invitations-table button')].find((button) => button.textContent === '\u041e\u0422\u041c\u0415\u041d\u0418\u0422\u042c');
+      assert(cancelButton, 'pending invitation has a cancel button');
+      cancelButton.click();
+      await tick(); await tick(); await tick(); await tick();
+      const cancelIndex = social.calls.findIndex((call) => Array.isArray(call) && call[0] === 'cancelInvitation');
+      assert(cancelIndex >= 0 && social.calls[cancelIndex][1] === email, 'server cancellation receives the invitation email');
+      equal(order, [['copy', email], ['open', 'https://drive.google.com/drive/folders/root']], 'email is copied and root folder opened after cancellation and status refresh');
+    } finally {
+      cleanup(); page.remove(); window.open = nativeOpen; window.confirm = nativeConfirm; document.execCommand = nativeExecCommand; if (nativeClipboard) Object.defineProperty(navigator, 'clipboard', nativeClipboard); else delete navigator.clipboard;
+    }
+  });
+
+  await test('failed cancellation does not copy the email or open Drive; blocked popup gets a link', async () => {
+    const nativeOpen = window.open;
+    const nativeConfirm = window.confirm;
+    const nativeExecCommand = document.execCommand;
+    window.confirm = () => true;
+    const failedPage = document.createElement('div'); document.body.append(failedPage);
+    const failedSocial = stub({ invitations: [{ inviteeEmail: 'failed-cancel@gmail.com', active: true, createdAt: Date.now() - 60000 }] });
+    failedSocial.getInvitationStatuses = async (emails) => Object.fromEntries(emails.map((email) => [email, { invitationStatus: 'pending', lastSentAt: 0 }]));
+    failedSocial.cancelInvitation = async () => { throw new Error('cancel failed'); };
+    const failedOrder = [];
+    window.open = (url) => { failedOrder.push(url); return null; };
+    document.execCommand = (command) => { if (command === 'copy') failedOrder.push('copy'); return true; };
+    const cleanupFailed = mountFriends(failedPage, failedSocial, () => {});
+    try {
+      await tick(); await tick();
+      [...failedPage.querySelectorAll('.sent-invitations-table button')].find((button) => button.textContent === '\u041e\u0422\u041c\u0415\u041d\u0418\u0422\u042c').click();
+      await tick(); await tick();
+      equal(failedOrder, [], 'failed cancellation performs no clipboard or Drive action');
+    } finally { cleanupFailed(); failedPage.remove(); }
+
+    const blockedPage = document.createElement('div'); document.body.append(blockedPage);
+    const blockedSocial = stub({ invitations: [{ inviteeEmail: 'blocked-cancel@gmail.com', active: true, createdAt: Date.now() - 60000 }] });
+    blockedSocial.getInvitationStatuses = async (emails) => Object.fromEntries(emails.map((email) => [email, { invitationStatus: 'pending', lastSentAt: 0 }]));
+    blockedSocial.getOwnFolderUrl = () => 'https://drive.google.com/drive/folders/root';
+    const cleanupBlocked = mountFriends(blockedPage, blockedSocial, () => {});
+    try {
+      await tick(); await tick();
+      window.open = () => null;
+      [...blockedPage.querySelectorAll('.sent-invitations-table button')].find((button) => button.textContent === '\u041e\u0422\u041c\u0415\u041d\u0418\u0422\u042c').click();
+      await tick(); await tick(); await tick(); await tick();
+      const link = blockedPage.querySelector('.sent-invitations-message a');
+      assert(link && link.href === 'https://drive.google.com/drive/folders/root', 'popup blocking leaves a direct root-folder link');
+    } finally {
+      cleanupBlocked(); blockedPage.remove(); window.open = nativeOpen; window.confirm = nativeConfirm; document.execCommand = nativeExecCommand;
+    }
+  });
+
   await test('cancelled invitations are excluded from the friends summary', async () => {
     const page = document.createElement('div'); document.body.append(page);
     const social = stub({ friends: [{ uid: 'friend', displayName: 'Friend', email: 'friend@gmail.com' }], invitations: [{ inviteeEmail: 'cancelled@gmail.com', active: true }] });
