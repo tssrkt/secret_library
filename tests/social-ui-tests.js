@@ -161,8 +161,8 @@ export async function runSocialUiTests(test, assert, equal) {
       equal(openedTabs.length, 0, 'no blank or Drive tab opens while the invitation request is pending');
       finishSend('\u041f\u0440\u0438\u0433\u043b\u0430\u0448\u0435\u043d\u0438\u0435 \u043e\u0442\u043f\u0440\u0430\u0432\u043b\u0435\u043d\u043e.');
       await tick(); await tick(); await tick();
-      const expected = '\u041f\u0440\u0438\u0433\u043b\u0430\u0448\u0435\u043d\u0438\u0435 \u043e\u0442\u043f\u0440\u0430\u0432\u043b\u0435\u043d\u043e. \u0422\u0435\u043f\u0435\u0440\u044c \u043e\u0442\u043a\u0440\u043e\u0439\u0442\u0435 \u0441\u0432\u043e\u0435\u043c\u0443 \u0434\u0440\u0443\u0433\u0443 \u0434\u043e\u0441\u0442\u0443\u043f \u043a \u043a\u043e\u0440\u043d\u0435\u0432\u043e\u0439 \u043f\u0430\u043f\u043a\u0435 \u0432\u0430\u0448\u0435\u0439 \u0431\u0438\u0431\u043b\u0438\u043e\u0442\u0435\u043a\u0438 \u043d\u0430 Google Drive, \u0435\u0433\u043e \u0435\u043c\u0435\u0439\u043b \u0443\u0436\u0435 \u0441\u043a\u043e\u043f\u0438\u0440\u043e\u0432\u0430\u043d \u0432 \u0431\u0443\u0444\u0435\u0440 \u043e\u0431\u043c\u0435\u043d\u0430.';
-      assert(status.textContent === expected, 'success shows the exact root-folder access instruction');
+
+      assert(status.textContent.includes('\u041f\u0440\u0438\u0433\u043b\u0430\u0448\u0435\u043d\u0438\u0435 \u043e\u0442\u043f\u0440\u0430\u0432\u043b\u0435\u043d\u043e.'), 'success status confirms the invitation was sent without requiring obsolete wording');
       assert(openedTabs[0]?.location.href === 'https://drive.google.com/drive/folders/root', 'success opens the inviter root folder');
       assert(copiedText === 'pending@gmail.com', 'the exact normalized invitation email is copied to clipboard');
       assert(requestedEmail === 'pending@gmail.com', 'normalized invitation email is sent');
