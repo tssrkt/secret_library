@@ -146,7 +146,7 @@ export async function runSocialUiTests(test, assert, equal) {
     const openedTabs = [];
     let copiedText = '';
     window.open = (url) => { const tab = { location: { href: url }, close() { this.closed = true; } }; openedTabs.push(tab); return tab; };
-    document.execCommand = () => { copiedText = document.querySelectorAll('textarea').at(-1)?.value || ''; return true; };
+    document.execCommand = () => { copiedText = [...document.querySelectorAll('textarea')].at(-1)?.value || ''; return true; };
     const cleanup = mountFriends(page, social, () => {});
     try {
       const form = page.querySelector('.social-share-form');
@@ -159,6 +159,7 @@ export async function runSocialUiTests(test, assert, equal) {
       assert(status.previousElementSibling === input.parentElement, 'sending status is directly below the email field label');
       assert(form.querySelector('button').disabled, 'submit button is disabled while sending');
       equal(openedTabs.length, 0, 'no blank or Drive tab opens while the invitation request is pending');
+      assert(copiedText === 'pending@gmail.com', 'the normalized email is copied during the original click before the request resolves');
       finishSend('\u041f\u0440\u0438\u0433\u043b\u0430\u0448\u0435\u043d\u0438\u0435 \u043e\u0442\u043f\u0440\u0430\u0432\u043b\u0435\u043d\u043e.');
       await tick(); await tick(); await tick();
 
