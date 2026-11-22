@@ -5,7 +5,7 @@ import { createSocialStore } from './social-store.js?v=20261108-registered-shari
 import { createSharedLibraryStore } from './shared-library.js?v=20261117-stale-catalog-recovery';
 import { discoverDriveFriends, getRootFolderAccessState } from './drive-sharing.js?v=20261117-drive-relationship-verification';
 import { findDriveCatalogFile, downloadDriveJsonFile, getCurrentDriveUser } from './drive.js';
-import { sendInvitationEmail, getInvitationStatuses as fetchInvitationStatuses, cancelInvitation as cancelInvitationToken } from './invitation-mailer.js?v=20261108-email-registry-auth';
+import { sendInvitationEmail, getInvitationStatuses as fetchInvitationStatuses, cancelInvitation as cancelInvitationToken } from './invitation-mailer.js?v=20261122-custom-domain-origin';
 import { createInvitationLedger, acceptedInvitationFriends, invitationLedgerRows, mergeInvitationRows } from './invitation-ledger.js?v=20261107-ledger-server-discovery';
 
 const TRANSIENT_AUTH_CODES = new Set([

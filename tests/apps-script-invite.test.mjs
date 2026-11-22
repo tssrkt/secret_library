@@ -6,6 +6,7 @@ import { createHash } from 'node:crypto';
 
 const source = await readFile(new URL('../apps-script-invite/Code.gs', import.meta.url), 'utf8');
 const adminClientSource = await readFile(new URL('../js/admin.js', import.meta.url), 'utf8');
+const invitationMailerSource = await readFile(new URL('../js/invitation-mailer.js', import.meta.url), 'utf8');
 
 function harness({ authUser, pendingFields, pendingStatus = 200, profileStatus = 200, blockedEmailUid = null, registeredEmailUid = null, blockedEmail = false, blockedEmailByField = false, blockOnSecondCheck = false } = {}) {
   const properties = new Map();
@@ -1379,6 +1380,22 @@ test('public doPost rejects missing, malformed and oversized payloads before pro
   assert.equal(app.calls.some(call => call.url.includes('accounts:lookup')), false);
 });
 
+test('response pages target only the exact allowlisted site origins', () => {
+  const app = harness();
+  assert.match(adminClientSource, /siteOrigin: window\.location\.origin/);
+  assert.match(invitationMailerSource, /siteOrigin: window\.location\.origin/);
+  assert.equal(app.context.getResponseOrigin('https://secret-library.site'), 'https://secret-library.site');
+  assert.equal(app.context.getResponseOrigin('https://tssrkt.github.io'), 'https://tssrkt.github.io');
+  assert.equal(app.context.getResponseOrigin('https://attacker.example'), 'https://tssrkt.github.io');
+  assert.equal(app.context.getResponseOrigin('https://secret-library.site.attacker.example'), 'https://tssrkt.github.io');
+
+  const adminReply = app.context.adminResponsePage('request_1234567890', true, '', { ok: true }, 'https://secret-library.site');
+  assert.ok(adminReply.content.includes(', "https://secret-library.site");'));
+  const publicReply = app.context.responsePage('request_1234567890', true, '', null, 'https://secret-library.site');
+  assert.ok(publicReply.content.includes(', "https://secret-library.site");'));
+  const untrustedReply = app.context.adminResponsePage('request_1234567890', true, '', { ok: true }, 'https://attacker.example');
+  assert.ok(untrustedReply.content.includes(', "https://tssrkt.github.io");'));
+});
 test('public doPost rejects malformed request IDs before token verification or side effects', () => {
   const app = harness();
   const result = app.context.doPost({ parameter: { payload: JSON.stringify({

@@ -1,5 +1,5 @@
 import { normalizeEmail, validateShareEmail, shareId } from './social-model.js?v=20261106-drive-notifications';
-import { finalizeInviteeRegistration } from './invitation-mailer.js?v=20261108-finalize-invitees';
+import { finalizeInviteeRegistration } from './invitation-mailer.js?v=20261122-custom-domain-origin';
 
 export function createSocialStore({ db, sdk, user }) {
   const { doc, collection, collectionGroup, query, where, getDoc, getDocs, runTransaction,
