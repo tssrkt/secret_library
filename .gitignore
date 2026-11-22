@@ -18,3 +18,5 @@ playwright-report/
 
 # Local Understand Anything analysis data must never be committed.
 .ua/
+
+.clasp.json
